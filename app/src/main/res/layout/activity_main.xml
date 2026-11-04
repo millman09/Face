@@ -11,11 +11,11 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingStart="24dp"
-        android:paddingTop="16dp"
+        android:paddingTop="8dp"
         android:paddingEnd="24dp"
-        android:paddingBottom="8dp"
+        android:paddingBottom="4dp"
         android:text="@string/app_name"
-        android:textAppearance="?attr/textAppearanceHeadlineMedium"
+        android:textAppearance="?attr/textAppearanceTitleLarge"
         android:textColor="?attr/colorOnSurface" />
 
     <FrameLayout
@@ -34,7 +34,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp" />
+                android:padding="12dp" />
         </ScrollView>
 
         <ScrollView
@@ -49,7 +49,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp" />
+                android:padding="12dp" />
         </ScrollView>
 
         <ScrollView
@@ -64,7 +64,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp" />
+                android:padding="12dp" />
         </ScrollView>
     </FrameLayout>
 

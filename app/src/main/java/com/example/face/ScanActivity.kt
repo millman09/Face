@@ -64,7 +64,7 @@ class ScanActivity : AppCompatActivity() {
 
         val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(16), dp(20), dp(24))
+            setPadding(dp(16), dp(12), dp(16), dp(16))
         }
         setToolPage("Photo scan", page)
 

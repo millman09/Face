@@ -13,6 +13,8 @@ import android.provider.OpenableColumns
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.ImageView
+import android.widget.ScrollView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -48,6 +50,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var progress: ProgressBar
     private lateinit var scanButton: MaterialButton
+    private lateinit var resultsContainer: LinearLayout
     private var modelFile: File? = null
     private var referenceUri: Uri? = null
     private var referenceUris: List<Uri> = emptyList()
@@ -116,6 +119,10 @@ class IdentityMatchActivity : AppCompatActivity() {
             setPadding(0, 16, 0, 0)
         }
         root.addView(status)
+        val resultsScroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); isFillViewport = true }
+        resultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        resultsScroll.addView(resultsContainer)
+        root.addView(resultsScroll)
         handleSharedImages(intent)
         updateReady()
     }
@@ -433,6 +440,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         progress.visibility = ProgressBar.VISIBLE
         progress.max = candidates.size
         progress.progress = 0
+        resultsContainer.removeAllViews()
         status.text = "Preparing on-device face matcher…"
         executor.execute {
             var interpreter: Interpreter? = null
@@ -489,7 +497,11 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 Math.toDegrees(acos(it.coerceIn(-1f, 1f).toDouble()))
                             }
                             val possible = angle != null && angle <= 74.18
-                            if (possible) possibleMatches++
+                            if (possible) {
+                                possibleMatches++
+                                val preview = Bitmap.createScaledBitmap(bitmap, 220, (220f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), true)
+                                runOnUiThread { addWebMatchPreview(candidate.imageUrl, similarity ?: 0f, preview) }
+                            }
                             report.append("${index + 1}. ${Uri.parse(candidate.imageUrl).host}: ${faces.size} face(s)")
                             if (skipped > 0) report.append(" ($skipped could not be aligned)")
                             if (similarity != null && angle != null) {
@@ -528,6 +540,44 @@ class IdentityMatchActivity : AppCompatActivity() {
                 interpreter?.close()
             }
         }
+    }
+
+    private fun addWebMatchPreview(imageUrl: String, similarity: Float, preview: Bitmap) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFF202832.toInt())
+                cornerRadius = dp(12).toFloat()
+            }
+        }
+        card.addView(ImageView(this).apply {
+            setImageBitmap(preview)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            layoutParams = LinearLayout.LayoutParams(dp(104), dp(104))
+        })
+        val details = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        details.addView(TextView(this).apply { text = "Possible match"; textSize = 16f })
+        details.addView(TextView(this).apply {
+            text = "Cosine similarity: " + String.format(java.util.Locale.US, "%.3f", similarity)
+            textSize = 14f
+        })
+        details.addView(TextView(this).apply { text = Uri.parse(imageUrl).host ?: imageUrl; textSize = 12f })
+        details.addView(MaterialButton(this).apply {
+            text = "Open source"
+            isAllCaps = false
+            setOnClickListener {
+                try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(imageUrl))) } catch (_: Exception) {}
+            }
+        })
+        card.addView(details)
+        resultsContainer.addView(card, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(10) })
     }
 
     /** Fetches a public HTTPS image into a bounded byte array; never writes it to disk. */

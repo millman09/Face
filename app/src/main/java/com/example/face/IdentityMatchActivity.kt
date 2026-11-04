@@ -42,9 +42,8 @@ import kotlin.math.acos
 
 /**
  * Local pairwise face verification using Qualcomm AI Hub MobileFaceNet.
- * The model accepts two aligned RGB faces, applies its own torchvision
- * normalization and test-time augmentation, and returns two 128-value vectors.
- * The app aligns five ML Kit landmarks to the model reference geometry.
+ * The model accepts two aligned RGB face crops and returns two 128-value embeddings.
+ * The app aligns five ML Kit landmarks and prepares normalized RGB tensors locally.
  */
 class IdentityMatchActivity : AppCompatActivity() {
     private lateinit var status: TextView
@@ -455,7 +454,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             try {
                 val sources = candidateDatabase.sources().filter { it.enabled }
                 require(sources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
-                progress.max = sources.size
+                runOnUiThread { progress.max = sources.size }
                 var addedTotal = 0
                 var completedSources = 0
                 for (source in sources) {

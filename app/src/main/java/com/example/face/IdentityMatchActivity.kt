@@ -63,6 +63,9 @@ class IdentityMatchActivity : AppCompatActivity() {
     private val referencePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
             referenceUris = uris.distinct()
+            referenceUris.forEach { uri ->
+                try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+            }
             referenceUri = referenceUris.first()
             status.text = "${referenceUris.size} reference photo(s) selected."
             updateReady()

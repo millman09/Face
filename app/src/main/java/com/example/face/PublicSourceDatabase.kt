@@ -29,6 +29,33 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             discovered_at INTEGER NOT NULL, scan_status TEXT NOT NULL DEFAULT 'Discovered',
             FOREIGN KEY(source_id) REFERENCES sources(id)
         )""".trimIndent())
+        // Starter catalogue of public adult-content platforms and forums.
+        // Sitemap/feed availability is checked at scan time; no access controls are bypassed.
+        val starterDomains = listOf(
+            "Pornhub" to "https://www.pornhub.com",
+            "XVideos" to "https://www.xvideos.com",
+            "XNXX" to "https://www.xnxx.com",
+            "xHamster" to "https://xhamster.com",
+            "YouPorn" to "https://www.youporn.com",
+            "RedGIFs" to "https://www.redgifs.com",
+            "Erome" to "https://www.erome.com",
+            "Motherless" to "https://motherless.com",
+            "ImageFap" to "https://www.imagefap.com",
+            "SpankBang" to "https://spankbang.com",
+            "Reddit (public communities)" to "https://www.reddit.com",
+            "4chan (public boards)" to "https://www.4chan.org",
+            "e621 (public image boards)" to "https://e621.net"
+        )
+        for ((name, address) in starterDomains) {
+            val values = ContentValues().apply {
+                put("name", name)
+                put("base_url", address)
+                put("enabled", 1)
+                put("last_status", "Not checked yet")
+            }
+            db.insertWithOnConflict("sources", null, values, SQLiteDatabase.CONFLICT_IGNORE)
+        }
+
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
 

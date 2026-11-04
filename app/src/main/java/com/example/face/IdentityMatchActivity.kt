@@ -537,12 +537,17 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
-    private fun displayName(uri: Uri): String = webCandidateLabels[uri.path ?: ""] ?: try {
+    private fun displayName(uri: Uri): String {
+        webCandidateLabels[uri.path ?: ""]?.let { return it }
         if (uri.scheme == "file") return File(uri.path ?: "").name
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
-            if (it.moveToFirst()) it.getString(0) else uri.lastPathSegment ?: "Image"
-        } ?: "Image"
-    } catch (_: Exception) { "Image" }
+        return try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) it.getString(0) else uri.lastPathSegment ?: "Image"
+            } ?: "Image"
+        } catch (_: Exception) {
+            "Image"
+        }
+    }
 
     override fun onDestroy() {
         executor.shutdown()

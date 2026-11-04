@@ -298,7 +298,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 referenceAligned = alignFace(referenceBitmap, referenceFace)
                 referenceBitmap.recycle()
 
-                val report = StringBuilder("Reference face aligned for this scan session.\\n")
+                val report = StringBuilder("Reference face aligned for this scan session.\n")
                 var checked = 0
                 var matched = 0
                 candidates.forEachIndexed { index, uri ->
@@ -322,9 +322,9 @@ class IdentityMatchActivity : AppCompatActivity() {
                             report.append(", cosine ${"%.3f".format(java.util.Locale.US, similarity)}, angle ${"%.1f".format(java.util.Locale.US, angle)}° - ")
                             report.append(if (possible) "POSSIBLE MATCH" else "lower similarity")
                         }
-                        report.append("\\n")
+                        report.append("\n")
                     } catch (e: Exception) {
-                        report.append("${index + 1}. ${displayName(uri)}: error - ${e.localizedMessage ?: "unknown"}\\n")
+                        report.append("${index + 1}. ${displayName(uri)}: error - ${e.localizedMessage ?: "unknown"}\n")
                     }
                     checked++
                     runOnUiThread {
@@ -332,7 +332,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         status.text = "Compared $checked of ${candidates.size} images…"
                     }
                 }
-                report.append("\\nFinished: $matched possible match(es). Qualcomm's published 74.18° threshold is a benchmark starting point, not proof of identity. Review every candidate manually.")
+                report.append("\nFinished: $matched possible match(es). Qualcomm's published 74.18° threshold is a benchmark starting point, not proof of identity. Review every candidate manually.")
                 runOnUiThread { status.text = report.toString(); progress.visibility = ProgressBar.GONE; updateReady() }
             } catch (e: Exception) {
                 runOnUiThread {

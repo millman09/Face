@@ -233,6 +233,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private fun decode(uri: Uri): Bitmap {
         val source = ImageDecoder.createSource(contentResolver, uri)
         return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             val scale = minOf(1f, 2000f / maxOf(info.size.width, info.size.height))
             decoder.setTargetSize((info.size.width * scale).toInt().coerceAtLeast(1), (info.size.height * scale).toInt().coerceAtLeast(1))
         }

@@ -138,6 +138,8 @@ class MainActivity : AppCompatActivity() {
         val list = card.findViewById<LinearLayout>(R.id.groupItems)
         items.forEach { (position, textRes) ->
             val box = MaterialCheckBox(this)
+            box.minHeight = 0
+            box.setPadding(box.paddingLeft, 0, box.paddingRight, 0)
             box.setText(textRes)
             box.isChecked = prefs.getBoolean("item_$position", false)
             box.setOnCheckedChangeListener { _, checked ->

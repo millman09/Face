@@ -22,8 +22,6 @@ class MainActivity : AppCompatActivity() {
     private data class Tool(val titleRes: Int, val bodyRes: Int, val screen: Class<*>)
 
     private val tools = listOf(
-        Tool(R.string.tool_scan_title, R.string.tool_scan_body, ScanActivity::class.java),
-        Tool(R.string.tool_match_title, R.string.tool_match_body, IdentityMatchActivity::class.java),
         Tool(R.string.tool_search_title, R.string.tool_search_body, WebScanActivity::class.java)
     )
 

@@ -114,7 +114,8 @@ class WebScanActivity : AppCompatActivity() {
         page.addView(bulkSourcesInput)
         page.addSpaced(button("Import website list") { importSources() }, 8)
         page.addSpaced(button("Scan all enabled websites") { scanAllSources() }, 8)
-        page.addSpaced(button("Review and match collected images") { startActivity(Intent(this, IdentityMatchActivity::class.java)) }, 8)
+        page.addSpaced(button("Browse collected image links") { browseCollectedLinks() }, 8)
+        page.addSpaced(button("Open face matcher") { startActivity(Intent(this, IdentityMatchActivity::class.java)) }, 8)
 
         sourceList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         page.addView(sourceList)
@@ -251,6 +252,30 @@ class WebScanActivity : AppCompatActivity() {
             })
         }
         status.text = "${items.size} website(s) in database • ${database.candidateCount()} unique image link(s) collected."
+    }
+
+    private fun browseCollectedLinks() {
+        val candidates = database.allCandidates(100)
+        if (candidates.isEmpty()) {
+            Toast.makeText(this, "No image links have been collected yet. Run a batch scan first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val labels = candidates.mapIndexed { index, item ->
+            "${index + 1}. ${Uri.parse(item.pageUrl).host ?: item.sourceBaseUrl}  •  ${Uri.parse(item.imageUrl).lastPathSegment ?: "Image link"}"
+        }.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Collected public image links")
+            .setItems(labels) { _, which ->
+                val selected = candidates[which]
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(selected.imageUrl)))
+                    status.text = "Opened the selected image link in your browser."
+                } catch (_: Exception) {
+                    Toast.makeText(this, "Unable to open that image link.", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     private fun scanAllSources() {

@@ -17,7 +17,7 @@ data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl
 data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 2) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 3) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -33,26 +33,110 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         seedSources(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 2) seedSources(db)
+        if (oldVersion < 3) seedSources(db)
     }
 
     private fun seedSources(db: SQLiteDatabase) {
         // Starter catalogue of public adult-content platforms and forums.
         // Sitemap/feed availability is checked at scan time; no access controls are bypassed.
         val starterDomains = listOf(
+            // Major public video and clip platforms
             "Pornhub" to "https://www.pornhub.com",
             "XVideos" to "https://www.xvideos.com",
             "XNXX" to "https://www.xnxx.com",
             "xHamster" to "https://xhamster.com",
             "YouPorn" to "https://www.youporn.com",
+            "RedTube" to "https://www.redtube.com",
+            "Tube8" to "https://www.tube8.com",
+            "SpankBang" to "https://spankbang.com",
+            "Beeg" to "https://beeg.com",
+            "TNAFlix" to "https://www.tnaflix.com",
+            "Nuvid" to "https://www.nuvid.com",
+            "DrTuber" to "https://www.drtuber.com",
+            "Porn.com" to "https://www.porn.com",
+            "PornMD" to "https://www.pornmd.com",
+            "KeezMovies" to "https://www.keezmovies.com",
+            "EmpFlix" to "https://www.empflix.com",
+            "ThePornDude" to "https://theporndude.com",
             "RedGIFs" to "https://www.redgifs.com",
+            "GIFs.com Adult" to "https://gifs.com",
             "Erome" to "https://www.erome.com",
             "Motherless" to "https://motherless.com",
             "ImageFap" to "https://www.imagefap.com",
-            "SpankBang" to "https://spankbang.com",
+            "PornPics" to "https://www.pornpics.com",
+            "PornPic" to "https://www.pornpic.com",
+            "XXX Gallery" to "https://xxx.gallery",
+            "Nudy.pics" to "https://nudy.pics",
+            "Siss.pics" to "https://siss.pics",
+            "Fapello" to "https://fapello.com",
+            "Baraag" to "https://baraag.net",
+            "Paheal" to "https://paheal.net",
+            "e621" to "https://e621.net",
+            "Gelbooru" to "https://gelbooru.com",
+            "Rule34" to "https://rule34.xxx",
+            "Danbooru" to "https://danbooru.donmai.us",
+            "Safebooru" to "https://safebooru.org",
+            "ExHentai" to "https://exhentai.org",
+            "E-Hentai" to "https://e-hentai.org",
+            "Hitomi" to "https://hitomi.la",
+            "Fakku" to "https://www.fakku.net",
+            "HentaiFoundry" to "https://www.hentai-foundry.com",
+            "8muses" to "https://www.8muses.com",
+            "Luscious" to "https://www.luscious.net",
+            "HentaiRox" to "https://hentairox.com",
+            // Creator and community platforms
+            "OnlyFans" to "https://onlyfans.com",
+            "Fansly" to "https://fansly.com",
+            "Fanvue" to "https://www.fanvue.com",
+            "ManyVids" to "https://www.manyvids.com",
+            "Clips4Sale" to "https://www.clips4sale.com",
+            "JustForFans" to "https://justfor.fans",
+            "LoyalFans" to "https://www.loyalfans.com",
+            "AVN Stars" to "https://avn.com",
+            "FetLife" to "https://fetlife.com",
+            "Fabswingers" to "https://www.fabswingers.com",
+            "AdultFriendFinder" to "https://adultfriendfinder.com",
+            "Collarspace" to "https://collar.space",
+            "KinkD" to "https://kinkd.app",
+            // Adult forums and discussion communities
+            "GoFuckYourself Forum" to "https://gfy.com",
+            "AdultDVDTalk Forum" to "https://www.adultdvdtalk.com",
+            "PornBB Forum" to "https://www.pornbb.org",
+            "Phun Forum" to "https://www.phun.org",
+            "FreeOnes Forum" to "https://www.freeones.com",
+            "F95Zone Forum" to "https://f95zone.to",
+            "VIP-Files Forum" to "https://vip-files.com",
+            "Social Media Girls Forum" to "https://socialmediagirls.com",
+            "Empornium Forum" to "https://www.empornium.is",
+            "Vintage Erotica Forum" to "https://vintage-erotica-forum.com",
+            "EroMe Community" to "https://www.erome.com",
             "Reddit (public communities)" to "https://www.reddit.com",
             "4chan (public boards)" to "https://www.4chan.org",
-            "e621 (public image boards)" to "https://e621.net"
+            "8kun (public boards)" to "https://8kun.top",
+            // Stories, blogs, and adult publishing communities
+            "StoriesOnline" to "https://storiesonline.net",
+            "Literotica" to "https://www.literotica.com",
+            "LushStories" to "https://www.lushstories.com",
+            "SexStories" to "https://www.sexstories.com",
+            "ASexStories" to "https://asexstories.com",
+            "LitErotica" to "https://literotica.com",
+            "Nifty Archive" to "https://www.nifty.org",
+            // Additional public platforms and directories
+            "AEBN" to "https://www.aebn.com",
+            "Bang" to "https://www.bang.com",
+            "JavLibrary" to "https://www.javlibrary.com",
+            "JavBus" to "https://www.javbus.com",
+            "JavDatabase" to "https://javdatabase.com",
+            "Hentai0Day" to "https://hentai0day.com",
+            "CoedCherry" to "https://coedcherry.com",
+            "FabGuys" to "https://www.fabguys.com",
+            "Sex.com" to "https://www.sex.com",
+            "SavePorn" to "https://saveporn.net",
+            "91Porn" to "https://91porn.com",
+            "XGX" to "https://xgx.mobi",
+            "Ero-Video" to "https://ero-video.net",
+            "Toppornsites" to "https://toppornsites.com",
+            "SkipTheGames" to "https://skipthegames.com"
         )
         for ((name, address) in starterDomains) {
             val values = ContentValues().apply {

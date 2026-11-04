@@ -10,6 +10,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import com.google.android.material.button.MaterialButton
 import java.util.concurrent.Executors
 
@@ -28,6 +29,13 @@ class WebScanActivity : AppCompatActivity() {
     private lateinit var sourceList: LinearLayout
     private lateinit var database: PublicSourceDatabase
     private val scanExecutor = Executors.newSingleThreadExecutor()
+    private var referencePhotos: List<Uri> = emptyList()
+    private val referencePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) {
+            referencePhotos = uris.distinct()
+            status.text = "${referencePhotos.size} reference photo(s) selected. Start the website scan when ready."
+        }
+    }
     @Volatile private var scanning = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -106,7 +114,15 @@ class WebScanActivity : AppCompatActivity() {
         }
         page.addView(bulkSourcesInput)
         page.addSpaced(button("Import website list") { importSources() }, 8)
+        page.addSpaced(button("Choose photo(s) to search for") { referencePicker.launch(arrayOf("image/*")) }, 8)
         page.addSpaced(button("Scan all websites") { scanAllSources() }, 8)
+        page.addSpaced(button("Scan websites and match my photo(s)") {
+            if (referencePhotos.isEmpty()) {
+                Toast.makeText(this, "Choose at least one reference photo first.", Toast.LENGTH_LONG).show()
+            } else {
+                scanAllSources(matchSelectedPhotos = true)
+            }
+        }, 8)
         page.addSpaced(button("Browse collected image links") { browseCollectedLinks() }, 8)
         page.addSpaced(button("Open face matcher") { startActivity(Intent(this, IdentityMatchActivity::class.java)) }, 8)
 
@@ -285,7 +301,7 @@ class WebScanActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun scanAllSources() {
+    private fun scanAllSources(matchSelectedPhotos: Boolean = false) {
         if (scanning) {
             Toast.makeText(this, "A scan is already running.", Toast.LENGTH_SHORT).show()
             return
@@ -320,8 +336,15 @@ class WebScanActivity : AppCompatActivity() {
             val added = addedTotal
             runOnUiThread {
                 scanning = false
-                status.text = "Batch finished: checked $done of ${selected.size} websites; found $added new image link(s). Total stored: ${database.candidateCount()}. These links still need local face matching and review."
+                status.text = "Batch finished: checked $done of ${selected.size} websites; found $added new image link(s). Total stored: ${database.candidateCount()}."
                 refreshSourceRowsOnly()
+                if (matchSelectedPhotos && referencePhotos.isNotEmpty()) {
+                    val intent = Intent(this, IdentityMatchActivity::class.java).apply {
+                        putParcelableArrayListExtra(IdentityMatchActivity.EXTRA_REFERENCE_URIS, ArrayList(referencePhotos))
+                        putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true)
+                    }
+                    startActivity(intent)
+                }
             }
         }
     }

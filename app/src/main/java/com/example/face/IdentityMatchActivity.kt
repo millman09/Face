@@ -38,13 +38,10 @@ import kotlin.math.sqrt
 import kotlin.math.acos
 
 /**
- * Local 1:N face comparison. The user supplies a MobileFaceNet-compatible
- * float32 TFLite model; model weights are deliberately not redistributed
- * because their provenance/licensing must be verified independently.
- *
- * Expected model contract: [1,112,112,3] RGB float input normalized to [-1,1],
- * and [1,N] float embedding output. Face crops are bounding-box crops (not
- * landmark-aligned), so match scores must be treated as leads, not proof.
+ * Local pairwise face verification using Qualcomm AI Hub MobileFaceNet.
+ * The model accepts two aligned RGB faces, applies its own torchvision
+ * normalization and test-time augmentation, and returns two 128-value vectors.
+ * The app aligns five ML Kit landmarks to the model reference geometry.
  */
 class IdentityMatchActivity : AppCompatActivity() {
     private lateinit var status: TextView
@@ -61,7 +58,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private val modelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             try {
-                val target = File(filesDir, "face_embedding_model.tflite")
+                val target = File(filesDir, modelTargetName)
                 contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(target).use { output -> input.copyTo(output) }
                 } ?: throw IllegalStateException("Could not read the selected model.")
@@ -97,7 +94,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 12)
         })
         root.addView(TextView(this).apply {
-            text = "Downloads Qualcomm AI Hub MobileFaceNet directly from its public model release. The model runs on this phone. Select one clear reference photo and candidate images. The model needs two aligned face images per comparison; images are not uploaded."
+            text = "Downloads Qualcomm AI Hub MobileFaceNet from its public release (Apache 2.0 model weights). It runs locally on this phone. Select one clear reference photo and candidate images. Photos are aligned on-device; no images are uploaded."
             textSize = 14f
             setPadding(0, 0, 0, 16)
         })

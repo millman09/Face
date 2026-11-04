@@ -80,7 +80,15 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { startActivity(Intent(this@MainActivity, ScanActivity::class.java)) }
         }
         container.addView(scanButton)
-        addText(container, "Choose your own reference photo and scan images you select. Photo access is granted only through Android's picker.")
+
+        val webScanButton = MaterialButton(this).apply {
+            text = "Search public websites for images"
+            isAllCaps = false
+            setOnClickListener { startActivity(Intent(this@MainActivity, WebScanActivity::class.java)) }
+        }
+        container.addView(webScanButton)
+
+        addText(container, "The phone scanner detects faces in selected photos. The web scanner searches a public image index; it does not search every website or identify people yet.")
         addSection(container, getString(R.string.section_help))
         protectLinks.forEach { addLinkCard(container, it) }
         addText(container, getString(R.string.safety_note))

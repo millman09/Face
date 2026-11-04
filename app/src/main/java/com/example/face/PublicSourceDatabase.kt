@@ -14,6 +14,7 @@ import java.util.Locale
 
 data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean)
 data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl: String)
+data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String)
 
 /** Local source registry and deduplicated candidate-link store. */
 class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 2) {
@@ -107,6 +108,27 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
     @Synchronized fun updateSourceStatus(id: Long, status: String) {
         val values = ContentValues().apply { put("last_scan", System.currentTimeMillis()); put("last_status", status.take(300)) }
         writableDatabase.update("sources", values, "id=?", arrayOf(id.toString()))
+    }
+
+    @Synchronized fun pendingCandidates(limit: Int = 100): List<StoredCandidate> {
+        val result = mutableListOf<StoredCandidate>()
+        readableDatabase.rawQuery(
+            """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
+               FROM candidates c JOIN sources s ON s.id=c.source_id
+               WHERE c.scan_status='Discovered'
+               ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
+            arrayOf(limit.coerceIn(1, 500).toString())
+        ).use { c ->
+            while (c.moveToNext()) result += StoredCandidate(
+                c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4)
+            )
+        }
+        return result
+    }
+
+    @Synchronized fun updateCandidateStatus(id: Long, status: String) {
+        val values = ContentValues().apply { put("scan_status", status.take(100)) }
+        writableDatabase.update("candidates", values, "id=?", arrayOf(id.toString()))
     }
 
     @Synchronized fun candidateCount(): Int {

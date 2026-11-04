@@ -69,7 +69,7 @@ class ScanActivity : AppCompatActivity() {
         setToolPage("Photo scan", page)
 
         page.addView(TextView(this).apply {
-            text = "Pick photos on your phone and this screen counts the faces in each one. Nothing is uploaded, and Android only gives the app the photos you choose."
+            text = "Counts the faces in photos you pick. Nothing is uploaded."
             textSize = 16f
             setPadding(0, 0, 0, dp(16))
         })

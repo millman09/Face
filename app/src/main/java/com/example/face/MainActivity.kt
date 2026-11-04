@@ -109,7 +109,6 @@ class MainActivity : AppCompatActivity() {
                 startActivity(Intent(this, tool.screen))
             }
         }
-        addText(container, getString(R.string.tools_note))
     }
 
     private fun buildHelp(container: LinearLayout) {
@@ -117,6 +116,8 @@ class MainActivity : AppCompatActivity() {
         removeLinks.forEach { addLinkTile(container, it) }
         addSection(container, getString(R.string.section_exposure))
         exposureLinks.forEach { addLinkTile(container, it) }
+        addSection(container, getString(R.string.section_tools))
+        handyLinks.forEach { addLinkTile(container, it) }
         addText(container, getString(R.string.safety_note))
     }
 
@@ -127,12 +128,8 @@ class MainActivity : AppCompatActivity() {
         checklistBar.max = totalChecks
         container.addView(header)
 
-        addText(container, getString(R.string.checklist_intro))
         addGroup(container, R.string.group_look, lookItems)
         addGroup(container, R.string.group_lock, lockItems)
-
-        addSection(container, getString(R.string.section_tools))
-        handyLinks.forEach { addLinkTile(container, it) }
     }
 
     private fun addGroup(container: LinearLayout, titleRes: Int, items: List<Pair<Int, Int>>) {

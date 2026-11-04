@@ -36,7 +36,7 @@ class WebScanActivity : AppCompatActivity() {
             referencePhotos.forEach { uri ->
                 try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
             }
-            status.text = "${referencePhotos.size} reference photo(s) selected. Start the website scan when ready."
+            status.text = "${referencePhotos.size} reference photo(s) selected. Start the automatic scan when ready."
         }
     }
     @Volatile private var scanning = false
@@ -93,14 +93,7 @@ class WebScanActivity : AppCompatActivity() {
         })
 
         page.addSpaced(button("Choose photo(s) to search for") { referencePicker.launch(arrayOf("image/*")) }, 8)
-        page.addSpaced(button("Scan all websites") { scanAllSources() }, 8)
-        page.addSpaced(button("Scan websites and match my photo(s)") {
-            if (referencePhotos.isEmpty()) {
-                Toast.makeText(this, "Choose at least one reference photo first.", Toast.LENGTH_LONG).show()
-            } else {
-                scanAllSources(matchSelectedPhotos = true)
-            }
-        }, 8)
+        page.addSpaced(button("Start automatic scan and match my photos") { launchAutomaticScan() }, 8)
 
         status = TextView(this).apply {
             text = "No scan has been run yet."
@@ -274,62 +267,23 @@ class WebScanActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun scanAllSources(matchSelectedPhotos: Boolean = false) {
-        if (scanning) {
-            Toast.makeText(this, "A scan is already running.", Toast.LENGTH_SHORT).show()
+    /** Opens the live results page immediately. Source discovery and face matching run there. */
+    private fun launchAutomaticScan() {
+        if (referencePhotos.isEmpty()) {
+            Toast.makeText(this, "Choose at least one reference photo first.", Toast.LENGTH_LONG).show()
             return
         }
-        val selected = database.sources()
-        if (selected.isEmpty()) {
-            Toast.makeText(this, "There are no websites in the database yet.", Toast.LENGTH_LONG).show()
+        val sourceCount = database.sources().count { it.enabled }
+        if (sourceCount == 0) {
+            Toast.makeText(this, "There are no enabled public sources to scan.", Toast.LENGTH_LONG).show()
             return
         }
-        scanning = true
-        status.text = "Starting batch scan of ${selected.size} public website(s)…"
-        scanExecutor.execute {
-            var addedTotal = 0
-            var completed = 0
-            for (source in selected) {
-                if (Thread.currentThread().isInterrupted) break
-                runOnUiThread { status.text = "Checking ${source.name} (${completed + 1}/${selected.size})…" }
-                try {
-                    val images = PublicSourceScanner.scan(source)
-                    val added = database.saveCandidates(images)
-                    addedTotal += added
-                    completed++
-                    database.updateSourceStatus(source.id, "Checked; ${images.size} link(s), ${added} new")
-                } catch (e: Exception) {
-                    completed++
-                    database.updateSourceStatus(source.id, "Could not scan: ${e.localizedMessage ?: "network error"}")
-                }
-                // Keep requests sequential and avoid hammering one host after another.
-                try { Thread.sleep(1200) } catch (_: InterruptedException) { break }
-            }
-            val done = completed
-            val added = addedTotal
-            runOnUiThread {
-                scanning = false
-                status.text = "Batch finished: checked $done of ${selected.size} websites; found $added new image link(s). Total stored: ${database.candidateCount()}."
-                if (matchSelectedPhotos && referencePhotos.isNotEmpty()) {
-                    val intent = Intent(this, IdentityMatchActivity::class.java).apply {
-                        putParcelableArrayListExtra(IdentityMatchActivity.EXTRA_REFERENCE_URIS, ArrayList(referencePhotos))
-                        putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true)
-                    }
-                    startActivity(intent)
-                }
-            }
+        val intent = Intent(this, IdentityMatchActivity::class.java).apply {
+            putParcelableArrayListExtra(IdentityMatchActivity.EXTRA_REFERENCE_URIS, ArrayList(referencePhotos))
+            putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true)
+            putExtra(IdentityMatchActivity.EXTRA_AUTO_START, true)
         }
+        startActivity(intent)
     }
 
-    private fun refreshSourceRowsOnly() {
-        val items = database.sources()
-        sourceList.removeAllViews()
-        for (source in items) {
-            sourceList.addView(TextView(this).apply {
-                text = "${source.name}  •  ${source.baseUrl}"
-                textSize = 13f
-                setPadding(dp(4), dp(7), dp(4), dp(7))
-            })
-        }
-    }
-}
+}}

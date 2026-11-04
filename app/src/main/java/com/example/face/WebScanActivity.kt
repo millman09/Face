@@ -310,7 +310,6 @@ class WebScanActivity : AppCompatActivity() {
             runOnUiThread {
                 scanning = false
                 status.text = "Batch finished: checked $done of ${selected.size} websites; found $added new image link(s). Total stored: ${database.candidateCount()}."
-                refreshSourceRowsOnly()
                 if (matchSelectedPhotos && referencePhotos.isNotEmpty()) {
                     val intent = Intent(this, IdentityMatchActivity::class.java).apply {
                         putParcelableArrayListExtra(IdentityMatchActivity.EXTRA_REFERENCE_URIS, ArrayList(referencePhotos))

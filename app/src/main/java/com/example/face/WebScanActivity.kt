@@ -33,6 +33,9 @@ class WebScanActivity : AppCompatActivity() {
     private val referencePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
             referencePhotos = uris.distinct()
+            referencePhotos.forEach { uri ->
+                try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+            }
             status.text = "${referencePhotos.size} reference photo(s) selected. Start the website scan when ready."
         }
     }

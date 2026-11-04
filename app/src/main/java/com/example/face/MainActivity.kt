@@ -25,37 +25,16 @@ class MainActivity : AppCompatActivity() {
     )
 
     private val protectLinks = listOf(
-        Link(
-            R.string.hibp_title, R.string.hibp_body, R.string.hibp_button,
-            "https://haveibeenpwned.com"
-        ),
-        Link(
-            R.string.stopncii_title, R.string.stopncii_body, R.string.stopncii_button,
-            "https://stopncii.org"
-        ),
-        Link(
-            R.string.takeitdown_title, R.string.takeitdown_body, R.string.takeitdown_button,
-            "https://takeitdown.ncmec.org"
-        ),
-        Link(
-            R.string.google_title, R.string.google_body, R.string.google_button,
-            "https://support.google.com/websearch/answer/13650142"
-        )
+        Link(R.string.hibp_title, R.string.hibp_body, R.string.hibp_button, "https://haveibeenpwned.com"),
+        Link(R.string.stopncii_title, R.string.stopncii_body, R.string.stopncii_button, "https://stopncii.org"),
+        Link(R.string.takeitdown_title, R.string.takeitdown_body, R.string.takeitdown_button, "https://takeitdown.ncmec.org"),
+        Link(R.string.google_title, R.string.google_body, R.string.google_button, "https://support.google.com/websearch/answer/13650142")
     )
 
     private val toolLinks = listOf(
-        Link(
-            R.string.alerts_title, R.string.alerts_body, R.string.alerts_button,
-            "https://www.google.com/alerts"
-        ),
-        Link(
-            R.string.lens_title, R.string.lens_body, R.string.lens_button,
-            "https://lens.google.com"
-        ),
-        Link(
-            R.string.tineye_title, R.string.tineye_body, R.string.tineye_button,
-            "https://tineye.com"
-        )
+        Link(R.string.alerts_title, R.string.alerts_body, R.string.alerts_button, "https://www.google.com/alerts"),
+        Link(R.string.lens_title, R.string.lens_body, R.string.lens_button, "https://lens.google.com"),
+        Link(R.string.tineye_title, R.string.tineye_body, R.string.tineye_button, "https://tineye.com")
     )
 
     private val checklistItems = listOf(
@@ -65,7 +44,6 @@ class MainActivity : AppCompatActivity() {
     )
 
     private val prefs by lazy { getSharedPreferences("checklist", MODE_PRIVATE) }
-
     private lateinit var progressBar: LinearProgressIndicator
     private lateinit var progressText: TextView
 
@@ -89,7 +67,6 @@ class MainActivity : AppCompatActivity() {
                 panelProtect.visibility = if (showProtect) View.VISIBLE else View.GONE
                 panelChecklist.visibility = if (showProtect) View.GONE else View.VISIBLE
             }
-
             override fun onTabUnselected(tab: TabLayout.Tab) {}
             override fun onTabReselected(tab: TabLayout.Tab) {}
         })
@@ -97,6 +74,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildProtect(container: LinearLayout) {
         addText(container, getString(R.string.protect_intro))
+        val scanButton = MaterialButton(this).apply {
+            text = "Scan photos on this phone"
+            isAllCaps = false
+            setOnClickListener { startActivity(Intent(this@MainActivity, ScanActivity::class.java)) }
+        }
+        container.addView(scanButton)
+        addText(container, "Choose your own reference photo and scan images you select. Photo access is granted only through Android's picker.")
         addSection(container, getString(R.string.section_help))
         protectLinks.forEach { addLinkCard(container, it) }
         addText(container, getString(R.string.safety_note))
@@ -108,7 +92,6 @@ class MainActivity : AppCompatActivity() {
         progressText = header.findViewById(R.id.progressText)
         progressBar.max = checklistItems.size
         container.addView(header)
-
         addText(container, getString(R.string.checklist_intro))
 
         checklistItems.forEachIndexed { index, textRes ->
@@ -122,7 +105,6 @@ class MainActivity : AppCompatActivity() {
             }
             container.addView(card)
         }
-
         addSection(container, getString(R.string.section_tools))
         toolLinks.forEach { addLinkCard(container, it) }
     }

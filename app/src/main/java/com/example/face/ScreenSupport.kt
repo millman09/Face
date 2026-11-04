@@ -7,16 +7,24 @@ import android.widget.ScrollView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.google.android.material.appbar.MaterialToolbar
 
 /** Converts density-independent pixels to pixels for this screen. */
 fun AppCompatActivity.dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
 /**
- * Shows [page] inside a scrolling container that stays clear of the status bar,
- * navigation bar and display cutout. Android 15+ draws apps edge to edge, so
- * screens built in code need this or their content sits under the system bars.
+ * Shows [page] under a top bar with a back arrow and [title], inside a scrolling
+ * container that stays clear of the status bar, navigation bar and display
+ * cutout. Android 15+ draws apps edge to edge, so screens built in code need
+ * this or their content sits under the system bars.
  */
-fun AppCompatActivity.setScrollablePage(page: LinearLayout) {
+fun AppCompatActivity.setToolPage(title: String, page: LinearLayout) {
+    val toolbar = MaterialToolbar(this).apply {
+        this.title = title
+        setNavigationIcon(R.drawable.ic_arrow_back)
+        navigationContentDescription = "Back"
+        setNavigationOnClickListener { onBackPressedDispatcher.onBackPressed() }
+    }
     val scroll = ScrollView(this).apply {
         isFillViewport = true
         clipToPadding = false
@@ -28,8 +36,26 @@ fun AppCompatActivity.setScrollablePage(page: LinearLayout) {
             )
         )
     }
-    setContentView(scroll)
-    ViewCompat.setOnApplyWindowInsetsListener(scroll) { view, insets ->
+    val column = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(
+            toolbar,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+        addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+    }
+    setContentView(column)
+    ViewCompat.setOnApplyWindowInsetsListener(column) { view, insets ->
         val bars = insets.getInsets(
             WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
         )

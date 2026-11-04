@@ -65,13 +65,8 @@ class ScanActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(16), dp(20), dp(24))
         }
-        setScrollablePage(page)
+        setToolPage("Photo scan", page)
 
-        page.addView(TextView(this).apply {
-            text = "On-device photo scan"
-            textSize = 24f
-            setPadding(0, 0, 0, dp(8))
-        })
         page.addView(TextView(this).apply {
             text = "Pick photos on your phone and this screen counts the faces in each one. Nothing is uploaded, and Android only gives the app the photos you choose."
             textSize = 16f

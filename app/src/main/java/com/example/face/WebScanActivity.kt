@@ -32,13 +32,8 @@ class WebScanActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(16), dp(20), dp(24))
         }
-        setScrollablePage(page)
+        setToolPage("Image search", page)
 
-        page.addView(TextView(this).apply {
-            text = "Free public image search"
-            textSize = 24f
-            setPadding(0, 0, 0, dp(8))
-        })
         page.addView(TextView(this).apply {
             text = "Run the same text search through Yandex Images, a SearXNG instance, and DuckDuckGo Images. These are public-web searches, not face recognition. They may miss pages and images, and results need to be checked manually."
             textSize = 15f

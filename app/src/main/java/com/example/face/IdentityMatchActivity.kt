@@ -69,12 +69,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(16), dp(20), dp(24))
         }
-        setScrollablePage(root)
-        root.addView(TextView(this).apply {
-            text = "On-device face matching"
-            textSize = 24f
-            setPadding(0, 0, 0, 12)
-        })
+        setToolPage("Face matching", root)
         root.addView(TextView(this).apply {
             text = "Downloads Qualcomm AI Hub MobileFaceNet from its public release (Apache 2.0 model weights). It runs locally on this phone. Select one clear reference photo and candidate images. Photos are aligned on-device; no images are uploaded."
             textSize = 14f

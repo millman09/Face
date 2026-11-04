@@ -82,13 +82,13 @@ class MainActivity : AppCompatActivity() {
         container.addView(scanButton)
 
         val webScanButton = MaterialButton(this).apply {
-            text = "Search public websites for images"
+            text = "Search three free image sources"
             isAllCaps = false
             setOnClickListener { startActivity(Intent(this@MainActivity, WebScanActivity::class.java)) }
         }
         container.addView(webScanButton)
 
-        addText(container, "The phone scanner detects faces in selected photos. The web scanner searches a public image index; it does not search every website or identify people yet.")
+        addText(container, "The phone scanner detects faces in selected photos. Web search opens Yandex Images, a SearXNG instance, and DuckDuckGo Images. These searches do not identify people automatically.")
         addSection(container, getString(R.string.section_help))
         protectLinks.forEach { addLinkCard(container, it) }
         addText(container, getString(R.string.safety_note))

@@ -15,6 +15,10 @@
         android:theme="@style/Theme.Face">
 
         <activity
+            android:name=".IdentityMatchActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".WebScanActivity"
             android:exported="false" />
 

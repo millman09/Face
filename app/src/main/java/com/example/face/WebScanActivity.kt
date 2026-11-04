@@ -25,6 +25,7 @@ class WebScanActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var sourceNameInput: EditText
     private lateinit var sourceUrlInput: EditText
+    private lateinit var bulkSourcesInput: EditText
     private lateinit var sourceList: LinearLayout
     private lateinit var database: PublicSourceDatabase
     private val scanExecutor = Executors.newSingleThreadExecutor()
@@ -104,6 +105,14 @@ class WebScanActivity : AppCompatActivity() {
         }
         page.addView(sourceUrlInput)
         page.addSpaced(button("Add website to database") { addSource() }, 8)
+        bulkSourcesInput = EditText(this).apply {
+            hint = "Bulk import: one domain per line, or Name | domain"
+            minLines = 4
+            gravity = android.view.Gravity.TOP
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
+        page.addView(bulkSourcesInput)
+        page.addSpaced(button("Import website list") { importSources() }, 8)
         page.addSpaced(button("Scan all enabled websites") { scanAllSources() }, 8)
 
         sourceList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -199,6 +208,26 @@ class WebScanActivity : AppCompatActivity() {
         sourceNameInput.text.clear()
         sourceUrlInput.text.clear()
         status.text = "Website added. It will be checked during the next batch scan."
+        refreshSources()
+    }
+
+
+    private fun importSources() {
+        val lines = bulkSourcesInput.text.toString().lines().map { it.trim() }.filter { it.isNotBlank() }
+        if (lines.isEmpty()) {
+            Toast.makeText(this, "Paste one domain per line first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        var added = 0
+        var skipped = 0
+        for (line in lines) {
+            val parts = line.split("|", limit = 2)
+            val name = if (parts.size == 2) parts[0].trim() else ""
+            val address = if (parts.size == 2) parts[1].trim() else parts[0].trim()
+            if (PublicSourceDatabase.normalizeBaseUrl(address) != null && database.addSource(name, address)) added++ else skipped++
+        }
+        bulkSourcesInput.text.clear()
+        status.text = "Bulk import finished: $added added, $skipped invalid or already in the database."
         refreshSources()
     }
 

@@ -1,10 +1,12 @@
 <resources>
     <string name="app_name">Face</string>
+    <string name="app_subtitle">Your privacy check-up</string>
 
     <string name="tab_protect">Protect</string>
     <string name="tab_checklist">Checklist</string>
 
     <string name="protect_intro">Tools for checking your own exposure and getting intimate images taken down. Nothing here searches for other people, and nothing leaves your phone.</string>
+    <string name="section_help">Get help</string>
 
     <string name="hibp_title">Check your email for breaches</string>
     <string name="hibp_body">Have I Been Pwned lists data breaches your email address appeared in, including breaches of adult sites. Search only addresses you own.</string>
@@ -25,6 +27,9 @@
     <string name="safety_note">If someone is threatening you or you feel unsafe, contact your local law enforcement.</string>
 
     <string name="checklist_intro">A self-audit you can work through at your own pace. Your checks are saved on this phone.</string>
+    <string name="progress_format">%1$d of %2$d done</string>
+    <string name="section_tools">Handy tools</string>
+
     <string name="check_1">List every username you have used on social, gaming and forum accounts.</string>
     <string name="check_2">Search each username in quotes in a search engine and note anything you do not recognize.</string>
     <string name="check_3">Search your own email address at Have I Been Pwned and note any breaches.</string>
@@ -34,4 +39,16 @@
     <string name="check_7">Turn on two-factor authentication for your email and main accounts.</string>
     <string name="check_8">Close old accounts you no longer use.</string>
     <string name="check_9">Search your name in quotes and review the image results for anything you did not post.</string>
+
+    <string name="alerts_title">Alerts for your usernames</string>
+    <string name="alerts_body">Google Alerts emails you when a new web page mentions a username or name you choose. Set one for each of your own usernames.</string>
+    <string name="alerts_button">Open Google Alerts</string>
+
+    <string name="lens_title">Reverse image search your photos</string>
+    <string name="lens_body">Upload one of your own photos to Google Lens to see where copies of it appear online.</string>
+    <string name="lens_button">Open Google Lens</string>
+
+    <string name="tineye_title">Second opinion with TinEye</string>
+    <string name="tineye_body">TinEye is another reverse image search and sometimes finds different matches than Google. Use it only with your own photos.</string>
+    <string name="tineye_button">Open TinEye</string>
 </resources>

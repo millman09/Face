@@ -5,39 +5,56 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
-import android.widget.CheckBox
+import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.checkbox.MaterialCheckBox
+import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.tabs.TabLayout
 
 class MainActivity : AppCompatActivity() {
 
-    private data class Resource(
+    private data class Link(
         val titleRes: Int,
         val bodyRes: Int,
         val buttonRes: Int,
         val url: String
     )
 
-    private val helpLinks = listOf(
-        Resource(
+    private val protectLinks = listOf(
+        Link(
             R.string.hibp_title, R.string.hibp_body, R.string.hibp_button,
             "https://haveibeenpwned.com"
         ),
-        Resource(
+        Link(
             R.string.stopncii_title, R.string.stopncii_body, R.string.stopncii_button,
             "https://stopncii.org"
         ),
-        Resource(
+        Link(
             R.string.takeitdown_title, R.string.takeitdown_body, R.string.takeitdown_button,
             "https://takeitdown.ncmec.org"
         ),
-        Resource(
+        Link(
             R.string.google_title, R.string.google_body, R.string.google_button,
             "https://support.google.com/websearch/answer/13650142"
+        )
+    )
+
+    private val toolLinks = listOf(
+        Link(
+            R.string.alerts_title, R.string.alerts_body, R.string.alerts_button,
+            "https://www.google.com/alerts"
+        ),
+        Link(
+            R.string.lens_title, R.string.lens_body, R.string.lens_button,
+            "https://lens.google.com"
+        ),
+        Link(
+            R.string.tineye_title, R.string.tineye_body, R.string.tineye_button,
+            "https://tineye.com"
         )
     )
 
@@ -46,6 +63,11 @@ class MainActivity : AppCompatActivity() {
         R.string.check_4, R.string.check_5, R.string.check_6,
         R.string.check_7, R.string.check_8, R.string.check_9
     )
+
+    private val prefs by lazy { getSharedPreferences("checklist", MODE_PRIVATE) }
+
+    private lateinit var progressBar: LinearProgressIndicator
+    private lateinit var progressText: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,6 +79,7 @@ class MainActivity : AppCompatActivity() {
 
         buildProtect(findViewById(R.id.protectContainer))
         buildChecklist(findViewById(R.id.checklistContainer))
+        updateProgress()
 
         tabs.addTab(tabs.newTab().setText(R.string.tab_protect))
         tabs.addTab(tabs.newTab().setText(R.string.tab_checklist))
@@ -73,46 +96,65 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildProtect(container: LinearLayout) {
-        container.addView(body(getString(R.string.protect_intro)))
-        for (r in helpLinks) {
-            container.addView(heading(getString(r.titleRes)))
-            container.addView(body(getString(r.bodyRes)))
-            container.addView(MaterialButton(this).apply {
-                setText(r.buttonRes)
-                setOnClickListener { openUrl(r.url) }
-            })
-        }
-        container.addView(body(getString(R.string.safety_note)).apply { setPadding(0, dp(24), 0, dp(8)) })
+        addText(container, getString(R.string.protect_intro))
+        addSection(container, getString(R.string.section_help))
+        protectLinks.forEach { addLinkCard(container, it) }
+        addText(container, getString(R.string.safety_note))
     }
 
     private fun buildChecklist(container: LinearLayout) {
-        val prefs = getSharedPreferences("checklist", MODE_PRIVATE)
-        container.addView(body(getString(R.string.checklist_intro)))
+        val header = layoutInflater.inflate(R.layout.item_progress, container, false)
+        progressBar = header.findViewById(R.id.progress)
+        progressText = header.findViewById(R.id.progressText)
+        progressBar.max = checklistItems.size
+        container.addView(header)
+
+        addText(container, getString(R.string.checklist_intro))
+
         checklistItems.forEachIndexed { index, textRes ->
-            container.addView(CheckBox(this).apply {
-                setText(textRes)
-                isChecked = prefs.getBoolean("item_$index", false)
-                setOnCheckedChangeListener { _, checked ->
-                    prefs.edit().putBoolean("item_$index", checked).apply()
-                }
-            })
+            val card = layoutInflater.inflate(R.layout.item_check, container, false)
+            val box = card.findViewById<MaterialCheckBox>(R.id.check)
+            box.setText(textRes)
+            box.isChecked = prefs.getBoolean("item_$index", false)
+            box.setOnCheckedChangeListener { _, checked ->
+                prefs.edit().putBoolean("item_$index", checked).apply()
+                updateProgress()
+            }
+            container.addView(card)
         }
+
+        addSection(container, getString(R.string.section_tools))
+        toolLinks.forEach { addLinkCard(container, it) }
     }
 
-    private fun heading(text: String) = TextView(this).apply {
-        this.text = text
-        textSize = 18f
-        setTypeface(typeface, android.graphics.Typeface.BOLD)
-        setPadding(0, dp(24), 0, dp(4))
+    private fun updateProgress() {
+        val done = checklistItems.indices.count { prefs.getBoolean("item_$it", false) }
+        progressBar.setProgressCompat(done, true)
+        progressText.text = getString(R.string.progress_format, done, checklistItems.size)
     }
 
-    private fun body(text: String) = TextView(this).apply {
-        this.text = text
-        textSize = 15f
-        setPadding(0, dp(4), 0, dp(8))
+    private fun addText(container: ViewGroup, text: String) {
+        val view = layoutInflater.inflate(R.layout.item_text, container, false) as TextView
+        view.text = text
+        container.addView(view)
     }
 
-    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+    private fun addSection(container: ViewGroup, text: String) {
+        val view = layoutInflater.inflate(R.layout.item_section, container, false) as TextView
+        view.text = text
+        container.addView(view)
+    }
+
+    private fun addLinkCard(container: ViewGroup, link: Link) {
+        val card = layoutInflater.inflate(R.layout.item_resource, container, false)
+        card.findViewById<TextView>(R.id.title).setText(link.titleRes)
+        card.findViewById<TextView>(R.id.body).setText(link.bodyRes)
+        card.findViewById<MaterialButton>(R.id.button).apply {
+            setText(link.buttonRes)
+            setOnClickListener { openUrl(link.url) }
+        }
+        container.addView(card)
+    }
 
     private fun openUrl(url: String) {
         try {

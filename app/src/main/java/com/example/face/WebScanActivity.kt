@@ -286,4 +286,4 @@ class WebScanActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
-}}
+}

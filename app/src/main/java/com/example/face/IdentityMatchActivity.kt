@@ -55,6 +55,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var referenceUri: Uri? = null
     private var referenceUris: List<Uri> = emptyList()
     private var webScanMode = false
+    private var autoStartScan = false
     private var imageUris: List<Uri> = emptyList()
     private val executor = Executors.newSingleThreadExecutor()
     private val modelUrl = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobile_facenet/releases/v0.65.0/mobile_facenet-tflite-float.zip"
@@ -86,12 +87,13 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
         setToolPage("Face matching", root)
         webScanMode = intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false)
+        autoStartScan = intent.getBooleanExtra(EXTRA_AUTO_START, false)
         @Suppress("DEPRECATION")
         referenceUris = intent.getParcelableArrayListExtra<Uri>(EXTRA_REFERENCE_URIS)?.distinct().orEmpty()
         referenceUri = referenceUris.firstOrNull()
         root.addView(TextView(this).apply {
             text = if (webScanMode) {
-                "Your selected reference photos are compared with public image links collected by Image Search. Candidate images are retrieved temporarily in memory, analyzed on this phone, and not saved to storage or uploaded. Only public HTTPS image links are attempted."
+                "This page automatically checks every enabled source in the built-in public catalogue, discovers available public image links, and compares them with your selected photos. Candidate images are processed temporarily in memory on this phone and are not saved or uploaded."
             } else {
                 "Downloads Qualcomm AI Hub MobileFaceNet from its public release (Apache 2.0 model weights). It runs locally on this phone. Select reference photo(s) and candidate images. Photos are aligned on-device; no images are uploaded."
             }
@@ -105,7 +107,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         addButton(root, "Choose reference photo(s)") { referencePicker.launch(arrayOf("image/*")) }
         if (!webScanMode) addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
         scanButton = MaterialButton(this).apply {
-            text = if (webScanMode) "Match against collected website images" else "Compare faces on this phone"
+            text = if (webScanMode) "Scan all public websites and match my photos" else "Compare faces on this phone"
             isAllCaps = false
             isEnabled = false
             setOnClickListener { runComparison() }
@@ -125,6 +127,13 @@ class IdentityMatchActivity : AppCompatActivity() {
         root.addView(resultsScroll)
         handleSharedImages(intent)
         updateReady()
+        if (autoStartScan && webScanMode) {
+            if (modelFile?.exists() == true && referenceUris.isNotEmpty()) {
+                runComparison()
+            } else {
+                status.text = "Install the face model once. The automatic website scan and matching will start after it is ready."
+            }
+        }
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -206,6 +215,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 runOnUiThread {
                     status.text = "Compatible MobileFaceNet model selected (${target.length() / 1024} KB). Choose your reference photo and candidate images."
                     updateReady()
+                    if (autoStartScan && webScanMode) runComparison()
                 }
             } catch (e: Exception) {
                 temp.delete()
@@ -270,6 +280,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 runOnUiThread {
                     status.text = "Official MobileFaceNet downloaded and validated. Choose your reference photo and candidate images."
                     updateReady()
+                    if (autoStartScan && webScanMode) runComparison()
                 }
             } catch (e: Exception) {
                 temp.delete()
@@ -423,30 +434,68 @@ class IdentityMatchActivity : AppCompatActivity() {
     }
 
     /**
-     * Compares selected reference photos with public image URLs already collected
-     * by the sitemap/feed scanner. Candidate bytes stay in memory and are never saved.
+     * One automatic workflow: scan every enabled catalogue source, then compare
+     * all collected public image candidates against every selected reference photo.
+     * Source discovery and image matching both remain visible on this page.
      */
     private fun runWebComparison() {
         val model = modelFile ?: return
         val references = referenceUris.toList()
         if (references.isEmpty()) return
-        val candidateDatabase = PublicSourceDatabase(this)
-        val candidates = try { candidateDatabase.allCandidates(500) } finally { candidateDatabase.close() }
-        if (candidates.isEmpty()) {
-            status.text = "No public image links are collected yet. Return to Image Search and run Scan all websites first."
-            return
-        }
         scanButton.isEnabled = false
         progress.visibility = ProgressBar.VISIBLE
-        progress.max = candidates.size
         progress.progress = 0
         resultsContainer.removeAllViews()
-        status.text = "Preparing on-device face matcher…"
+        status.text = "Preparing automatic public-source scan…"
         executor.execute {
             var interpreter: Interpreter? = null
             var detector: FaceDetector? = null
             val alignedReferences = mutableListOf<Bitmap>()
+            val candidateDatabase = PublicSourceDatabase(this)
             try {
+                val sources = candidateDatabase.sources().filter { it.enabled }
+                require(sources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
+                progress.max = sources.size
+                var addedTotal = 0
+                var completedSources = 0
+                for (source in sources) {
+                    if (Thread.currentThread().isInterrupted) break
+                    runOnUiThread {
+                        status.text = "Discovering public images: ${source.name} (${completedSources + 1}/${sources.size})…"
+                    }
+                    try {
+                        val discovered = PublicSourceScanner.scan(source)
+                        val added = candidateDatabase.saveCandidates(discovered)
+                        addedTotal += added
+                        candidateDatabase.updateSourceStatus(
+                            source.id, "Checked; ${discovered.size} public image link(s), ${added} new"
+                        )
+                    } catch (e: Exception) {
+                        candidateDatabase.updateSourceStatus(
+                            source.id, "Could not scan: ${e.localizedMessage ?: "network error"}"
+                        )
+                    }
+                    completedSources++
+                    val done = completedSources
+                    runOnUiThread {
+                        progress.max = sources.size
+                        progress.progress = done
+                        status.text = "Website discovery: checked $done of ${sources.size}; found $addedTotal new image link(s)…"
+                    }
+                    // Sequential requests with a short pause avoid flooding public hosts.
+                    try { Thread.sleep(1200) } catch (_: InterruptedException) { break }
+                }
+
+                val candidates = candidateDatabase.allCandidates(5000)
+                require(candidates.isNotEmpty()) {
+                    "The catalogue scan finished, but its public sitemap/feed endpoints exposed no image links. Many sites do not publish crawlable image sitemaps."
+                }
+                runOnUiThread {
+                    progress.max = completedSources + candidates.size
+                    progress.progress = completedSources
+                    status.text = "Discovered ${candidateDatabase.candidateCount()} stored image link(s). Preparing on-device face matching for ${candidates.size} candidates…"
+                }
+
                 validateMobileFaceNetModel(model)
                 val activeInterpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
                 interpreter = activeInterpreter
@@ -468,7 +517,12 @@ class IdentityMatchActivity : AppCompatActivity() {
                         bitmap.recycle()
                     }
                 }
-                val report = StringBuilder("Using ${alignedReferences.size} reference photo(s). Candidate image files are processed in memory only.\n\n")
+
+                val report = StringBuilder(
+                    "Checked $completedSources of ${sources.size} public catalogue sources. " +
+                    "Found ${candidateDatabase.candidateCount()} stored image links; comparing up to ${candidates.size} candidates. " +
+                    "All selected reference photos are used. Image bytes stay in memory only.\n\n"
+                )
                 var checked = 0
                 var possibleMatches = 0
                 candidates.forEachIndexed { index, candidate ->
@@ -499,7 +553,10 @@ class IdentityMatchActivity : AppCompatActivity() {
                             val possible = angle != null && angle <= 74.18
                             if (possible) {
                                 possibleMatches++
-                                val preview = Bitmap.createScaledBitmap(bitmap, 220, (220f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), true)
+                                val preview = Bitmap.createScaledBitmap(
+                                    bitmap, 220,
+                                    (220f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), true
+                                )
                                 runOnUiThread { addWebMatchPreview(candidate.imageUrl, similarity ?: 0f, preview) }
                             }
                             report.append("${index + 1}. ${Uri.parse(candidate.imageUrl).host}: ${faces.size} face(s)")
@@ -508,21 +565,27 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 report.append(", cosine ${"%.3f".format(java.util.Locale.US, similarity)}, angle ${"%.1f".format(java.util.Locale.US, angle)}° - ")
                                 report.append(if (possible) "POSSIBLE MATCH" else "lower similarity")
                             }
-                            report.append("\n${candidate.imageUrl}\n")
+                            report.append("\n")
+                            candidateDatabase.updateCandidateStatus(candidate.id, if (possible) "Possible match" else "Compared")
                         } finally {
                             bitmap.recycle()
                         }
                     } catch (e: Exception) {
                         report.append("${index + 1}. ${Uri.parse(candidate.imageUrl).host ?: "website"}: skipped - ${e.localizedMessage ?: "image unavailable"}\n")
+                        candidateDatabase.updateCandidateStatus(candidate.id, "Unavailable")
                     }
                     checked++
                     val current = checked
                     runOnUiThread {
-                        progress.progress = current
-                        status.text = "Checked $current of ${candidates.size} collected image links…"
+                        progress.max = completedSources + candidates.size
+                        progress.progress = completedSources + current
+                        status.text = "Matching photos: $current of ${candidates.size} images checked. $possibleMatches possible match(es) so far."
                     }
                 }
-                report.append("\nFinished: $possibleMatches possible match(es). This is only a screening result, not proof of identity. Open and review any candidate manually.")
+                report.append(
+                    "\nFinished: $possibleMatches possible match(es). This only checks public image links exposed by the catalogue sources' sitemap/feed endpoints. " +
+                    "Some sites expose no links, and this is not a complete search of the internet. Review every candidate manually."
+                )
                 runOnUiThread {
                     status.text = report.toString()
                     progress.visibility = ProgressBar.GONE
@@ -530,7 +593,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    status.text = "Website image matching could not run: ${e.localizedMessage ?: "unknown error"}"
+                    status.text = "Automatic scan or matching could not finish: ${e.localizedMessage ?: "unknown error"}"
                     progress.visibility = ProgressBar.GONE
                     updateReady()
                 }
@@ -538,6 +601,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 alignedReferences.forEach { it.recycle() }
                 detector?.close()
                 interpreter?.close()
+                candidateDatabase.close()
             }
         }
     }
@@ -759,6 +823,7 @@ class IdentityMatchActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_WEB_SCAN_MODE = "com.example.face.EXTRA_WEB_SCAN_MODE"
+        const val EXTRA_AUTO_START = "com.example.face.EXTRA_AUTO_START"
         const val EXTRA_REFERENCE_URIS = "com.example.face.EXTRA_REFERENCE_URIS"
     }
 }

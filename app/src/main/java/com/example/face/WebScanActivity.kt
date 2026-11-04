@@ -87,36 +87,11 @@ class WebScanActivity : AppCompatActivity() {
         page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
 
         page.addView(TextView(this).apply {
-            text = "Supported public website database"
-            textSize = 19f
-            setPadding(0, dp(24), 0, dp(4))
-        })
-        page.addView(TextView(this).apply {
-            text = "Add the public website or forum domain you want included. The scanner checks its robots.txt sitemap declarations, standard sitemap files, and common public feeds. A domain is not marked as searchable unless it actually exposes one of these endpoints."
-            textSize = 13f
-            setPadding(0, 0, 0, dp(10))
+            text = "The built-in public-source catalogue is searched automatically. You do not need to select individual websites. The scanner respects public access limits and does not bypass logins, CAPTCHAs, robots restrictions, or site protections."
+            textSize = 14f
+            setPadding(0, dp(16), 0, dp(12))
         })
 
-        sourceNameInput = EditText(this).apply {
-            hint = "Site or forum name (optional)"
-            setSingleLine(true)
-        }
-        page.addView(sourceNameInput)
-        sourceUrlInput = EditText(this).apply {
-            hint = "example.com"
-            setSingleLine(true)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        }
-        page.addView(sourceUrlInput)
-        page.addSpaced(button("Add website to database") { addSource() }, 8)
-        bulkSourcesInput = EditText(this).apply {
-            hint = "Bulk import: one domain per line, or Name | domain"
-            minLines = 4
-            gravity = android.view.Gravity.TOP
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        }
-        page.addView(bulkSourcesInput)
-        page.addSpaced(button("Import website list") { importSources() }, 8)
         page.addSpaced(button("Choose photo(s) to search for") { referencePicker.launch(arrayOf("image/*")) }, 8)
         page.addSpaced(button("Scan all websites") { scanAllSources() }, 8)
         page.addSpaced(button("Scan websites and match my photo(s)") {
@@ -126,11 +101,6 @@ class WebScanActivity : AppCompatActivity() {
                 scanAllSources(matchSelectedPhotos = true)
             }
         }, 8)
-        page.addSpaced(button("Browse collected image links") { browseCollectedLinks() }, 8)
-        page.addSpaced(button("Open face matcher") { startActivity(Intent(this, IdentityMatchActivity::class.java)) }, 8)
-
-        sourceList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        page.addView(sourceList)
 
         status = TextView(this).apply {
             text = "No scan has been run yet."
@@ -138,7 +108,7 @@ class WebScanActivity : AppCompatActivity() {
             setPadding(0, dp(14), 0, dp(8))
         }
         page.addView(status)
-        refreshSources()
+        status.text = "${database.sources().size} public sources are ready. All are included automatically."
     }
 
     override fun onDestroy() {

@@ -420,7 +420,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         val model = modelFile ?: return
         val references = referenceUris.toList()
         if (references.isEmpty()) return
-        val candidates = PublicSourceDatabase(this).use { it.allCandidates(500) }
+        val candidateDatabase = PublicSourceDatabase(this)
+        val candidates = try { candidateDatabase.allCandidates(500) } finally { candidateDatabase.close() }
         if (candidates.isEmpty()) {
             status.text = "No public image links are collected yet. Return to Image Search and run Scan all websites first."
             return
@@ -436,17 +437,19 @@ class IdentityMatchActivity : AppCompatActivity() {
             val alignedReferences = mutableListOf<Bitmap>()
             try {
                 validateMobileFaceNetModel(model)
-                interpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
-                detector = FaceDetection.getClient(
+                val activeInterpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
+                interpreter = activeInterpreter
+                val activeDetector = FaceDetection.getClient(
                     FaceDetectorOptions.Builder()
                         .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
                         .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                         .build()
                 )
+                detector = activeDetector
                 references.forEachIndexed { index, uri ->
                     val bitmap = decode(uri)
                     try {
-                        val faces = Tasks.await(detector.process(InputImage.fromBitmap(bitmap, 0)))
+                        val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
                         val face = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
                             ?: throw IllegalArgumentException("No face found in reference photo ${index + 1}.")
                         alignedReferences += alignFace(bitmap, face)
@@ -461,7 +464,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     try {
                         val bitmap = downloadPublicImageInMemory(candidate.imageUrl)
                         try {
-                            val faces = Tasks.await(detector.process(InputImage.fromBitmap(bitmap, 0)))
+                            val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
                             var best: Float? = null
                             var skipped = 0
                             for (face in faces) {
@@ -469,7 +472,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 try {
                                     aligned = alignFace(bitmap, face)
                                     for (reference in alignedReferences) {
-                                        val score = comparePair(interpreter, reference, aligned)
+                                        val score = comparePair(activeInterpreter, reference, aligned)
                                         if (best == null || score > best!!) best = score
                                     }
                                 } catch (_: IllegalArgumentException) {

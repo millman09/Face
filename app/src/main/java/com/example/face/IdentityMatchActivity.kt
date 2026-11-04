@@ -402,7 +402,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         val outputShape = interpreter.getOutputTensor(0).shape()
         val output = ByteBuffer.allocateDirect(outputShape.fold(1) { acc, dim -> acc * dim } * 4)
             .order(ByteOrder.nativeOrder())
-        interpreter.runForMultipleInputsOutputs(inputs, mutableMapOf(0 to output))
+        interpreter.runForMultipleInputsOutputs(inputs, mutableMapOf<Int, Any>(0 to output))
         output.rewind()
         val firstEmbedding = FloatArray(128) { output.float }
         val secondEmbedding = FloatArray(128) { output.float }

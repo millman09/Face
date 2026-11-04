@@ -110,12 +110,11 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         writableDatabase.update("sources", values, "id=?", arrayOf(id.toString()))
     }
 
-    @Synchronized fun pendingCandidates(limit: Int = 100): List<StoredCandidate> {
+    @Synchronized fun allCandidates(limit: Int = 100): List<StoredCandidate> {
         val result = mutableListOf<StoredCandidate>()
         readableDatabase.rawQuery(
             """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
                FROM candidates c JOIN sources s ON s.id=c.source_id
-               WHERE c.scan_status='Discovered'
                ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
             arrayOf(limit.coerceIn(1, 500).toString())
         ).use { c ->
@@ -250,7 +249,7 @@ object PublicSourceScanner {
                                     pageUrl = value
                                 }
                             }
-                        }                        } else if (tag == "enclosure" || (tag == "link" && parser.getAttributeValue(null, "rel") == "enclosure")) {
+                        } else if (tag == "enclosure" || (tag == "link" && parser.getAttributeValue(null, "rel") == "enclosure")) {
                             val value = parser.getAttributeValue(null, "url")
                                 ?: parser.getAttributeValue(null, "href")
                             if (value != null && isImageUrl(value)) {

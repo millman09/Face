@@ -5,7 +5,7 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
-import android.view.ViewGroup
+import android.view.View
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -21,41 +21,26 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * First stage of the local scanner.
+ * Detects and counts faces in photos the user picks.
  *
- * This screen detects and counts faces in user-selected photos. It does NOT yet
- * identify a person or compare facial identity. Identity matching requires a
- * separate, reviewed face-embedding model and is intentionally not represented
- * by face-detection results.
+ * This screen does NOT identify anyone or compare faces. Matching lives in
+ * IdentityMatchActivity. Photos are read once, on this phone, and access to
+ * them is not kept after the scan.
  */
 class ScanActivity : AppCompatActivity() {
 
-    private lateinit var referenceLabel: TextView
     private lateinit var results: TextView
     private lateinit var progress: ProgressBar
     private lateinit var scanButton: MaterialButton
     private lateinit var detector: FaceDetector
     private lateinit var decodeExecutor: ExecutorService
 
-    private var referenceUri: Uri? = null
     private var selectedImages: List<Uri> = emptyList()
     private var currentIndex = 0
     private var totalFaces = 0
 
-    private val preferences by lazy { getSharedPreferences("local_scan", MODE_PRIVATE) }
-
-    private val referencePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            persistReadPermission(uri)
-            referenceUri = uri
-            preferences.edit().putString("reference_uri", uri.toString()).apply()
-            referenceLabel.text = "Reference photo: ${displayName(uri)}"
-        }
-    }
-
     private val imagePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
-            uris.forEach { persistReadPermission(it) }
             selectedImages = uris
             results.text = "${uris.size} images selected. Press Scan selected images."
             scanButton.isEnabled = true
@@ -65,6 +50,10 @@ class ScanActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         decodeExecutor = Executors.newSingleThreadExecutor()
+
+        // Earlier versions saved a reference-photo address here. It was never used, so clear it.
+        getSharedPreferences("local_scan", MODE_PRIVATE).edit().clear().apply()
+
         val options = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
@@ -72,41 +61,24 @@ class ScanActivity : AppCompatActivity() {
             .build()
         detector = FaceDetection.getClient(options)
 
-        val root = LinearLayout(this).apply {
+        val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 32, 40, 32)
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
+            setPadding(dp(20), dp(16), dp(20), dp(24))
         }
-        setContentView(root)
+        setScrollablePage(page)
 
-        root.addView(TextView(this).apply {
+        page.addView(TextView(this).apply {
             text = "On-device photo scan"
             textSize = 24f
-            setPadding(0, 0, 0, 20)
+            setPadding(0, 0, 0, dp(8))
         })
-        root.addView(TextView(this).apply {
-            text = "Select a reference photo, then select pictures on your phone to inspect. Android's photo picker grants access only to the images you choose."
+        page.addView(TextView(this).apply {
+            text = "Pick photos on your phone and this screen counts the faces in each one. Nothing is uploaded, and Android only gives the app the photos you choose."
             textSize = 16f
-            setPadding(0, 0, 0, 20)
+            setPadding(0, 0, 0, dp(16))
         })
 
-        referenceLabel = TextView(this).apply {
-            textSize = 14f
-            text = "Reference photo: none selected"
-            setPadding(0, 8, 0, 16)
-        }
-        root.addView(referenceLabel)
-
-        root.addView(MaterialButton(this).apply {
-            text = "Choose my reference photo"
-            isAllCaps = false
-            setOnClickListener { referencePicker.launch(arrayOf("image/*")) }
-        })
-
-        root.addView(MaterialButton(this).apply {
+        page.addSpaced(MaterialButton(this).apply {
             text = "Choose images to scan"
             isAllCaps = false
             setOnClickListener { imagePicker.launch(arrayOf("image/*")) }
@@ -118,26 +90,21 @@ class ScanActivity : AppCompatActivity() {
             isEnabled = false
             setOnClickListener { beginScan() }
         }
-        root.addView(scanButton)
+        page.addSpaced(scanButton)
 
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
-            progress = 0
-            visibility = ProgressBar.GONE
+            this.progress = 0
+            visibility = View.GONE
         }
-        root.addView(progress)
+        page.addView(progress)
 
         results = TextView(this).apply {
             textSize = 15f
-            setPadding(0, 20, 0, 0)
+            setPadding(0, dp(16), 0, 0)
             text = "No scan has been run yet."
         }
-        root.addView(results)
-
-        preferences.getString("reference_uri", null)?.let {
-            referenceUri = Uri.parse(it)
-            referenceLabel.text = "Saved reference photo: ${displayName(referenceUri!!)}"
-        }
+        page.addView(results)
     }
 
     private fun beginScan() {
@@ -149,9 +116,15 @@ class ScanActivity : AppCompatActivity() {
         totalFaces = 0
         progress.max = selectedImages.size
         progress.progress = 0
-        progress.visibility = ProgressBar.VISIBLE
+        progress.visibility = View.VISIBLE
         scanButton.isEnabled = false
         results.text = "Scanning locally…\n"
+        scanNext()
+    }
+
+    private fun advance() {
+        currentIndex++
+        progress.progress = currentIndex
         scanNext()
     }
 
@@ -159,8 +132,8 @@ class ScanActivity : AppCompatActivity() {
         if (isFinishing || isDestroyed) return
         if (currentIndex >= selectedImages.size) {
             results.append("\nFinished. Found $totalFaces face(s) across ${selectedImages.size} image(s).")
-            results.append("\n\nImportant: this is face detection only, not identity matching. A detected face is not evidence that it is you.")
-            progress.visibility = ProgressBar.GONE
+            results.append("\n\nThis is face detection only, not identity matching. A detected face is not evidence that it is you.")
+            progress.visibility = View.GONE
             scanButton.isEnabled = true
             return
         }
@@ -175,28 +148,31 @@ class ScanActivity : AppCompatActivity() {
                         bitmap.recycle()
                         return@runOnUiThread
                     }
-                    detector.process(InputImage.fromBitmap(bitmap, 0))
+                    val image = try {
+                        InputImage.fromBitmap(bitmap, 0)
+                    } catch (error: Exception) {
+                        bitmap.recycle()
+                        results.append("$itemNumber. ${displayName(uri)}: unable to read image (${error.localizedMessage ?: "unknown error"})\n")
+                        advance()
+                        return@runOnUiThread
+                    }
+                    detector.process(image)
                         .addOnSuccessListener { faces ->
                             totalFaces += faces.size
-                            val name = displayName(uri)
-                            results.append("$itemNumber. $name: ${faces.size} face(s) detected\n")
+                            results.append("$itemNumber. ${displayName(uri)}: ${faces.size} face(s) detected\n")
                         }
                         .addOnFailureListener { error ->
                             results.append("$itemNumber. ${displayName(uri)}: scan failed (${error.localizedMessage ?: "unknown error"})\n")
                         }
                         .addOnCompleteListener {
                             bitmap.recycle()
-                            currentIndex++
-                            progress.progress = currentIndex
-                            scanNext()
+                            advance()
                         }
                 }
             } catch (error: Exception) {
                 runOnUiThread {
                     results.append("$itemNumber. ${displayName(uri)}: unable to read image (${error.localizedMessage ?: "unknown error"})\n")
-                    currentIndex++
-                    progress.progress = currentIndex
-                    scanNext()
+                    advance()
                 }
             }
         }
@@ -205,6 +181,8 @@ class ScanActivity : AppCompatActivity() {
     private fun decodeScaled(uri: Uri): Bitmap {
         val source = ImageDecoder.createSource(contentResolver, uri)
         return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+            // ML Kit cannot read hardware-backed bitmaps, so ask for a normal one.
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             val width = info.size.width
             val height = info.size.height
             val scale = minOf(1f, 1600f / maxOf(width, height))
@@ -212,15 +190,6 @@ class ScanActivity : AppCompatActivity() {
                 (width * scale).toInt().coerceAtLeast(1),
                 (height * scale).toInt().coerceAtLeast(1)
             )
-            decoder.isMutableRequired = false
-        }
-    }
-
-    private fun persistReadPermission(uri: Uri) {
-        try {
-            contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        } catch (_: SecurityException) {
-            // Some document providers do not offer persistable permissions.
         }
     }
 

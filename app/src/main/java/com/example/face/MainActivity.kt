@@ -74,31 +74,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildProtect(container: LinearLayout) {
         addText(container, getString(R.string.protect_intro))
-        val scanButton = MaterialButton(this).apply {
-            text = "Scan photos on this phone"
-            isAllCaps = false
-            setOnClickListener { startActivity(Intent(this@MainActivity, ScanActivity::class.java)) }
-        }
-        container.addView(scanButton)
+        addActionButton(container, "Scan photos on this phone", ScanActivity::class.java)
+        addActionButton(container, "Match my face in selected photos", IdentityMatchActivity::class.java)
+        addActionButton(container, "Search three free image sources", WebScanActivity::class.java)
 
-        val matchButton = MaterialButton(this).apply {
-            text = "Match my face in selected photos"
-            isAllCaps = false
-            setOnClickListener { startActivity(Intent(this@MainActivity, IdentityMatchActivity::class.java)) }
-        }
-        container.addView(matchButton)
-
-        val webScanButton = MaterialButton(this).apply {
-            text = "Search three free image sources"
-            isAllCaps = false
-            setOnClickListener { startActivity(Intent(this@MainActivity, WebScanActivity::class.java)) }
-        }
-        container.addView(webScanButton)
-
-        addText(container, "Face matching runs locally and requires a compatible MobileFaceNet model file. Web search opens Yandex Images, a SearXNG instance, and DuckDuckGo Images; it does not automatically scan their results.")
+        addText(
+            container,
+            "Face matching runs on this phone. The first time, it downloads a small model file (about 4 MB) from Qualcomm AI Hub, and your photos are never uploaded. Web search opens Yandex Images, a SearXNG instance, and DuckDuckGo Images in your browser; it does not scan their results for you. Use these tools with your own photos."
+        )
         addSection(container, getString(R.string.section_help))
         protectLinks.forEach { addLinkCard(container, it) }
         addText(container, getString(R.string.safety_note))
+    }
+
+    private fun addActionButton(container: LinearLayout, label: String, screen: Class<*>) {
+        container.addSpaced(MaterialButton(this).apply {
+            text = label
+            isAllCaps = false
+            setOnClickListener { startActivity(Intent(this@MainActivity, screen)) }
+        })
     }
 
     private fun buildChecklist(container: LinearLayout) {

@@ -9,7 +9,6 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
-import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -51,27 +50,11 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var referenceUri: Uri? = null
     private var imageUris: List<Uri> = emptyList()
     private val executor = Executors.newSingleThreadExecutor()
-    private var detector: FaceDetector? = null
     private val modelUrl = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobile_facenet/releases/v0.65.0/mobile_facenet-tflite-float.zip"
     private val modelTargetName = "qualcomm_mobilefacenet.tflite"
 
     private val modelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            try {
-                val target = File(filesDir, modelTargetName)
-                contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(target).use { output -> input.copyTo(output) }
-                } ?: throw IllegalStateException("Could not read the selected model.")
-                validateMobileFaceNetModel(target)
-                modelFile = target
-                status.text = "Compatible MobileFaceNet model selected (${target.length() / 1024} KB). Choose your reference photo and candidate images."
-                updateReady()
-            } catch (e: Exception) {
-                modelFile = null
-                status.text = "Model import failed: ${e.localizedMessage ?: "unknown error"}"
-                updateReady()
-            }
-        }
+        if (uri != null) importModel(uri)
     }
     private val referencePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) { referenceUri = uri; status.text = "Reference photo selected."; updateReady() }
@@ -84,10 +67,9 @@ class IdentityMatchActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(36, 28, 36, 36)
-            layoutParams = ViewGroup.LayoutParams(-1, -1)
+            setPadding(dp(20), dp(16), dp(20), dp(24))
         }
-        setContentView(root)
+        setScrollablePage(root)
         root.addView(TextView(this).apply {
             text = "On-device face matching"
             textSize = 24f
@@ -110,8 +92,8 @@ class IdentityMatchActivity : AppCompatActivity() {
             isEnabled = false
             setOnClickListener { runComparison() }
         }
-        root.addView(scanButton)
-        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { visibility = ProgressBar.GONE }
+        root.addSpaced(scanButton)
+        progress =ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { visibility = ProgressBar.GONE }
         root.addView(progress)
         status = TextView(this).apply {
             text = "No model or images selected."
@@ -167,6 +149,50 @@ class IdentityMatchActivity : AppCompatActivity() {
 
     private fun addCandidateUris(uris: List<Uri>) {
         imageUris = (imageUris + uris).distinct()
+    }
+
+    /**
+     * Copies a user-chosen model into app storage and checks it off the main thread.
+     * The file is validated before it replaces anything, so a bad pick never
+     * destroys a model that already works.
+     */
+    private fun importModel(uri: Uri) {
+        status.text = "Checking the selected model…"
+        scanButton.isEnabled = false
+        executor.execute {
+            val temp = File(filesDir, "$modelTargetName.import")
+            try {
+                var total = 0L
+                contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(temp).use { output ->
+                        val buffer = ByteArray(16 * 1024)
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            require(total <= 30L * 1024L * 1024L) { "Model file is unexpectedly large." }
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                } ?: throw IllegalStateException("Could not read the selected model.")
+                require(total > 100_000L) { "The selected file is empty or too small to be this model." }
+                validateMobileFaceNetModel(temp)
+                val target = File(filesDir, modelTargetName)
+                if (target.exists()) target.delete()
+                check(temp.renameTo(target)) { "Could not save the model in app storage." }
+                modelFile = target
+                runOnUiThread {
+                    status.text = "Compatible MobileFaceNet model selected (${target.length() / 1024} KB). Choose your reference photo and candidate images."
+                    updateReady()
+                }
+            } catch (e: Exception) {
+                temp.delete()
+                runOnUiThread {
+                    status.text = "Model import failed: ${e.localizedMessage ?: "unknown error"}. Any model you installed before was kept."
+                    updateReady()
+                }
+            }
+        }
     }
 
     private fun downloadOfficialModel() {
@@ -262,7 +288,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     }
 
     private fun addButton(root: LinearLayout, label: String, action: () -> Unit) {
-        root.addView(MaterialButton(this).apply { text = label; isAllCaps = false; setOnClickListener { action() } })
+        root.addSpaced(MaterialButton(this).apply { text = label; isAllCaps = false; setOnClickListener { action() } })
     }
 
     private fun updateReady() {
@@ -298,26 +324,45 @@ class IdentityMatchActivity : AppCompatActivity() {
                 referenceAligned = alignFace(referenceBitmap, referenceFace)
                 referenceBitmap.recycle()
 
-                val report = StringBuilder("Reference face aligned for this scan session.\n")
+                val referenceNote = if (referenceFaces.size > 1) {
+                    "The reference photo has ${referenceFaces.size} faces, so the largest one was used.\n"
+                } else {
+                    ""
+                }
+                val report = StringBuilder("Reference face aligned for this scan session.\n$referenceNote")
                 var checked = 0
                 var matched = 0
                 candidates.forEachIndexed { index, uri ->
                     try {
                         val bitmap = decode(uri)
-                        val faces = Tasks.await(faceDetector.process(InputImage.fromBitmap(bitmap, 0)))
                         var best: Float? = null
-                        faces.forEach { face ->
-                            val aligned = alignFace(bitmap, face)
-                            val score = comparePair(interpreter, referenceAligned!!, aligned)
-                            aligned.recycle()
-                            if (best == null || score > best!!) best = score
+                        var skipped = 0
+                        val faces = try {
+                            val detected = Tasks.await(faceDetector.process(InputImage.fromBitmap(bitmap, 0)))
+                            detected.forEach { face ->
+                                try {
+                                    val aligned = alignFace(bitmap, face)
+                                    try {
+                                        val score = comparePair(interpreter, referenceAligned!!, aligned)
+                                        if (best == null || score > best!!) best = score
+                                    } finally {
+                                        aligned.recycle()
+                                    }
+                                } catch (e: IllegalArgumentException) {
+                                    // A face seen from the side may lack the landmarks needed to align it.
+                                    skipped++
+                                }
+                            }
+                            detected
+                        } finally {
+                            bitmap.recycle()
                         }
-                        bitmap.recycle()
                         val similarity = best
                         val angle = if (similarity != null) Math.toDegrees(acos(similarity.coerceIn(-1f, 1f).toDouble())) else null
                         val possible = angle != null && angle <= 74.18
                         if (possible) matched++
                         report.append("${index + 1}. ${displayName(uri)}: ${faces.size} face(s)")
+                        if (skipped > 0) report.append(" ($skipped skipped, landmarks not clear)")
                         if (similarity != null && angle != null) {
                             report.append(", cosine ${"%.3f".format(java.util.Locale.US, similarity)}, angle ${"%.1f".format(java.util.Locale.US, angle)}° - ")
                             report.append(if (possible) "POSSIBLE MATCH" else "lower similarity")

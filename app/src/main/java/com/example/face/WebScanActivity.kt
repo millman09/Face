@@ -3,14 +3,14 @@ package com.example.face
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.view.ViewGroup
-import android.widget.Button
+import android.text.InputType
+import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.button.MaterialButton
 
 /**
  * Free public image-search launchers.
@@ -30,74 +30,74 @@ class WebScanActivity : AppCompatActivity() {
 
         val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(36, 28, 36, 36)
+            setPadding(dp(20), dp(16), dp(20), dp(24))
         }
-        val scroll = ScrollView(this)
-        scroll.addView(page)
-        setContentView(scroll)
+        setScrollablePage(page)
 
         page.addView(TextView(this).apply {
             text = "Free public image search"
             textSize = 24f
-            setPadding(0, 0, 0, 18)
+            setPadding(0, 0, 0, dp(8))
         })
         page.addView(TextView(this).apply {
             text = "Run the same text search through Yandex Images, a SearXNG instance, and DuckDuckGo Images. These are public-web searches, not face recognition. They may miss pages and images, and results need to be checked manually."
             textSize = 15f
-            setPadding(0, 0, 0, 18)
+            setPadding(0, 0, 0, dp(16))
         })
 
         queryInput = EditText(this).apply {
             hint = "Search terms, usernames, or site names"
             minLines = 2
+            // Keep the keyboard from suggesting or learning what you type here.
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         }
-        page.addView(queryInput)
+        page.addSpaced(queryInput, 12)
 
         page.addView(TextView(this).apply {
             text = "SearXNG instance address"
             textSize = 14f
-            setPadding(0, 12, 0, 4)
+            setPadding(0, dp(4), 0, dp(4))
         })
         searxInput = EditText(this).apply {
             hint = "https://your-trusted-searxng-instance.example"
             setSingleLine(true)
             setText("https://searx.be")
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_URI or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         }
         page.addView(searxInput)
 
         page.addView(TextView(this).apply {
             text = "SearXNG is community-hosted. Public instances can change or disappear, and their operators may see your searches. Use an instance you trust. You can change the address above."
             textSize = 13f
-            setPadding(0, 4, 0, 16)
+            setPadding(0, dp(4), 0, dp(16))
         })
 
-        page.addView(Button(this).apply {
-            text = "Search all three"
-            isAllCaps = false
-            setOnClickListener { searchAll() }
+        page.addSpaced(button("Search all three") { searchAll() })
+        page.addSpaced(button("Yandex Images only") { currentQuery()?.let { openLink(yandexUrl(it)) } })
+        page.addSpaced(button("SearXNG only") {
+            val query = currentQuery() ?: return@button
+            searxUrl(query)?.let { openLink(it) }
         })
-        page.addView(Button(this).apply {
-            text = "Yandex Images only"
-            isAllCaps = false
-            setOnClickListener { openSearch(yandexUrl()) }
-        })
-        page.addView(Button(this).apply {
-            text = "SearXNG only"
-            isAllCaps = false
-            setOnClickListener { openSearch(searxUrl()) }
-        })
-        page.addView(Button(this).apply {
-            text = "DuckDuckGo Images only"
-            isAllCaps = false
-            setOnClickListener { openSearch(duckDuckGoUrl()) }
-        })
+        page.addSpaced(button("DuckDuckGo Images only") { currentQuery()?.let { openLink(duckDuckGoUrl(it)) } })
 
         status = TextView(this).apply {
             text = "No searches opened yet."
             textSize = 14f
-            setPadding(0, 18, 0, 8)
+            setPadding(0, dp(12), 0, dp(8))
         }
         page.addView(status)
+    }
+
+    private fun button(label: String, action: () -> Unit) = MaterialButton(this).apply {
+        text = label
+        isAllCaps = false
+        setOnClickListener { action() }
     }
 
     private fun currentQuery(): String? {
@@ -109,28 +109,23 @@ class WebScanActivity : AppCompatActivity() {
         return query
     }
 
-    private fun yandexUrl(): String? {
-        val query = currentQuery() ?: return null
-        return Uri.parse("https://yandex.com/images/search")
+    private fun yandexUrl(query: String): String =
+        Uri.parse("https://yandex.com/images/search")
             .buildUpon()
             .appendQueryParameter("text", query)
             .build()
             .toString()
-    }
 
-    private fun duckDuckGoUrl(): String? {
-        val query = currentQuery() ?: return null
-        return Uri.parse("https://duckduckgo.com/")
+    private fun duckDuckGoUrl(query: String): String =
+        Uri.parse("https://duckduckgo.com/")
             .buildUpon()
             .appendQueryParameter("q", query)
             .appendQueryParameter("ia", "images")
             .appendQueryParameter("iax", "images")
             .build()
             .toString()
-    }
 
-    private fun searxUrl(): String? {
-        val query = currentQuery() ?: return null
+    private fun searxUrl(query: String): String? {
         val raw = searxInput.text.toString().trim()
         val base = try {
             Uri.parse(raw)
@@ -141,8 +136,7 @@ class WebScanActivity : AppCompatActivity() {
             Toast.makeText(this, "Enter a valid HTTPS SearXNG instance address.", Toast.LENGTH_LONG).show()
             return null
         }
-        val cleanBase = raw.trimEnd('/')
-        return Uri.parse("$cleanBase/search")
+        return Uri.parse(raw.trimEnd('/') + "/search")
             .buildUpon()
             .appendQueryParameter("q", query)
             .appendQueryParameter("categories", "images")
@@ -153,17 +147,8 @@ class WebScanActivity : AppCompatActivity() {
 
     private fun searchAll() {
         val query = currentQuery() ?: return
-        val urls = listOfNotNull(
-            Uri.parse("https://yandex.com/images/search").buildUpon()
-                .appendQueryParameter("text", query).build().toString(),
-            searxUrl(),
-            Uri.parse("https://duckduckgo.com/").buildUpon()
-                .appendQueryParameter("q", query)
-                .appendQueryParameter("ia", "images")
-                .appendQueryParameter("iax", "images")
-                .build().toString()
-        )
-        if (urls.size != 3) return
+        // If the SearXNG address is invalid, still open the other two.
+        val urls = listOfNotNull(yandexUrl(query), searxUrl(query), duckDuckGoUrl(query))
 
         var opened = 0
         for (url in urls) {
@@ -171,18 +156,13 @@ class WebScanActivity : AppCompatActivity() {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 opened++
             } catch (_: Exception) {
-                // Continue opening the remaining search providers.
+                // Keep going so the remaining search providers still open.
             }
         }
-        status.text = "Opened $opened of 3 search pages. Check each result page in your browser."
+        status.text = "Opened $opened of ${urls.size} search pages. Check each result page in your browser."
         if (opened == 0) {
             Toast.makeText(this, "No browser could open the search pages.", Toast.LENGTH_LONG).show()
         }
-    }
-
-    private fun openSearch(url: String?) {
-        if (url == null) return
-        openLink(url)
     }
 
     private fun openLink(link: String) {

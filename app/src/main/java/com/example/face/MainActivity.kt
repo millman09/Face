@@ -81,6 +81,13 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(scanButton)
 
+        val matchButton = MaterialButton(this).apply {
+            text = "Match my face in selected photos"
+            isAllCaps = false
+            setOnClickListener { startActivity(Intent(this@MainActivity, IdentityMatchActivity::class.java)) }
+        }
+        container.addView(matchButton)
+
         val webScanButton = MaterialButton(this).apply {
             text = "Search three free image sources"
             isAllCaps = false
@@ -88,7 +95,7 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(webScanButton)
 
-        addText(container, "The phone scanner detects faces in selected photos. Web search opens Yandex Images, a SearXNG instance, and DuckDuckGo Images. These searches do not identify people automatically.")
+        addText(container, "Face matching runs locally and requires a compatible MobileFaceNet model file. Web search opens Yandex Images, a SearXNG instance, and DuckDuckGo Images; it does not automatically scan their results.")
         addSection(container, getString(R.string.section_help))
         protectLinks.forEach { addLinkCard(container, it) }
         addText(container, getString(R.string.safety_note))

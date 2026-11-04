@@ -76,6 +76,7 @@ class MainActivity : AppCompatActivity() {
         buildHelp(findViewById(R.id.helpContainer))
         buildChecklist(findViewById(R.id.checklistContainer))
         updateProgress()
+        startModelPrefetch()
 
         val panels = mapOf(
             R.id.nav_tools to findViewById<View>(R.id.panelTools),
@@ -93,6 +94,29 @@ class MainActivity : AppCompatActivity() {
         panels.forEach { (id, panel) ->
             panel.visibility = if (id == nav.selectedItemId) View.VISIBLE else View.GONE
         }
+    }
+
+    /**
+     * Begin downloading the face model in the background on first launch.
+     * Android does not allow a normal app to execute code at install time.
+     * A failed download is retried the next time the app is opened.
+     */
+    private fun startModelPrefetch() {
+        Thread({
+            try {
+                MobileFaceNetModel.ensureDownloaded(applicationContext)
+            } catch (error: Exception) {
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        Toast.makeText(
+                            this,
+                            "Face model download could not finish. It will retry next time you open the app.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }, "MobileFaceNet-first-launch-download").start()
     }
 
     private fun buildTools(container: LinearLayout) {

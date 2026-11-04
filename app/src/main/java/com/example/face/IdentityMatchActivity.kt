@@ -66,7 +66,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         if (uri != null) { referenceUri = uri; status.text = "Reference photo selected."; updateReady() }
     }
     private val imagesPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) { imageUris = uris; status.text = "${uris.size} candidate images selected."; updateReady() }
+        if (uris.isNotEmpty()) { addCandidateUris(uris); status.text = "${imageUris.size} candidate image(s) ready."; updateReady() }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,6 +105,53 @@ class IdentityMatchActivity : AppCompatActivity() {
             setPadding(0, 16, 0, 0)
         }
         root.addView(status)
+        handleSharedImages(intent)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleSharedImages(intent)
+    }
+
+    private fun handleSharedImages(incoming: android.content.Intent?) {
+        if (incoming == null) return
+        val shared = mutableListOf<Uri>()
+        when (incoming.action) {
+            Intent.ACTION_SEND -> {
+                val uri = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    incoming.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    incoming.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+                }
+                if (uri != null) shared.add(uri)
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                val items = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    incoming.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    incoming.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+                }
+                if (items != null) shared.addAll(items)
+            }
+        }
+        val clip = incoming.clipData
+        if (clip != null) {
+            for (i in 0 until clip.itemCount) {
+                clip.getItemAt(i).uri?.let { shared.add(it) }
+            }
+        }
+        if (shared.isNotEmpty()) {
+            addCandidateUris(shared)
+            status.text = "Received ${shared.distinct().size} shared image(s). Choose your model and reference photo, then compare."
+            updateReady()
+        }
+    }
+
+    private fun addCandidateUris(uris: List<Uri>) {
+        imageUris = (imageUris + uris).distinct()
     }
 
     private fun addButton(root: LinearLayout, label: String, action: () -> Unit) {

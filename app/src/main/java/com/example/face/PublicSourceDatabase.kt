@@ -270,7 +270,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
                FROM candidates c JOIN sources s ON s.id=c.source_id
                ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
-            arrayOf(limit.coerceIn(1, 500).toString())
+            arrayOf(limit.coerceIn(1, 5000).toString())
         ).use { c ->
             while (c.moveToNext()) result += StoredCandidate(
                 c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4)

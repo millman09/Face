@@ -1,7 +1,10 @@
 package com.example.face
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.content.Intent
 import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Bundle
@@ -16,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
+import com.google.mlkit.vision.face.FaceLandmark
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
@@ -26,7 +30,12 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executors
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.zip.ZipInputStream
+import java.io.BufferedInputStream
 import kotlin.math.sqrt
+import kotlin.math.acos
 
 /**
  * Local 1:N face comparison. The user supplies a MobileFaceNet-compatible
@@ -46,6 +55,8 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var imageUris: List<Uri> = emptyList()
     private val executor = Executors.newSingleThreadExecutor()
     private var detector: FaceDetector? = null
+    private val modelUrl = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobile_facenet/releases/v0.65.0/mobile_facenet-tflite-float.zip"
+    private val modelTargetName = "qualcomm_mobilefacenet.tflite"
 
     private val modelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -54,11 +65,14 @@ class IdentityMatchActivity : AppCompatActivity() {
                 contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(target).use { output -> input.copyTo(output) }
                 } ?: throw IllegalStateException("Could not read the selected model.")
+                validateMobileFaceNetModel(target)
                 modelFile = target
-                status.text = "Model selected: ${target.length() / 1024} KB. Choose your reference photo and scan images."
+                status.text = "Compatible MobileFaceNet model selected (${target.length() / 1024} KB). Choose your reference photo and candidate images."
                 updateReady()
             } catch (e: Exception) {
+                modelFile = null
                 status.text = "Model import failed: ${e.localizedMessage ?: "unknown error"}"
+                updateReady()
             }
         }
     }
@@ -83,11 +97,14 @@ class IdentityMatchActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 12)
         })
         root.addView(TextView(this).apply {
-            text = "This compares face embeddings locally. Select a compatible MobileFaceNet TFLite model, one clear reference photo, and images to inspect. Nothing is uploaded. The model file is not bundled; only use a model whose license and input/output format you have verified."
+            text = "Downloads Qualcomm AI Hub MobileFaceNet directly from its public model release. The model runs on this phone. Select one clear reference photo and candidate images. The model needs two aligned face images per comparison; images are not uploaded."
             textSize = 14f
             setPadding(0, 0, 0, 16)
         })
-        addButton(root, "Choose TFLite face model") { modelPicker.launch(arrayOf("*/*")) }
+        val existingModel = File(filesDir, modelTargetName)
+        if (existingModel.exists()) modelFile = existingModel
+        addButton(root, "Download official MobileFaceNet model (~4 MB)") { downloadOfficialModel() }
+        addButton(root, "Choose compatible TFLite model") { modelPicker.launch(arrayOf("*/*")) }
         addButton(root, "Choose reference photo") { referencePicker.launch(arrayOf("image/*")) }
         addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
         scanButton = MaterialButton(this).apply {
@@ -106,6 +123,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
         root.addView(status)
         handleSharedImages(intent)
+        updateReady()
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -154,6 +172,98 @@ class IdentityMatchActivity : AppCompatActivity() {
         imageUris = (imageUris + uris).distinct()
     }
 
+    private fun downloadOfficialModel() {
+        if (modelFile?.exists() == true) {
+            status.text = "MobileFaceNet is already installed on this phone."
+            updateReady()
+            return
+        }
+        status.text = "Downloading official MobileFaceNet model…"
+        scanButton.isEnabled = false
+        executor.execute {
+            var connection: HttpURLConnection? = null
+            val target = File(filesDir, modelTargetName)
+            val temp = File(filesDir, "$modelTargetName.tmp")
+            try {
+                connection = (URL(modelUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 20000
+                    readTimeout = 60000
+                    instanceFollowRedirects = true
+                    requestMethod = "GET"
+                }
+                connection.connect()
+                require(connection.responseCode in 200..299) { "Model download returned HTTP ${connection.responseCode}." }
+                var extracted = false
+                ZipInputStream(BufferedInputStream(connection.inputStream)).use { zip ->
+                    var entry = zip.nextEntry
+                    while (entry != null) {
+                        if (!entry.isDirectory && entry.name.lowercase().endsWith(".tflite")) {
+                            var total = 0L
+                            FileOutputStream(temp).use { output ->
+                                val buffer = ByteArray(16 * 1024)
+                                while (true) {
+                                    val count = zip.read(buffer)
+                                    if (count < 0) break
+                                    total += count
+                                    require(total <= 30L * 1024L * 1024L) { "Model file is unexpectedly large." }
+                                    output.write(buffer, 0, count)
+                                }
+                            }
+                            require(total > 100_000L) { "The model file in the archive is empty or incomplete." }
+                            extracted = true
+                            break
+                        }
+                        zip.closeEntry()
+                        entry = zip.nextEntry
+                    }
+                }
+                require(extracted) { "The official archive did not contain a TFLite model." }
+                validateMobileFaceNetModel(temp)
+                if (target.exists()) target.delete()
+                check(temp.renameTo(target)) { "Could not save the model in app storage." }
+                modelFile = target
+                runOnUiThread {
+                    status.text = "Official MobileFaceNet downloaded and validated. Choose your reference photo and candidate images."
+                    updateReady()
+                }
+            } catch (e: Exception) {
+                temp.delete()
+                runOnUiThread {
+                    status.text = "Model download failed: ${e.localizedMessage ?: "unknown error"}. You can retry when connected to the internet."
+                    updateReady()
+                }
+            } finally {
+                connection?.disconnect()
+            }
+        }
+    }
+
+    private fun validateMobileFaceNetModel(file: File) {
+        val interpreter = Interpreter(file, Interpreter.Options().setNumThreads(2))
+        try {
+            require(interpreter.inputTensorCount == 2) {
+                "This model must accept two face images for pairwise verification."
+            }
+            for (i in 0..1) {
+                val shape = interpreter.getInputTensor(i).shape()
+                val nhwc = shape.contentEquals(intArrayOf(1, 112, 112, 3))
+                val nchw = shape.contentEquals(intArrayOf(1, 3, 112, 112))
+                require(nhwc || nchw) { "Input $i has unsupported shape ${shape.contentToString()}." }
+                require(interpreter.getInputTensor(i).dataType() == org.tensorflow.lite.DataType.FLOAT32) {
+                    "Input $i must be float32."
+                }
+            }
+            require(interpreter.outputTensorCount == 1) { "Expected one embedding output tensor." }
+            val output = interpreter.getOutputTensor(0)
+            val elements = output.shape().fold(1) { acc, dim -> acc * dim }
+            require(elements == 256 && output.dataType() == org.tensorflow.lite.DataType.FLOAT32) {
+                "Expected 256 float32 output values (two 128-value embeddings), got ${output.shape().contentToString()}."
+            }
+        } finally {
+            interpreter.close()
+        }
+    }
+
     private fun addButton(root: LinearLayout, label: String, action: () -> Unit) {
         root.addView(MaterialButton(this).apply { text = label; isAllCaps = false; setOnClickListener { action() } })
     }
@@ -170,56 +280,54 @@ class IdentityMatchActivity : AppCompatActivity() {
         progress.visibility = ProgressBar.VISIBLE
         progress.max = candidates.size
         progress.progress = 0
-        status.text = "Preparing local face matcher…"
+        status.text = "Preparing local MobileFaceNet matcher…"
         executor.execute {
             var interpreter: Interpreter? = null
             var faceDetector: FaceDetector? = null
+            var referenceAligned: Bitmap? = null
             try {
+                validateMobileFaceNetModel(model)
                 interpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
-                val inputShape = interpreter.getInputTensor(0).shape()
-                val outputShape = interpreter.getOutputTensor(0).shape()
-                require(inputShape.contentEquals(intArrayOf(1, 112, 112, 3))) {
-                    "Unsupported model input ${inputShape.contentToString()}. Expected [1,112,112,3]."
-                }
-                require(outputShape.size == 2 && outputShape[0] == 1 && outputShape[1] > 0) {
-                    "Unsupported model output ${outputShape.contentToString()}. Expected [1,N]."
-                }
-                require(interpreter.getInputTensor(0).dataType() == org.tensorflow.lite.DataType.FLOAT32 &&
-                    interpreter.getOutputTensor(0).dataType() == org.tensorflow.lite.DataType.FLOAT32) {
-                    "This first version requires float32 model input and output."
-                }
                 val options = FaceDetectorOptions.Builder()
                     .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
                     .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                     .build()
                 faceDetector = FaceDetection.getClient(options)
+
                 val referenceBitmap = decode(ref)
                 val referenceFaces = Tasks.await(faceDetector.process(InputImage.fromBitmap(referenceBitmap, 0)))
-                require(referenceFaces.isNotEmpty()) { "No face was detected in the reference photo." }
-                val referenceEmbedding = embedding(interpreter, referenceBitmap, referenceFaces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!)
+                val referenceFace = referenceFaces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                    ?: throw IllegalArgumentException("No face was detected in the reference photo.")
+                referenceAligned = alignFace(referenceBitmap, referenceFace)
                 referenceBitmap.recycle()
 
-                val report = StringBuilder("Reference face enrolled for this scan session.\n")
+                val report = StringBuilder("Reference face aligned for this scan session.\\n")
                 var checked = 0
                 var matched = 0
                 candidates.forEachIndexed { index, uri ->
                     try {
                         val bitmap = decode(uri)
                         val faces = Tasks.await(faceDetector.process(InputImage.fromBitmap(bitmap, 0)))
-                        val scores = faces.map { face ->
-                            cosine(referenceEmbedding, embedding(interpreter, bitmap, face))
+                        var best: Float? = null
+                        faces.forEach { face ->
+                            val aligned = alignFace(bitmap, face)
+                            val score = comparePair(interpreter, referenceAligned!!, aligned)
+                            aligned.recycle()
+                            if (best == null || score > best!!) best = score
                         }
                         bitmap.recycle()
-                        val best = scores.maxOrNull()
-                        val label = if (best != null && best >= 0.60f) {
-                            matched++
-                            "POSSIBLE MATCH"
-                        } else "no strong match"
+                        val similarity = best
+                        val angle = if (similarity != null) Math.toDegrees(acos(similarity.coerceIn(-1f, 1f).toDouble())) else null
+                        val possible = angle != null && angle <= 74.18
+                        if (possible) matched++
                         report.append("${index + 1}. ${displayName(uri)}: ${faces.size} face(s)")
-                        if (best != null) report.append(", best similarity ${"%.3f".format(java.util.Locale.US, best)} - $label")
-                        report.append("\n")
+                        if (similarity != null && angle != null) {
+                            report.append(", cosine ${"%.3f".format(java.util.Locale.US, similarity)}, angle ${"%.1f".format(java.util.Locale.US, angle)}° - ")
+                            report.append(if (possible) "POSSIBLE MATCH" else "lower similarity")
+                        }
+                        report.append("\\n")
                     } catch (e: Exception) {
-                        report.append("${index + 1}. ${displayName(uri)}: error - ${e.localizedMessage ?: "unknown"}\n")
+                        report.append("${index + 1}. ${displayName(uri)}: error - ${e.localizedMessage ?: "unknown"}\\n")
                     }
                     checked++
                     runOnUiThread {
@@ -227,54 +335,113 @@ class IdentityMatchActivity : AppCompatActivity() {
                         status.text = "Compared $checked of ${candidates.size} images…"
                     }
                 }
-                report.append("\nFinished: $matched possible match(es). Review each image yourself. The 0.60 threshold is only a starting point and must be calibrated for the exact model and photo conditions.")
-                runOnUiThread { status.text = report.toString(); progress.visibility = ProgressBar.GONE; scanButton.isEnabled = true }
+                report.append("\\nFinished: $matched possible match(es). Qualcomm's published 74.18° threshold is a benchmark starting point, not proof of identity. Review every candidate manually.")
+                runOnUiThread { status.text = report.toString(); progress.visibility = ProgressBar.GONE; updateReady() }
             } catch (e: Exception) {
                 runOnUiThread {
-                    status.text = "Comparison could not run: ${e.localizedMessage ?: "unknown error"}\n\nUse a verified MobileFaceNet-compatible float32 model with input [1,112,112,3] and output [1,N]."
+                    status.text = "Comparison could not run: ${e.localizedMessage ?: "unknown error"}"
                     progress.visibility = ProgressBar.GONE
-                    scanButton.isEnabled = true
+                    updateReady()
                 }
             } finally {
+                referenceAligned?.recycle()
                 faceDetector?.close()
                 interpreter?.close()
             }
         }
     }
 
-    private fun embedding(interpreter: Interpreter, bitmap: Bitmap, face: Face): FloatArray {
-        val bounds = face.boundingBox
-        val side = maxOf(bounds.width(), bounds.height()).toFloat() * 1.25f
-        val cx = bounds.centerX().toFloat()
-        val cy = bounds.centerY().toFloat()
-        val left = (cx - side / 2f).toInt().coerceIn(0, bitmap.width - 1)
-        val top = (cy - side / 2f).toInt().coerceIn(0, bitmap.height - 1)
-        val right = (cx + side / 2f).toInt().coerceIn(left + 1, bitmap.width)
-        val bottom = (cy + side / 2f).toInt().coerceIn(top + 1, bitmap.height)
-        val crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
-        val scaled = Bitmap.createScaledBitmap(crop, 112, 112, true)
-        if (crop !== bitmap) crop.recycle()
-        val input = Array(1) { Array(112) { Array(112) { FloatArray(3) } } }
-        for (y in 0 until 112) for (x in 0 until 112) {
-            val pixel = scaled.getPixel(x, y)
-            input[0][y][x][0] = (((pixel shr 16) and 255) / 127.5f) - 1f
-            input[0][y][x][1] = (((pixel shr 8) and 255) / 127.5f) - 1f
-            input[0][y][x][2] = ((pixel and 255) / 127.5f) - 1f
+    private fun alignFace(bitmap: Bitmap, face: Face): Bitmap {
+        val landmarkTypes = intArrayOf(
+            FaceLandmark.LEFT_EYE,
+            FaceLandmark.RIGHT_EYE,
+            FaceLandmark.NOSE_BASE,
+            FaceLandmark.MOUTH_LEFT,
+            FaceLandmark.MOUTH_RIGHT
+        )
+        val src = landmarkTypes.map { type ->
+            face.getLandmark(type)?.position
+                ?: throw IllegalArgumentException("This face does not have all five landmarks needed for MobileFaceNet alignment.")
         }
-        scaled.recycle()
-        val output = Array(1) { FloatArray(interpreter.getOutputTensor(0).shape()[1]) }
-        interpreter.run(input, output)
-        return normalize(output[0])
+        val dstX = doubleArrayOf(44.1964, 67.6879, 56.0168, 46.3662, 65.8199)
+        val dstY = doubleArrayOf(53.1309, 53.0009, 66.4911, 80.2437, 80.1361)
+        val meanX = src.map { it.x.toDouble() }.average()
+        val meanY = src.map { it.y.toDouble() }.average()
+        val meanU = dstX.average()
+        val meanV = dstY.average()
+        var numeratorA = 0.0
+        var numeratorB = 0.0
+        var denominator = 0.0
+        for (i in src.indices) {
+            val x = src[i].x - meanX
+            val y = src[i].y - meanY
+            val u = dstX[i] - meanU
+            val v = dstY[i] - meanV
+            numeratorA += x * u + y * v
+            numeratorB += x * v - y * u
+            denominator += x * x + y * y
+        }
+        require(denominator > 1e-6) { "Face landmarks are too close together to align." }
+        val a = numeratorA / denominator
+        val b = numeratorB / denominator
+        val tx = meanU - a * meanX + b * meanY
+        val ty = meanV - b * meanX - a * meanY
+        val matrix = Matrix().apply {
+            setValues(floatArrayOf(
+                a.toFloat(), (-b).toFloat(), tx.toFloat(),
+                b.toFloat(), a.toFloat(), ty.toFloat(),
+                0f, 0f, 1f
+            ))
+        }
+        val aligned = Bitmap.createBitmap(112, 112, Bitmap.Config.ARGB_8888)
+        Canvas(aligned).drawBitmap(bitmap, matrix, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
+        return aligned
+    }
+
+    private fun comparePair(interpreter: Interpreter, first: Bitmap, second: Bitmap): Float {
+        val inputShape0 = interpreter.getInputTensor(0).shape()
+        val inputShape1 = interpreter.getInputTensor(1).shape()
+        val inputs = arrayOf(makeInput(first, inputShape0), makeInput(second, inputShape1))
+        val outputShape = interpreter.getOutputTensor(0).shape()
+        val output = ByteBuffer.allocateDirect(outputShape.fold(1) { acc, dim -> acc * dim } * 4)
+            .order(ByteOrder.nativeOrder())
+        interpreter.runForMultipleInputsOutputs(inputs, mutableMapOf(0 to output))
+        output.rewind()
+        val firstEmbedding = FloatArray(128) { output.float }
+        val secondEmbedding = FloatArray(128) { output.float }
+        val a = normalize(firstEmbedding)
+        val b = normalize(secondEmbedding)
+        return a.indices.sumOf { (a[it] * b[it]).toDouble() }.toFloat().coerceIn(-1f, 1f)
+    }
+
+    private fun makeInput(bitmap: Bitmap, shape: IntArray): ByteBuffer {
+        val nchw = shape.contentEquals(intArrayOf(1, 3, 112, 112))
+        val buffer = ByteBuffer.allocateDirect(112 * 112 * 3 * 4).order(ByteOrder.nativeOrder())
+        if (nchw) {
+            for (channel in 0..2) for (y in 0 until 112) for (x in 0 until 112) {
+                val pixel = bitmap.getPixel(x, y)
+                val value = when (channel) {
+                    0 -> (pixel shr 16) and 255
+                    1 -> (pixel shr 8) and 255
+                    else -> pixel and 255
+                }
+                buffer.putFloat(value / 255f)
+            }
+        } else {
+            for (y in 0 until 112) for (x in 0 until 112) {
+                val pixel = bitmap.getPixel(x, y)
+                buffer.putFloat(((pixel shr 16) and 255) / 255f)
+                buffer.putFloat(((pixel shr 8) and 255) / 255f)
+                buffer.putFloat((pixel and 255) / 255f)
+            }
+        }
+        buffer.rewind()
+        return buffer
     }
 
     private fun normalize(vector: FloatArray): FloatArray {
         val norm = sqrt(vector.sumOf { (it * it).toDouble() }).toFloat().coerceAtLeast(1e-12f)
         return FloatArray(vector.size) { vector[it] / norm }
-    }
-
-    private fun cosine(a: FloatArray, b: FloatArray): Float {
-        if (a.size != b.size) return -1f
-        return a.indices.sumOf { (a[it] * b[it]).toDouble() }.toFloat()
     }
 
     private fun decode(uri: Uri): Bitmap {

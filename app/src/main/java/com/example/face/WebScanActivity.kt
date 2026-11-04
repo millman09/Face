@@ -74,13 +74,7 @@ class WebScanActivity : AppCompatActivity() {
             setPadding(0, dp(4), 0, dp(12))
         })
 
-        page.addSpaced(button("Search all three") { searchAll() })
-        page.addSpaced(button("Yandex Images only") { currentQuery()?.let { openLink(yandexUrl(it)) } })
-        page.addSpaced(button("SearXNG only") {
-            val query = currentQuery() ?: return@button
-            searxUrl(query)?.let { openLink(it) }
-        })
-        page.addSpaced(button("DuckDuckGo Images only") { currentQuery()?.let { openLink(duckDuckGoUrl(it)) } })
+        page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
 
         page.addView(TextView(this).apply {
             text = "Supported public website database"
@@ -172,18 +166,33 @@ class WebScanActivity : AppCompatActivity() {
             .appendQueryParameter("language", "en").build().toString()
     }
 
+    // Android only lets an app open one browser page at a time while it is in the
+    // background, so the three searches open in turn: one now, the next each time
+    // you come back to this screen.
+    private val pendingSearches = ArrayDeque<String>()
+
     private fun searchAll() {
         val query = currentQuery() ?: return
-        val urls = listOfNotNull(yandexUrl(query), searxUrl(query), duckDuckGoUrl(query))
-        var opened = 0
-        for (url in urls) {
-            try {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                opened++
-            } catch (_: Exception) { }
+        pendingSearches.clear()
+        pendingSearches.addAll(listOfNotNull(yandexUrl(query), searxUrl(query), duckDuckGoUrl(query)))
+        if (pendingSearches.isEmpty()) return
+        status.text = "Opening ${pendingSearches.size} searches. Press back after each one to open the next."
+        openNextSearch()
+    }
+
+    private fun openNextSearch() {
+        val url = pendingSearches.removeFirstOrNull() ?: return
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (_: Exception) {
+            Toast.makeText(this, "No browser could open the search page.", Toast.LENGTH_LONG).show()
+            pendingSearches.clear()
         }
-        status.text = "Opened $opened of ${urls.size} browser search pages. Browser results are not automatically matched."
-        if (opened == 0) Toast.makeText(this, "No browser could open the search pages.", Toast.LENGTH_LONG).show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (pendingSearches.isNotEmpty()) openNextSearch()
     }
 
     private fun openLink(link: String) {

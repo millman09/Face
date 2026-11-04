@@ -5,7 +5,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
-import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -107,7 +106,7 @@ class WebScanActivity : AppCompatActivity() {
         }
         page.addView(bulkSourcesInput)
         page.addSpaced(button("Import website list") { importSources() }, 8)
-        page.addSpaced(button("Scan all enabled websites") { scanAllSources() }, 8)
+        page.addSpaced(button("Scan all websites") { scanAllSources() }, 8)
         page.addSpaced(button("Browse collected image links") { browseCollectedLinks() }, 8)
         page.addSpaced(button("Open face matcher") { startActivity(Intent(this, IdentityMatchActivity::class.java)) }, 8)
 
@@ -253,11 +252,10 @@ class WebScanActivity : AppCompatActivity() {
             })
         }
         for (source in items) {
-            sourceList.addView(CheckBox(this).apply {
+            sourceList.addView(TextView(this).apply {
                 text = "${source.name}  •  ${source.baseUrl}"
                 textSize = 13f
-                isChecked = source.enabled
-                setOnCheckedChangeListener { _, checked -> database.setEnabled(source.id, checked) }
+                setPadding(dp(4), dp(7), dp(4), dp(7))
             })
         }
         status.text = "${items.size} website(s) in database • ${database.candidateCount()} unique image link(s) collected."
@@ -292,9 +290,9 @@ class WebScanActivity : AppCompatActivity() {
             Toast.makeText(this, "A scan is already running.", Toast.LENGTH_SHORT).show()
             return
         }
-        val selected = database.sources().filter { it.enabled }
+        val selected = database.sources()
         if (selected.isEmpty()) {
-            Toast.makeText(this, "Add and enable at least one website first.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "There are no websites in the database yet.", Toast.LENGTH_LONG).show()
             return
         }
         scanning = true
@@ -332,11 +330,10 @@ class WebScanActivity : AppCompatActivity() {
         val items = database.sources()
         sourceList.removeAllViews()
         for (source in items) {
-            sourceList.addView(CheckBox(this).apply {
+            sourceList.addView(TextView(this).apply {
                 text = "${source.name}  •  ${source.baseUrl}"
                 textSize = 13f
-                isChecked = source.enabled
-                setOnCheckedChangeListener { _, checked -> database.setEnabled(source.id, checked) }
+                setPadding(dp(4), dp(7), dp(4), dp(7))
             })
         }
     }

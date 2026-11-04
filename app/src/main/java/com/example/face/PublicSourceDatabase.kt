@@ -16,7 +16,7 @@ data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, va
 data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl: String)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 1) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -29,6 +29,13 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             discovered_at INTEGER NOT NULL, scan_status TEXT NOT NULL DEFAULT 'Discovered',
             FOREIGN KEY(source_id) REFERENCES sources(id)
         )""".trimIndent())
+        seedSources(db)
+    }
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) seedSources(db)
+    }
+
+    private fun seedSources(db: SQLiteDatabase) {
         // Starter catalogue of public adult-content platforms and forums.
         // Sitemap/feed availability is checked at scan time; no access controls are bypassed.
         val starterDomains = listOf(
@@ -57,7 +64,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         }
 
     }
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
 
     @Synchronized fun addSource(name: String, rawUrl: String): Boolean {
         val normalized = normalizeBaseUrl(rawUrl) ?: return false

@@ -50,6 +50,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var referenceUri: Uri? = null
     private var imageUris: List<Uri> = emptyList()
     private val webCandidateLabels = mutableMapOf<String, String>()
+    private val webCandidateIds = mutableMapOf<String, Long>()
     private val executor = Executors.newSingleThreadExecutor()
     private val modelUrl = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobile_facenet/releases/v0.65.0/mobile_facenet-tflite-float.zip"
     private val modelTargetName = "qualcomm_mobilefacenet.tflite"
@@ -312,6 +313,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     if (file != null) {
                         downloaded += Uri.fromFile(file)
                         webCandidateLabels[file.absolutePath] = "${candidate.sourceBaseUrl}\\n${candidate.pageUrl}\\n${candidate.imageUrl}"
+                        webCandidateIds[file.absolutePath] = candidate.id
                         database.updateCandidateStatus(candidate.id, "Downloaded for local matching")
                     } else {
                         database.updateCandidateStatus(candidate.id, "Download skipped or unavailable")
@@ -346,6 +348,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             var interpreter: Interpreter? = null
             var faceDetector: FaceDetector? = null
             var referenceAligned: Bitmap? = null
+            val resultsDatabase = PublicSourceDatabase(this)
             try {
                 validateMobileFaceNetModel(model)
                 interpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
@@ -399,6 +402,12 @@ class IdentityMatchActivity : AppCompatActivity() {
                         val angle = if (similarity != null) Math.toDegrees(acos(similarity.coerceIn(-1f, 1f).toDouble())) else null
                         val possible = angle != null && angle <= 74.18
                         if (possible) matched++
+                        webCandidateIds[uri.path ?: ""]?.let { candidateId ->
+                            resultsDatabase.updateCandidateStatus(
+                                candidateId,
+                                if (possible) "Possible face match; review required" else "Compared; no likely match"
+                            )
+                        }
                         report.append("${index + 1}. ${displayName(uri)}: ${faces.size} face(s)")
                         if (skipped > 0) report.append(" ($skipped skipped, landmarks not clear)")
                         if (similarity != null && angle != null) {
@@ -427,6 +436,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 referenceAligned?.recycle()
                 faceDetector?.close()
                 interpreter?.close()
+                resultsDatabase.close()
             }
         }
     }

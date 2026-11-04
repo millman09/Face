@@ -25,12 +25,9 @@ import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.google.android.gms.tasks.Tasks
 import org.tensorflow.lite.Interpreter
 import java.io.File
-import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executors
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.zip.ZipInputStream
 import java.io.BufferedInputStream
 import kotlin.math.sqrt
@@ -49,8 +46,6 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var modelFile: File? = null
     private var referenceUri: Uri? = null
     private var imageUris: List<Uri> = emptyList()
-    private val webCandidateLabels = mutableMapOf<String, String>()
-    private val webCandidateIds = mutableMapOf<String, Long>()
     private val executor = Executors.newSingleThreadExecutor()
     private val modelUrl = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobile_facenet/releases/v0.65.0/mobile_facenet-tflite-float.zip"
     private val modelTargetName = "qualcomm_mobilefacenet.tflite"
@@ -83,7 +78,6 @@ class IdentityMatchActivity : AppCompatActivity() {
         addButton(root, "Choose compatible TFLite model") { modelPicker.launch(arrayOf("*/*")) }
         addButton(root, "Choose reference photo") { referencePicker.launch(arrayOf("image/*")) }
         addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
-        addButton(root, "Download and compare discovered website images") { downloadWebsiteCandidates() }
         scanButton = MaterialButton(this).apply {
             text = "Compare faces on this phone"
             isAllCaps = false
@@ -293,48 +287,6 @@ class IdentityMatchActivity : AppCompatActivity() {
         scanButton.isEnabled = modelFile?.exists() == true && referenceUri != null && imageUris.isNotEmpty()
     }
 
-    private fun downloadWebsiteCandidates() {
-        val queued = PublicSourceDatabase(this).pendingCandidates(100)
-        if (queued.isEmpty()) {
-            status.text = "No unprocessed public image links are waiting. Run a website batch scan first."
-            return
-        }
-        scanButton.isEnabled = false
-        progress.visibility = ProgressBar.VISIBLE
-        progress.max = queued.size
-        progress.progress = 0
-        status.text = "Downloading up to ${queued.size} public image candidates…"
-        executor.execute {
-            val downloaded = mutableListOf<Uri>()
-            val database = PublicSourceDatabase(this)
-            try {
-                queued.forEachIndexed { index, candidate ->
-                    val file = CandidateImageDownloader.download(candidate, cacheDir)
-                    if (file != null) {
-                        downloaded += Uri.fromFile(file)
-                        webCandidateLabels[file.absolutePath] = "${candidate.sourceBaseUrl}\\n${candidate.pageUrl}\\n${candidate.imageUrl}"
-                        webCandidateIds[file.absolutePath] = candidate.id
-                        database.updateCandidateStatus(candidate.id, "Downloaded for local matching")
-                    } else {
-                        database.updateCandidateStatus(candidate.id, "Download skipped or unavailable")
-                    }
-                    runOnUiThread {
-                        progress.progress = index + 1
-                        status.text = "Downloaded ${downloaded.size} of ${index + 1} candidates…"
-                    }
-                }
-            } finally {
-                database.close()
-            }
-            runOnUiThread {
-                imageUris = (imageUris + downloaded).distinct()
-                progress.visibility = ProgressBar.GONE
-                status.text = "Downloaded ${downloaded.size} image(s). Select your reference photo and MobileFaceNet model, then tap Compare faces on this phone."
-                updateReady()
-            }
-        }
-    }
-
     private fun runComparison() {
         val model = modelFile ?: return
         val ref = referenceUri ?: return
@@ -402,12 +354,6 @@ class IdentityMatchActivity : AppCompatActivity() {
                         val angle = if (similarity != null) Math.toDegrees(acos(similarity.coerceIn(-1f, 1f).toDouble())) else null
                         val possible = angle != null && angle <= 74.18
                         if (possible) matched++
-                        webCandidateIds[uri.path ?: ""]?.let { candidateId ->
-                            resultsDatabase.updateCandidateStatus(
-                                candidateId,
-                                if (possible) "Possible face match; review required" else "Compared; no likely match"
-                            )
-                        }
                         report.append("${index + 1}. ${displayName(uri)}: ${faces.size} face(s)")
                         if (skipped > 0) report.append(" ($skipped skipped, landmarks not clear)")
                         if (similarity != null && angle != null) {
@@ -548,7 +494,6 @@ class IdentityMatchActivity : AppCompatActivity() {
     }
 
     private fun displayName(uri: Uri): String {
-        webCandidateLabels[uri.path ?: ""]?.let { return it }
         if (uri.scheme == "file") return File(uri.path ?: "").name
         return try {
             contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {

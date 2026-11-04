@@ -114,6 +114,7 @@ class WebScanActivity : AppCompatActivity() {
         page.addView(bulkSourcesInput)
         page.addSpaced(button("Import website list") { importSources() }, 8)
         page.addSpaced(button("Scan all enabled websites") { scanAllSources() }, 8)
+        page.addSpaced(button("Review and match collected images") { startActivity(Intent(this, IdentityMatchActivity::class.java)) }, 8)
 
         sourceList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         page.addView(sourceList)

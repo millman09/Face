@@ -73,6 +73,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         buildTools(findViewById(R.id.toolsContainer))
+        buildSearchPanel(findViewById(R.id.searchContainer))
         buildHelp(findViewById(R.id.helpContainer))
         buildChecklist(findViewById(R.id.checklistContainer))
         updateProgress()
@@ -80,6 +81,7 @@ class MainActivity : AppCompatActivity() {
 
         val panels = mapOf(
             R.id.nav_tools to findViewById<View>(R.id.panelTools),
+            R.id.nav_search to findViewById<View>(R.id.panelSearch),
             R.id.nav_help to findViewById<View>(R.id.panelHelp),
             R.id.nav_checklist to findViewById<View>(R.id.panelChecklist)
         )
@@ -130,6 +132,14 @@ class MainActivity : AppCompatActivity() {
             addTile(container, getString(tool.titleRes), getString(tool.bodyRes)) {
                 startActivity(Intent(this, tool.screen))
             }
+        }
+    }
+
+    private fun buildSearchPanel(container: LinearLayout) {
+        addSection(container, getString(R.string.search_tab_title))
+        addText(container, getString(R.string.search_tab_body))
+        addTile(container, getString(R.string.search_tab_button), "Select your reference photos and begin the automatic scan.") {
+            startActivity(Intent(this, WebScanActivity::class.java))
         }
     }
 

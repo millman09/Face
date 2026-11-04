@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.View
+import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -113,6 +114,8 @@ class ScanActivity : AppCompatActivity() {
         progress.progress = 0
         progress.visibility = View.VISIBLE
         scanButton.isEnabled = false
+        // Keep the screen on so a long scan is not interrupted.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         results.text = "Scanning locally…\n"
         scanNext()
     }
@@ -130,12 +133,14 @@ class ScanActivity : AppCompatActivity() {
             results.append("\n\nThis is face detection only, not identity matching. A detected face is not evidence that it is you.")
             progress.visibility = View.GONE
             scanButton.isEnabled = true
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             return
         }
 
         val uri = selectedImages[currentIndex]
         val itemNumber = currentIndex + 1
         decodeExecutor.execute {
+            val name = displayName(uri)
             try {
                 val bitmap = decodeScaled(uri)
                 runOnUiThread {
@@ -147,17 +152,17 @@ class ScanActivity : AppCompatActivity() {
                         InputImage.fromBitmap(bitmap, 0)
                     } catch (error: Exception) {
                         bitmap.recycle()
-                        results.append("$itemNumber. ${displayName(uri)}: unable to read image (${error.localizedMessage ?: "unknown error"})\n")
+                        results.append("$itemNumber. $name: unable to read image (${error.localizedMessage ?: "unknown error"})\n")
                         advance()
                         return@runOnUiThread
                     }
                     detector.process(image)
                         .addOnSuccessListener { faces ->
                             totalFaces += faces.size
-                            results.append("$itemNumber. ${displayName(uri)}: ${faces.size} face(s) detected\n")
+                            results.append("$itemNumber. $name: ${faces.size} face(s) detected\n")
                         }
                         .addOnFailureListener { error ->
-                            results.append("$itemNumber. ${displayName(uri)}: scan failed (${error.localizedMessage ?: "unknown error"})\n")
+                            results.append("$itemNumber. $name: scan failed (${error.localizedMessage ?: "unknown error"})\n")
                         }
                         .addOnCompleteListener {
                             bitmap.recycle()
@@ -166,7 +171,7 @@ class ScanActivity : AppCompatActivity() {
                 }
             } catch (error: Exception) {
                 runOnUiThread {
-                    results.append("$itemNumber. ${displayName(uri)}: unable to read image (${error.localizedMessage ?: "unknown error"})\n")
+                    results.append("$itemNumber. $name: unable to read image (${error.localizedMessage ?: "unknown error"})\n")
                     advance()
                 }
             }
@@ -180,7 +185,7 @@ class ScanActivity : AppCompatActivity() {
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             val width = info.size.width
             val height = info.size.height
-            val scale = minOf(1f, 1600f / maxOf(width, height))
+            val scale = minOf(1f, 1280f / maxOf(width, height))
             decoder.setTargetSize(
                 (width * scale).toInt().coerceAtLeast(1),
                 (height * scale).toInt().coerceAtLeast(1)

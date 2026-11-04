@@ -1,3 +1,37 @@
 <resources>
     <string name="app_name">Face</string>
+
+    <string name="tab_protect">Protect</string>
+    <string name="tab_checklist">Checklist</string>
+
+    <string name="protect_intro">Tools for checking your own exposure and getting intimate images taken down. Nothing here searches for other people, and nothing leaves your phone.</string>
+
+    <string name="hibp_title">Check your email for breaches</string>
+    <string name="hibp_body">Have I Been Pwned lists data breaches your email address appeared in, including breaches of adult sites. Search only addresses you own.</string>
+    <string name="hibp_button">Open Have I Been Pwned</string>
+
+    <string name="stopncii_title">Intimate images shared without consent (18+)</string>
+    <string name="stopncii_body">StopNCII.org creates a digital fingerprint of an image on your own device. The image never leaves your phone, and participating platforms use the fingerprint to block matching copies.</string>
+    <string name="stopncii_button">Open StopNCII.org</string>
+
+    <string name="takeitdown_title">Images taken before you turned 18</string>
+    <string name="takeitdown_body">Take It Down, from the National Center for Missing &amp; Exploited Children, works the same way: a fingerprint is made on your device and the image itself is not uploaded.</string>
+    <string name="takeitdown_button">Open Take It Down</string>
+
+    <string name="google_title">Remove images from Google Search</string>
+    <string name="google_body">Google lets you request removal of explicit or intimate images of you from its search results.</string>
+    <string name="google_button">Open Google\'s removal help</string>
+
+    <string name="safety_note">If someone is threatening you or you feel unsafe, contact your local law enforcement.</string>
+
+    <string name="checklist_intro">A self-audit you can work through at your own pace. Your checks are saved on this phone.</string>
+    <string name="check_1">List every username you have used on social, gaming and forum accounts.</string>
+    <string name="check_2">Search each username in quotes in a search engine and note anything you do not recognize.</string>
+    <string name="check_3">Search your own email address at Have I Been Pwned and note any breaches.</string>
+    <string name="check_4">Turn on breach notifications for your email addresses.</string>
+    <string name="check_5">Change the password on any breached account, and anywhere you reused it.</string>
+    <string name="check_6">Use a different password for every account, with a password manager.</string>
+    <string name="check_7">Turn on two-factor authentication for your email and main accounts.</string>
+    <string name="check_8">Close old accounts you no longer use.</string>
+    <string name="check_9">Search your name in quotes and review the image results for anything you did not post.</string>
 </resources>

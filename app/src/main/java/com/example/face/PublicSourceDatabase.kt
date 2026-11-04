@@ -17,7 +17,7 @@ data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl
 data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 3) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 4) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -33,7 +33,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         seedSources(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 3) seedSources(db)
+        if (oldVersion < 4) seedSources(db)
     }
 
     private fun seedSources(db: SQLiteDatabase) {
@@ -136,7 +136,77 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "XGX" to "https://xgx.mobi",
             "Ero-Video" to "https://ero-video.net",
             "Toppornsites" to "https://toppornsites.com",
-            "SkipTheGames" to "https://skipthegames.com"
+            "SkipTheGames" to "https://skipthegames.com",
+            // Additional public adult forums and communities
+            "PlanetSuzy Forum" to "https://www.planetsuzy.org",
+            "LPSG Forum" to "https://www.lpsg.com",
+            "ViperGirls Forum" to "https://vipergirls.to",
+            "Forumophilia" to "https://forumophilia.com",
+            "Climax Connection Forum" to "https://climaxconnection.com",
+            "TooTimid Forum" to "https://forums.tootimid.com",
+            "Social Swinging Forum" to "https://socialswinging.com",
+            "RedHotPie Forums" to "https://www.redhotpie.com.au",
+            "VAmateur Forum" to "https://www.vamateur.com",
+            "LoversLab Forum" to "https://www.loverslab.com",
+            "LewdCorner Forum" to "https://lewdcorner.com",
+            "JustUsBoys Forum" to "https://www.justusboys.com",
+            "Fenoxo Forums" to "https://forum.fenoxo.com",
+            "GayHeaven Forum" to "https://www.gayheaven.org",
+            "Serious Bondage Forum" to "https://www.seriousbondage.com",
+            "The Cage Forum" to "https://thecage.co",
+            "Extreme Board" to "https://www.extreme-board.com",
+            "CuckoldPlace Forum" to "https://www.cuckoldplace.com",
+            "GoonVilla Forum" to "https://goonvilla.com",
+            "xBunker Forum" to "https://xbunker.com",
+            "ErotikForum" to "https://www.erotikforum.at",
+            "SexForum NZ" to "https://www.sexforum.co.nz",
+            "Fritchy Forum" to "https://www.fritchy.com",
+            "ULMF Forum" to "https://www.ulmf.org",
+            "Undertow Club" to "https://undertow.club",
+            "TitsInTops Forum" to "https://www.titsintops.com",
+            "NWorship Forum" to "https://nworship.com",
+            "WifeWantsToPlay Forum" to "https://www.wifewantstoplay.com",
+            "PeeFans Forum" to "https://www.peefans.com",
+            "OneClickChicks Forum" to "https://www.oneclickchicks.com",
+            "JAV Forum" to "https://www.javforum.com",
+            "SimpCity Forum" to "https://simpcity.su",
+            "Social Media Girls Forum (alt)" to "https://forums.socialmediagirls.com",
+            // Additional image-first galleries, boards and adult publishing communities
+            "PicHunter" to "https://www.pichunter.com",
+            "ImageTwist" to "https://imagetwist.com",
+            "ImageBam" to "https://www.imagebam.com",
+            "ImageVenue" to "https://www.imagevenue.com",
+            "JPG Fish" to "https://jpg.fish",
+            "Flickr" to "https://www.flickr.com",
+            "Tumblr" to "https://www.tumblr.com",
+            "Newgrounds" to "https://www.newgrounds.com",
+            "Inkbunny" to "https://inkbunny.net",
+            "Fur Affinity" to "https://www.furaffinity.net",
+            "Hentai2Read" to "https://hentai2read.com",
+            "MyHentaiGallery" to "https://myhentaigallery.com",
+            "MultPorn" to "https://multporn.net",
+            "PornComics" to "https://porncomics.com",
+            "XXXComics" to "https://xxxcomics.org",
+            "Fenoxo Blog" to "https://www.fenoxo.com",
+            "Marriage Heat" to "https://marriageheat.com",
+            "Audiochan" to "https://audiochan.com",
+            "ChatZoZo" to "https://chatzozo.com",
+            "AnyShemale" to "https://anyshemale.com",
+            "GayXNow" to "https://gayxnow.com",
+            "European Girls Adult Film Database" to "https://www.egafd.com",
+            "FapHouse" to "https://faphouse.com",
+            "Eporner" to "https://www.eporner.com",
+            "Chaturbate" to "https://chaturbate.com",
+            "Cam4" to "https://www.cam4.com",
+            "CamSoda" to "https://www.camsoda.com",
+            "Stripchat" to "https://stripchat.com",
+            "BongaCams" to "https://bongacams.com",
+            "MyFreeCams" to "https://www.myfreecams.com",
+            "LiveJasmin" to "https://www.livejasmin.com",
+            "Nutaku" to "https://www.nutaku.net",
+            "DLsite" to "https://www.dlsite.com",
+            "Itch.io" to "https://itch.io",
+            "Newgrounds Adult" to "https://www.newgrounds.com"
         )
         for ((name, address) in starterDomains) {
             val values = ContentValues().apply {

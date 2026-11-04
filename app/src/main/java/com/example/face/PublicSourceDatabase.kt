@@ -239,9 +239,10 @@ object PublicSourceScanner {
                             "item", "entry" -> inFeedEntry = true
                         }
                         if (tag == "loc") {
+                            val namespace = parser.namespace ?: ""
                             val value = parser.nextText().trim()
                             if (value.startsWith("https://") || value.startsWith("http://")) {
-                                if (rawName.contains(':') && rawName.substringBefore(':').equals("image", true)) {
+                                if (namespace.contains("sitemap-image", ignoreCase = true)) {
                                     found.putIfAbsent(value, DiscoveredImage(sourceId, pageUrl, value))
                                 } else if (inSitemapIndex && inSitemapEntry && sameHost(base, value) && !isDisallowed(value, rules)) {
                                     if (pending.size < MAX_SITEMAPS) pending += value
@@ -249,7 +250,7 @@ object PublicSourceScanner {
                                     pageUrl = value
                                 }
                             }
-                        } else if (tag == "enclosure" || (tag == "link" && parser.getAttributeValue(null, "rel") == "enclosure")) {
+                        }                        } else if (tag == "enclosure" || (tag == "link" && parser.getAttributeValue(null, "rel") == "enclosure")) {
                             val value = parser.getAttributeValue(null, "url")
                                 ?: parser.getAttributeValue(null, "href")
                             if (value != null && isImageUrl(value)) {

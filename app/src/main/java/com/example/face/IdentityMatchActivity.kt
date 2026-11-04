@@ -597,8 +597,8 @@ class IdentityMatchActivity : AppCompatActivity() {
             face.getLandmark(type)?.position
                 ?: throw IllegalArgumentException("This face does not have all five landmarks needed for MobileFaceNet alignment.")
         }
-        val dstX = doubleArrayOf(44.1964, 67.6879, 56.0168, 46.3662, 65.8199)
-        val dstY = doubleArrayOf(53.1309, 53.0009, 66.4911, 80.2437, 80.1361)
+        val dstX = doubleArrayOf(38.2946, 73.5318, 56.0252, 41.5493, 70.7299)
+        val dstY = doubleArrayOf(51.6963, 51.5014, 71.7366, 92.3655, 92.2041)
         val meanX = src.map { it.x.toDouble() }.average()
         val meanY = src.map { it.y.toDouble() }.average()
         val meanU = dstX.average()
@@ -659,14 +659,14 @@ class IdentityMatchActivity : AppCompatActivity() {
                     1 -> (pixel shr 8) and 255
                     else -> pixel and 255
                 }
-                buffer.putFloat(value / 255f)
+                buffer.putFloat(value / 127.5f - 1f)
             }
         } else {
             for (y in 0 until 112) for (x in 0 until 112) {
                 val pixel = bitmap.getPixel(x, y)
-                buffer.putFloat(((pixel shr 16) and 255) / 255f)
-                buffer.putFloat(((pixel shr 8) and 255) / 255f)
-                buffer.putFloat((pixel and 255) / 255f)
+                buffer.putFloat(((pixel shr 16) and 255) / 127.5f - 1f)
+                buffer.putFloat(((pixel shr 8) and 255) / 127.5f - 1f)
+                buffer.putFloat((pixel and 255) / 127.5f - 1f)
             }
         }
         buffer.rewind()

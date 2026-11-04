@@ -11,27 +11,19 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URLEncoder
-import java.net.URL
-import java.util.concurrent.Executors
 
 /**
- * Public web image discovery using the Brave Image Search API.
+ * Free public image-search launchers.
  *
- * The API key is entered by the user for each scan and is never persisted.
- * Search terms and the API request are sent to Brave. Reference photos are
- * never uploaded. Results are leads only: this screen does not identify faces.
+ * Searches are opened in the user's browser. No API key is required and no
+ * reference photo is uploaded by this screen. SearXNG requires the user to
+ * supply an instance they trust.
  */
 class WebScanActivity : AppCompatActivity() {
 
-    private val executor = Executors.newSingleThreadExecutor()
     private lateinit var queryInput: EditText
-    private lateinit var keyInput: EditText
+    private lateinit var searxInput: EditText
     private lateinit var status: TextView
-    private lateinit var searchButton: Button
-    private lateinit var results: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,167 +37,160 @@ class WebScanActivity : AppCompatActivity() {
         setContentView(scroll)
 
         page.addView(TextView(this).apply {
-            text = "Public web image search"
+            text = "Free public image search"
             textSize = 24f
             setPadding(0, 0, 0, 18)
         })
         page.addView(TextView(this).apply {
-            text = "Searches Brave's public image index. It does not crawl every adult site or forum, and it cannot access private, login-only, or paywalled pages. Search results are possible leads, not proof."
+            text = "Run the same text search through Yandex Images, a SearXNG instance, and DuckDuckGo Images. These are public-web searches, not face recognition. They may miss pages and images, and results need to be checked manually."
             textSize = 15f
             setPadding(0, 0, 0, 18)
         })
 
         queryInput = EditText(this).apply {
-            hint = "Search terms (example: a username or site:example.com)"
+            hint = "Search terms, usernames, or site names"
             minLines = 2
-            setText(" ")
         }
         page.addView(queryInput)
 
-        keyInput = EditText(this).apply {
-            hint = "Brave Search API key"
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        page.addView(TextView(this).apply {
+            text = "SearXNG instance address"
+            textSize = 14f
+            setPadding(0, 12, 0, 4)
+        })
+        searxInput = EditText(this).apply {
+            hint = "https://your-trusted-searxng-instance.example"
+            setSingleLine(true)
+            setText("https://searx.be")
         }
-        page.addView(keyInput)
+        page.addView(searxInput)
 
         page.addView(TextView(this).apply {
-            text = "Get an API key from api.search.brave.com. The key is used only for this request and is not saved in the app. Brave receives your search query. Your reference photo is not sent."
+            text = "SearXNG is community-hosted. Public instances can change or disappear, and their operators may see your searches. Use an instance you trust. You can change the address above."
             textSize = 13f
-            setPadding(0, 8, 0, 16)
+            setPadding(0, 4, 0, 16)
         })
 
-        searchButton = Button(this).apply {
-            text = "Search public image index"
+        page.addView(Button(this).apply {
+            text = "Search all three"
             isAllCaps = false
-            setOnClickListener { runSearch() }
-        }
-        page.addView(searchButton)
+            setOnClickListener { searchAll() }
+        })
+        page.addView(Button(this).apply {
+            text = "Yandex Images only"
+            isAllCaps = false
+            setOnClickListener { openSearch(yandexUrl()) }
+        })
+        page.addView(Button(this).apply {
+            text = "SearXNG only"
+            isAllCaps = false
+            setOnClickListener { openSearch(searxUrl()) }
+        })
+        page.addView(Button(this).apply {
+            text = "DuckDuckGo Images only"
+            isAllCaps = false
+            setOnClickListener { openSearch(duckDuckGoUrl()) }
+        })
 
         status = TextView(this).apply {
-            text = "No web search run yet."
+            text = "No searches opened yet."
             textSize = 14f
-            setPadding(0, 18, 0, 12)
+            setPadding(0, 18, 0, 8)
         }
         page.addView(status)
-
-        results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        page.addView(results)
     }
 
-    private fun runSearch() {
+    private fun currentQuery(): String? {
         val query = queryInput.text.toString().trim()
-        val apiKey = keyInput.text.toString().trim()
         if (query.isBlank()) {
             Toast.makeText(this, "Enter search terms first.", Toast.LENGTH_SHORT).show()
-            return
+            return null
         }
-        if (apiKey.isBlank()) {
-            Toast.makeText(this, "Enter your Brave API key.", Toast.LENGTH_SHORT).show()
-            return
+        return query
+    }
+
+    private fun yandexUrl(): String? {
+        val query = currentQuery() ?: return null
+        return Uri.parse("https://yandex.com/images/search")
+            .buildUpon()
+            .appendQueryParameter("text", query)
+            .build()
+            .toString()
+    }
+
+    private fun duckDuckGoUrl(): String? {
+        val query = currentQuery() ?: return null
+        return Uri.parse("https://duckduckgo.com/")
+            .buildUpon()
+            .appendQueryParameter("q", query)
+            .appendQueryParameter("ia", "images")
+            .appendQueryParameter("iax", "images")
+            .build()
+            .toString()
+    }
+
+    private fun searxUrl(): String? {
+        val query = currentQuery() ?: return null
+        val raw = searxInput.text.toString().trim()
+        val base = try {
+            Uri.parse(raw)
+        } catch (_: Exception) {
+            null
         }
+        if (base == null || base.scheme != "https" || base.host.isNullOrBlank()) {
+            Toast.makeText(this, "Enter a valid HTTPS SearXNG instance address.", Toast.LENGTH_LONG).show()
+            return null
+        }
+        val cleanBase = raw.trimEnd('/')
+        return Uri.parse("$cleanBase/search")
+            .buildUpon()
+            .appendQueryParameter("q", query)
+            .appendQueryParameter("categories", "images")
+            .appendQueryParameter("language", "en")
+            .build()
+            .toString()
+    }
 
-        searchButton.isEnabled = false
-        status.text = "Searching Brave's public image index…"
-        results.removeAllViews()
+    private fun searchAll() {
+        val query = currentQuery() ?: return
+        val urls = listOfNotNull(
+            Uri.parse("https://yandex.com/images/search").buildUpon()
+                .appendQueryParameter("text", query).build().toString(),
+            searxUrl(),
+            Uri.parse("https://duckduckgo.com/").buildUpon()
+                .appendQueryParameter("q", query)
+                .appendQueryParameter("ia", "images")
+                .appendQueryParameter("iax", "images")
+                .build().toString()
+        )
+        if (urls.size != 3) return
 
-        executor.execute {
+        var opened = 0
+        for (url in urls) {
             try {
-                val encoded = URLEncoder.encode(query, "UTF-8")
-                val endpoint = URL("https://api.search.brave.com/res/v1/images/search?q=$encoded&country=US&search_lang=en&count=50&safesearch=off")
-                val connection = (endpoint.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 15000
-                    readTimeout = 20000
-                    setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-Subscription-Token", apiKey)
-                }
-                val code = connection.responseCode
-                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-                val body = stream.bufferedReader().use { it.readText() }
-                connection.disconnect()
-                if (code !in 200..299) {
-                    throw IllegalStateException("Brave returned HTTP $code. Check the API key, account access, and plan.")
-                }
-
-                val json = JSONObject(body)
-                val items = json.optJSONArray("results")
-                runOnUiThread {
-                    if (isFinishing || isDestroyed) return@runOnUiThread
-                    val count = items?.length() ?: 0
-                    status.text = "Found $count indexed image result(s). Open a result to inspect its source page."
-                    if (count == 0) {
-                        addResultText("No results returned. Try broader terms or another public source.")
-                    } else {
-                        for (i in 0 until count) {
-                            val item = items!!.optJSONObject(i) ?: continue
-                            val title = item.optString("title", "Untitled image result")
-                            val source = item.optString("source", "Unknown source")
-                            val pageUrl = item.optString("url", "")
-                            val imageUrl = item.optJSONObject("properties")?.optString("url", "") ?: ""
-                            addResult(title, source, pageUrl, imageUrl)
-                        }
-                    }
-                    searchButton.isEnabled = true
-                }
-            } catch (error: Exception) {
-                runOnUiThread {
-                    if (isFinishing || isDestroyed) return@runOnUiThread
-                    status.text = "Search failed: ${error.localizedMessage ?: "unknown error"}"
-                    searchButton.isEnabled = true
-                }
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                opened++
+            } catch (_: Exception) {
+                // Continue opening the remaining search providers.
             }
         }
+        status.text = "Opened $opened of 3 search pages. Check each result page in your browser."
+        if (opened == 0) {
+            Toast.makeText(this, "No browser could open the search pages.", Toast.LENGTH_LONG).show()
+        }
     }
 
-    private fun addResult(title: String, source: String, pageUrl: String, imageUrl: String) {
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, 14, 0, 14)
-        }
-        card.addView(TextView(this).apply {
-            text = title
-            textSize = 16f
-        })
-        card.addView(TextView(this).apply {
-            text = source
-            textSize = 13f
-        })
-        if (pageUrl.startsWith("https://") || pageUrl.startsWith("http://")) {
-            card.addView(Button(this).apply {
-                text = "Open source page"
-                isAllCaps = false
-                setOnClickListener { openLink(pageUrl) }
-            })
-        }
-        if (imageUrl.startsWith("https://") || imageUrl.startsWith("http://")) {
-            card.addView(Button(this).apply {
-                text = "Open image"
-                isAllCaps = false
-                setOnClickListener { openLink(imageUrl) }
-            })
-        }
-        results.addView(card)
-        val divider = android.view.View(this).apply {
-            setBackgroundColor(0xFF444444.toInt())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
-        }
-        results.addView(divider)
-    }
-
-    private fun addResultText(message: String) {
-        results.addView(TextView(this).apply { text = message; textSize = 14f })
+    private fun openSearch(url: String?) {
+        if (url == null) return
+        openLink(url)
     }
 
     private fun openLink(link: String) {
         try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
+            status.text = "Search page opened in your browser."
         } catch (_: Exception) {
-            Toast.makeText(this, "Unable to open this link.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Unable to open this search page.", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    override fun onDestroy() {
-        executor.shutdown()
-        super.onDestroy()
     }
 }

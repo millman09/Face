@@ -94,6 +94,10 @@ class MainActivity : AppCompatActivity() {
         )
         val nav = findViewById<BottomNavigationView>(R.id.bottomNav)
         nav.setOnItemSelectedListener { item ->
+            if (item.itemId == R.id.nav_accounts) {
+                startActivity(Intent(this, AccountAuditActivity::class.java))
+                return@setOnItemSelectedListener false
+            }
             panels.forEach { (id, panel) ->
                 panel.visibility = if (id == item.itemId) View.VISIBLE else View.GONE
             }

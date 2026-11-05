@@ -385,7 +385,8 @@ class IdentityMatchActivity : AppCompatActivity() {
             return
         }
         val model = modelFile ?: return
-        val ref = referenceUri ?: return
+        val refs = referenceUris.ifEmpty { listOfNotNull(referenceUri) }
+        if (refs.isEmpty()) return
         val candidates = imageUris.toList()
         scanButton.isEnabled = false
         progress.visibility = ProgressBar.VISIBLE
@@ -395,7 +396,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         executor.execute {
             var interpreter: Interpreter? = null
             var faceDetector: FaceDetector? = null
-            var referenceAligned: Bitmap? = null
+            val alignedReferences = mutableListOf<Bitmap>()
             val resultsDatabase = PublicSourceDatabase(this)
             try {
                 validateMobileFaceNetModel(model)
@@ -406,19 +407,25 @@ class IdentityMatchActivity : AppCompatActivity() {
                     .build()
                 faceDetector = FaceDetection.getClient(options)
 
-                val referenceBitmap = decode(ref)
-                val referenceFaces = Tasks.await(faceDetector.process(InputImage.fromBitmap(referenceBitmap, 0)))
-                val referenceFace = referenceFaces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
-                    ?: throw IllegalArgumentException("No face was detected in the reference photo.")
-                referenceAligned = alignFace(referenceBitmap, referenceFace)
-                referenceBitmap.recycle()
-
-                val referenceNote = if (referenceFaces.size > 1) {
-                    "The reference photo has ${referenceFaces.size} faces, so the largest one was used.\n"
+                var totalReferenceFaces = 0
+                refs.forEachIndexed { refIndex, refUri ->
+                    val referenceBitmap = decode(refUri)
+                    try {
+                        val detected = Tasks.await(faceDetector.process(InputImage.fromBitmap(referenceBitmap, 0)))
+                        val referenceFace = detected.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                            ?: throw IllegalArgumentException("No face was detected in reference photo ${refIndex + 1}.")
+                        alignedReferences += alignFace(referenceBitmap, referenceFace)
+                        totalReferenceFaces += detected.size
+                    } finally {
+                        referenceBitmap.recycle()
+                    }
+                }
+                val referenceNote = if (totalReferenceFaces > refs.size) {
+                    "Some reference photos contained multiple faces; the largest face in each was used.\n"
                 } else {
                     ""
                 }
-                val report = StringBuilder("Reference face aligned for this scan session.\n$referenceNote")
+                val report = StringBuilder("${alignedReferences.size} reference photo(s) aligned for this scan session.\n$referenceNote")
                 var checked = 0
                 var matched = 0
                 candidates.forEachIndexed { index, uri ->
@@ -432,7 +439,10 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 try {
                                     val aligned = alignFace(bitmap, face)
                                     try {
-                                        val score = comparePair(interpreter, referenceAligned!!, aligned)
+                                        val referenceScores = alignedReferences.map { reference ->
+                                            comparePair(interpreter, reference, aligned)
+                                        }
+                                        val score = combineReferenceScores(referenceScores)
                                         if (best == null || score > best!!) best = score
                                     } finally {
                                         aligned.recycle()
@@ -475,7 +485,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     updateReady()
                 }
             } finally {
-                referenceAligned?.recycle()
+                alignedReferences.forEach { it.recycle() }
                 faceDetector?.close()
                 interpreter?.close()
                 resultsDatabase.close()
@@ -953,14 +963,14 @@ class IdentityMatchActivity : AppCompatActivity() {
                     1 -> (pixel shr 8) and 255
                     else -> pixel and 255
                 }
-                buffer.putFloat(value / 127.5f - 1f)
+                buffer.putFloat(value / 255f)
             }
         } else {
             for (y in 0 until 112) for (x in 0 until 112) {
                 val pixel = bitmap.getPixel(x, y)
-                buffer.putFloat(((pixel shr 16) and 255) / 127.5f - 1f)
-                buffer.putFloat(((pixel shr 8) and 255) / 127.5f - 1f)
-                buffer.putFloat((pixel and 255) / 127.5f - 1f)
+                buffer.putFloat(((pixel shr 16) and 255) / 255f)
+                buffer.putFloat(((pixel shr 8) and 255) / 255f)
+                buffer.putFloat((pixel and 255) / 255f)
             }
         }
         buffer.rewind()

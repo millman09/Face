@@ -144,6 +144,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         root.addView(resultsScroll)
         handleSharedImages(intent)
         updateReady()
+        if (webScanMode) restoreSavedMatches()
         if (autoStartScan && webScanMode) {
             if (modelFile?.exists() == true && referenceUris.isNotEmpty()) {
                 runComparison()
@@ -462,7 +463,6 @@ class IdentityMatchActivity : AppCompatActivity() {
         scanButton.isEnabled = false
         progress.visibility = ProgressBar.VISIBLE
         progress.progress = 0
-        resultsContainer.removeAllViews()
         status.text = "Preparing automatic public-source scan…"
         executor.execute {
             var interpreter: Interpreter? = null
@@ -472,8 +472,8 @@ class IdentityMatchActivity : AppCompatActivity() {
             try {
                 val sources = candidateDatabase.sources().filter { it.enabled }
                 require(sources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
-                // Start with a clean candidate set so old URLs cannot masquerade as new scan results.
-                candidateDatabase.clearCandidatesForNewScan()
+                // Keep the local candidate index. Previously compared URLs are skipped,
+                // while new URLs are queued for matching and unavailable URLs can be retried.
                 runOnUiThread { progress.max = sources.size }
                 var addedTotal = 0
                 var completedSources = 0
@@ -519,9 +519,19 @@ class IdentityMatchActivity : AppCompatActivity() {
                     sourcePool.shutdownNow()
                 }
 
-                val candidates = candidateDatabase.allCandidates(5000)
-                require(candidates.isNotEmpty()) {
-                    "The public-source crawl finished, but the accessible sitemap/feed pages exposed no image links. Many sites block or do not publish crawlable public pages."
+                val candidates = candidateDatabase.pendingCandidates(5000)
+                if (candidates.isEmpty()) {
+                    val saved = candidateDatabase.possibleMatches(100).size
+                    runOnUiThread {
+                        status.text = if (candidateDatabase.candidateCount() == 0) {
+                            "No public image links were discovered. Supported sites may not expose crawlable public pages."
+                        } else {
+                            "No new images need comparison. \${candidateDatabase.candidateCount()} image links are indexed and $saved possible match(es) are saved from earlier scans."
+                        }
+                        progress.visibility = ProgressBar.GONE
+                        updateReady()
+                    }
+                    return@execute
                 }
                 runOnUiThread {
                     progress.max = completedSources + candidates.size
@@ -635,6 +645,36 @@ class IdentityMatchActivity : AppCompatActivity() {
                 detector?.close()
                 interpreter?.close()
                 candidateDatabase.close()
+            }
+        }
+    }
+
+    /** Restore recent match cards from the local database; image bytes remain temporary. */
+    private fun restoreSavedMatches() {
+        executor.execute {
+            val db = PublicSourceDatabase(this)
+            val matches = try { db.possibleMatches(30) } finally { db.close() }
+            var restored = 0
+            for (match in matches) {
+                try {
+                    val bitmap = downloadPublicImageInMemory(match.imageUrl)
+                    val preview = Bitmap.createScaledBitmap(
+                        bitmap, 220,
+                        (220f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), true
+                    )
+                    bitmap.recycle()
+                    runOnUiThread {
+                        addWebMatchPreview(match.pageUrl, match.imageUrl, match.similarity, preview)
+                    }
+                    restored++
+                } catch (_: Exception) {
+                    // A previously public image may have been removed or become unavailable.
+                }
+            }
+            if (restored > 0) {
+                runOnUiThread {
+                    if (!isFinishing) status.text = "Restored $restored saved possible match(es). Start a new search to find newly discovered images."
+                }
             }
         }
     }

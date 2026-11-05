@@ -361,12 +361,13 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
  * arbitrary result pages or image binaries. Disallowed sitemap paths are skipped.
  */
 object PublicSourceScanner {
-    private const val MAX_BYTES = 2 * 1024 * 1024
-    private const val MAX_SITEMAPS = 12
-    private const val MAX_IMAGES = 500
-    private const val MAX_SITEMAP_PAGES = 40
-    private const val MAX_LINKED_PAGES = 40
-    private const val MAX_PAGE_BYTES = 512 * 1024
+    // Deep but bounded per-domain crawl limits to protect phone performance.
+    private const val MAX_BYTES = 4 * 1024 * 1024
+    private const val MAX_SITEMAPS = 40
+    private const val MAX_IMAGES = 2500
+    private const val MAX_SITEMAP_PAGES = 150
+    private const val MAX_LINKED_PAGES = 200
+    private const val MAX_PAGE_BYTES = 1024 * 1024
 
     fun scan(source: WebsiteSource): List<DiscoveredImage> {
         val base = source.baseUrl
@@ -378,11 +379,21 @@ object PublicSourceScanner {
             .map { it.substringAfter(':').trim() }
             .filter { it.startsWith("https://") || it.startsWith("http://") }
             .forEach { sitemapUrls += it }
-        sitemapUrls += "$base/sitemap.xml"
-        sitemapUrls += "$base/sitemap_index.xml"
-        sitemapUrls += "$base/feed"
-        sitemapUrls += "$base/feed.xml"
-        sitemapUrls += "$base/rss.xml"
+        sitemapUrls += listOf(
+            "$base/sitemap.xml",
+            "$base/sitemap_index.xml",
+            "$base/sitemap-index.xml",
+            "$base/wp-sitemap.xml",
+            "$base/image-sitemap.xml",
+            "$base/images-sitemap.xml",
+            "$base/sitemap-images.xml",
+            "$base/sitemap1.xml",
+            "$base/sitemap-1.xml",
+            "$base/feed",
+            "$base/feed.xml",
+            "$base/rss.xml",
+            "$base/atom.xml"
+        )
 
         val found = linkedMapOf<String, DiscoveredImage>()
         val pending = sitemapUrls.toMutableList()

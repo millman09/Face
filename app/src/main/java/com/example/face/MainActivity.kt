@@ -98,6 +98,9 @@ class MainActivity : AppCompatActivity() {
             true
         }
         // Match the visible panel to the selected tab, including after a rotation.
+        if (nav.selectedItemId == R.id.nav_tools) {
+            nav.selectedItemId = R.id.nav_search
+        }
         panels.forEach { (id, panel) ->
             panel.visibility = if (id == nav.selectedItemId) View.VISIBLE else View.GONE
         }
@@ -144,21 +147,84 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildSearchPanel(container: LinearLayout) {
-        addSection(container, getString(R.string.search_tab_title))
-        addText(container, getString(R.string.search_tab_body))
-        addTile(container, getString(R.string.search_tab_button), "Select your reference photos and begin the automatic scan.") {
+        val eyebrow = TextView(this).apply {
+            text = "PRIVATE FACE SEARCH"
+            textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            letterSpacing = 0.12f
+            setPadding(0, dp(12), 0, dp(8))
+        }
+        container.addView(eyebrow)
+
+        val headline = TextView(this).apply {
+            text = "Find where your face appears online"
+            textSize = 28f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setLineSpacing(dp(2).toFloat(), 1.0f)
+            setPadding(0, 0, 0, dp(10))
+        }
+        container.addView(headline)
+
+        val intro = TextView(this).apply {
+            text = "Search supported public image sources, compare possible matches, and review the pages where they appear."
+            textSize = 15f
+            setLineSpacing(dp(3).toFloat(), 1.05f)
+            setPadding(0, 0, 0, dp(18))
+        }
+        container.addView(intro)
+
+        addTile(
+            container,
+            "Start a deep search",
+            "Choose one or more reference photos, then scan every supported public source in one run."
+        ) {
             startActivity(Intent(this, WebScanActivity::class.java))
         }
+
+        addSection(container, "YOUR SEARCH WORKSPACE")
+        addTile(
+            container,
+            "View possible matches",
+            "Review saved results, similarity scores, and original source pages."
+        ) {
+            findViewById<BottomNavigationView>(R.id.bottomNav).selectedItemId = R.id.nav_results
+        }
+        addTile(
+            container,
+            "Private photo processing",
+            "Reference photos stay on this phone. Candidate images are compared temporarily and are not saved."
+        ) { }
+        addTile(
+            container,
+            "Public-source coverage",
+            "Search can only reach images exposed through supported public pages, feeds, and indexes. It cannot search every website on the internet."
+        ) { }
     }
 
     private fun buildResultsPanel(container: LinearLayout) {
-        addSection(container, getString(R.string.results_title))
+        val eyebrow = TextView(this).apply {
+            text = "SEARCH HISTORY"
+            textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            letterSpacing = 0.12f
+            setPadding(0, dp(12), 0, dp(8))
+        }
+        container.addView(eyebrow)
+
+        val headline = TextView(this).apply {
+            text = "Possible matches"
+            textSize = 27f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, dp(8))
+        }
+        container.addView(headline)
+
         resultsSummary = TextView(this).apply {
             textSize = 14f
             setPadding(0, 0, 0, dp(12))
         }
         container.addView(resultsSummary)
-        addTile(container, getString(R.string.results_refresh), getString(R.string.results_refresh_body)) {
+        addTile(container, "Refresh results", "Reload the saved possible matches from your previous scans.") {
             refreshResults()
         }
         resultsContainer = container

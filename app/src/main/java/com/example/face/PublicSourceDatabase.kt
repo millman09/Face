@@ -486,7 +486,7 @@ object PublicSourceScanner {
                                 inUrl = false
                                 if ((pageUrl.startsWith("https://") || pageUrl.startsWith("http://")) &&
                                     sameHost(base, pageUrl) && !isDisallowed(pageUrl, rules) &&
-                                    publicPages.size < MAX_PAGES * 4) publicPages += pageUrl
+                                    publicPages.size < MAX_SITEMAP_PAGES * 4) publicPages += pageUrl
                             }
                             "item", "entry" -> inFeedEntry = false
                         }

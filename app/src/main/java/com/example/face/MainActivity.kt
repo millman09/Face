@@ -2,12 +2,14 @@ package com.example.face
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.ImageView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -247,16 +249,82 @@ class MainActivity : AppCompatActivity() {
             addText(resultsList, getString(R.string.results_empty_detail))
             return
         }
-        matches.forEach { match ->
-            val host = Uri.parse(match.imageUrl).host ?: Uri.parse(match.sourceBaseUrl).host ?: "Website"
-            val score = String.format(java.util.Locale.US, "%.3f", match.similarity)
-            addTile(resultsList, host, getString(R.string.results_match_score, score)) {
-                val target = match.pageUrl.ifBlank { match.imageUrl }
-                openUrl(target)
-            }
+        matches.sortedByDescending { it.similarity }.forEach { match ->
+            addMatchCard(match)
         }
     }
 
+    private fun addMatchCard(match: MatchResult) {
+        val host = Uri.parse(match.imageUrl).host ?: Uri.parse(match.sourceBaseUrl).host ?: "Website"
+        val score = (match.similarity.coerceIn(-1f, 1f) * 100f).toInt().coerceAtLeast(0)
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(android.graphics.Color.rgb(25, 29, 43))
+                cornerRadius = dp(16).toFloat()
+            }
+        }
+        val preview = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(112), dp(112))
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setBackgroundColor(android.graphics.Color.rgb(43, 47, 62))
+            contentDescription = "Possible matching image from $host"
+        }
+        card.addView(preview)
+        val details = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        details.addView(TextView(this).apply {
+            text = "Possible match"
+            textSize = 16f
+            setTextColor(android.graphics.Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        details.addView(TextView(this).apply {
+            text = host
+            textSize = 13f
+            setTextColor(android.graphics.Color.rgb(190, 195, 210))
+            setPadding(0, dp(4), 0, dp(3))
+        })
+        details.addView(TextView(this).apply {
+            text = "Similarity indicator: $score"
+            textSize = 13f
+            setTextColor(android.graphics.Color.rgb(173, 160, 255))
+        })
+        details.addView(com.google.android.material.button.MaterialButton(this).apply {
+            text = "Open source"
+            isAllCaps = false
+            setOnClickListener { openUrl(match.pageUrl.ifBlank { match.imageUrl }) }
+        })
+        card.addView(details)
+        resultsList.addView(card, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(12) })
+        Thread({
+            try {
+                val uri = Uri.parse(match.imageUrl)
+                if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null) return@Thread
+                val connection = (java.net.URL(match.imageUrl).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 5000
+                    readTimeout = 7000
+                    instanceFollowRedirects = false
+                    setRequestProperty("Accept", "image/*")
+                    setRequestProperty("User-Agent", "FacePersonalScanner/1.0")
+                }
+                val bitmap = try {
+                    if (connection.responseCode !in 200..299 || !connection.contentType.orEmpty().startsWith("image/") || connection.contentLengthLong > 2L * 1024L * 1024L) null
+                    else connection.inputStream.use { input ->
+                        val bytes = input.readBytes()
+                        if (bytes.size > 2 * 1024 * 1024) null else BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    }
+                } finally { connection.disconnect() }
+                if (bitmap != null) runOnUiThread { if (!isFinishing && !isDestroyed) preview.setImageBitmap(bitmap) else bitmap.recycle() }
+            } catch (_: Exception) { }
+        }, "match-thumbnail").start()
+    }
     override fun onResume() {
         super.onResume()
         if (::resultsContainer.isInitialized) refreshResults()

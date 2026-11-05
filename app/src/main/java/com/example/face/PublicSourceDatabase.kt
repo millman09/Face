@@ -15,9 +15,10 @@ import java.util.Locale
 data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean)
 data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl: String)
 data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String)
+data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 4) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 5) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -28,12 +29,17 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER NOT NULL,
             page_url TEXT NOT NULL, image_url TEXT NOT NULL UNIQUE,
             discovered_at INTEGER NOT NULL, scan_status TEXT NOT NULL DEFAULT 'Discovered',
+            similarity REAL, checked_at INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY(source_id) REFERENCES sources(id)
         )""".trimIndent())
         seedSources(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 4) seedSources(db)
+        if (oldVersion < 5) {
+            db.execSQL("ALTER TABLE candidates ADD COLUMN similarity REAL")
+            db.execSQL("ALTER TABLE candidates ADD COLUMN checked_at INTEGER NOT NULL DEFAULT 0")
+        }
     }
 
     private fun seedSources(db: SQLiteDatabase) {
@@ -282,6 +288,31 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
     @Synchronized fun updateCandidateStatus(id: Long, status: String) {
         val values = ContentValues().apply { put("scan_status", status.take(100)) }
         writableDatabase.update("candidates", values, "id=?", arrayOf(id.toString()))
+    }
+
+    @Synchronized fun updateCandidateResult(id: Long, status: String, similarity: Float?) {
+        val values = ContentValues().apply {
+            put("scan_status", status.take(100))
+            if (similarity == null) putNull("similarity") else put("similarity", similarity)
+            put("checked_at", System.currentTimeMillis())
+        }
+        writableDatabase.update("candidates", values, "id=?", arrayOf(id.toString()))
+    }
+
+    @Synchronized fun possibleMatches(limit: Int = 500): List<MatchResult> {
+        val result = mutableListOf<MatchResult>()
+        readableDatabase.rawQuery(
+            """SELECT c.id,s.base_url,c.page_url,c.image_url,c.similarity,c.checked_at
+               FROM candidates c JOIN sources s ON s.id=c.source_id
+               WHERE c.scan_status='Possible match' AND c.similarity IS NOT NULL
+               ORDER BY c.checked_at DESC LIMIT ?""".trimIndent(),
+            arrayOf(limit.coerceIn(1, 2000).toString())
+        ).use { c ->
+            while (c.moveToNext()) result += MatchResult(
+                c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getFloat(4), c.getLong(5)
+            )
+        }
+        return result
     }
 
     @Synchronized fun candidateCount(): Int {

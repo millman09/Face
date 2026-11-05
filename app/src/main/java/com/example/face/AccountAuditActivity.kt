@@ -44,7 +44,7 @@ class AccountAuditActivity : AppCompatActivity() {
         page.addView(label("USERNAME", 12, true, android.graphics.Color.rgb(173, 160, 255), dp(8)))
         username = EditText(this).apply {
             hint = "Enter a username you use"
-            singleLine = true
+            isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
             setTextColor(android.graphics.Color.WHITE)

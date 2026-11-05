@@ -82,9 +82,25 @@ class IdentityMatchActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(16), dp(20), dp(24))
+            setPadding(dp(20), dp(18), dp(20), dp(28))
+            setBackgroundColor(android.graphics.Color.rgb(13, 16, 24))
         }
-        setToolPage("Face matching", root)
+        setToolPage("Deep search", root)
+        root.addView(TextView(this).apply {
+            text = "FACE SEARCH  /  LIVE SCAN"
+            textSize = 11f
+            letterSpacing = 0.12f
+            setTextColor(android.graphics.Color.rgb(155, 139, 255))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(8))
+        })
+        root.addView(TextView(this).apply {
+            text = "Searching for\nyour face."
+            textSize = 29f
+            setTextColor(android.graphics.Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, dp(14))
+        })
         webScanMode = intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false)
         autoStartScan = intent.getBooleanExtra(EXTRA_AUTO_START, false)
         @Suppress("DEPRECATION")
@@ -92,21 +108,23 @@ class IdentityMatchActivity : AppCompatActivity() {
         referenceUri = referenceUris.firstOrNull()
         root.addView(TextView(this).apply {
             text = if (webScanMode) {
-                "This page automatically checks every enabled source in the built-in public catalogue, discovers available public image links, and compares them with your selected photos. Candidate images are processed temporarily in memory on this phone and are not saved or uploaded."
+                "Your selected reference photos stay on this device. The scan checks supported public sources and compares accessible images locally. Coverage depends on what each source makes publicly available."
             } else {
-                "Downloads Qualcomm AI Hub MobileFaceNet from its public release (Apache 2.0 model weights). It runs locally on this phone. Select reference photo(s) and candidate images. Photos are aligned on-device; no images are uploaded."
+                "The face matcher runs on this phone. Select your reference photos and candidate images to compare them privately, without uploading your photos."
             }
             textSize = 14f
-            setPadding(0, 0, 0, 16)
+            setTextColor(android.graphics.Color.rgb(190, 195, 210))
+            setLineSpacing(dp(3).toFloat(), 1.04f)
+            setPadding(0, 0, 0, dp(16))
         })
         val existingModel = File(filesDir, modelTargetName)
         if (existingModel.exists()) modelFile = existingModel
-        addButton(root, "Download official MobileFaceNet model (~4 MB)") { downloadOfficialModel() }
-        addButton(root, "Choose compatible TFLite model") { modelPicker.launch(arrayOf("*/*")) }
-        addButton(root, "Choose reference photo(s)") { referencePicker.launch(arrayOf("image/*")) }
+        addButton(root, "Install face-matching model  ·  ~4 MB") { downloadOfficialModel() }
+        addButton(root, "Choose a compatible face model") { modelPicker.launch(arrayOf("*/*")) }
+        addButton(root, "Choose reference photos") { referencePicker.launch(arrayOf("image/*")) }
         if (!webScanMode) addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
         scanButton = MaterialButton(this).apply {
-            text = if (webScanMode) "Scan all public websites and match my photos" else "Compare faces on this phone"
+            text = if (webScanMode) "Start deep search" else "Compare selected photos"
             isAllCaps = false
             isEnabled = false
             setOnClickListener { runComparison() }

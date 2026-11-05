@@ -552,10 +552,13 @@ class IdentityMatchActivity : AppCompatActivity() {
                                     var aligned: Bitmap? = null
                                     try {
                                         aligned = alignFace(bitmap, face)
-                                        for (reference in alignedReferences) {
-                                            val score = comparePair(activeInterpreter, reference, aligned)
-                                            if (best == null || score > best!!) best = score
+                                        val referenceScores = alignedReferences.map { reference ->
+                                            comparePair(activeInterpreter, reference, aligned)
                                         }
+                                        // With multiple reference photos, require agreement from the
+                                        // two strongest views instead of accepting one lucky high score.
+                                        val faceScore = combineReferenceScores(referenceScores)
+                                        if (best == null || faceScore > best!!) best = faceScore
                                     } catch (_: IllegalArgumentException) {
                                         skipped++
                                     } finally {
@@ -915,6 +918,12 @@ class IdentityMatchActivity : AppCompatActivity() {
         val aligned = Bitmap.createBitmap(112, 112, Bitmap.Config.ARGB_8888)
         Canvas(aligned).drawBitmap(bitmap, matrix, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
         return aligned
+    }
+
+    private fun combineReferenceScores(scores: List<Float>): Float {
+        require(scores.isNotEmpty()) { "At least one reference embedding is required." }
+        if (scores.size == 1) return scores.first()
+        return scores.sortedDescending().take(2).average().toFloat()
     }
 
     private fun comparePair(interpreter: Interpreter, first: Bitmap, second: Bitmap): Float {

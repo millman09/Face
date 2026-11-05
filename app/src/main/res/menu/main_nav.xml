@@ -20,30 +20,4 @@
         android:id="@+id/nav_accounts"
         android:icon="@drawable/ic_nav_search"
         android:title="Accounts" />
-on="1.0" encoding="utf-8"?>
-<menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:id="@+id/nav_tools"
-        android:icon="@drawable/ic_nav_tools"
-        android:title="@string/nav_tools" />
-    <item
-        android:id="@+id/nav_search"
-        android:icon="@drawable/ic_nav_search"
-        android:title="@string/nav_search" />
-    <item
-        android:id="@+id/nav_results"
-        android:icon="@drawable/ic_nav_search"
-        android:title="@string/nav_results" />
-    <item
-        android:id="@+id/nav_help"
-        android:icon="@drawable/ic_nav_help"
-        android:title="@string/nav_help" />
-    <item
-        android:id="@+id/nav_accounts"
-        android:icon="@drawable/ic_nav_search"
-        android:title="Accounts" />
-    <item
-        android:id="@+id/nav_accounts"
-        android:icon="@drawable/ic_nav_search"
-        android:title="Accounts" />
 </menu>

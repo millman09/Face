@@ -561,23 +561,33 @@ object PublicSourceScanner {
                         val resolved = URL(URL(pageUrl), value)
                         if (resolved.protocol in listOf("https", "http") && resolved.userInfo == null) {
                             val normalized = URL(resolved.protocol, resolved.host, resolved.port, resolved.file).toString()
-                            if (normalized != pageUrl) pageLinks += normalized
+                            if (isImageUrl(normalized)) candidates += normalized
+                            else if (normalized != pageUrl) pageLinks += normalized
                         }
                     } catch (_: Exception) { }
                 }
             }
             if (pageLinks.size >= MAX_LINKED_PAGES) break
         }
-        val imgTag = Regex("(?is)<img\\b[^>]*>")
-        for (tag in imgTag.findAll(html)) {
+        // Include standard images, responsive <source> entries, video posters,
+        // and common lazy-loading attributes used by public gallery pages.
+        val mediaTag = Regex("(?is)<(?:img|source|video|link)\\b[^>]*>")
+        for (tag in mediaTag.findAll(html)) {
             val attrs = attribute.findAll(tag.value).associate {
                 it.groupValues[1].lowercase(Locale.US) to it.groupValues[3]
             }
-            listOf("src", "data-src", "data-original").forEach { key ->
-                attrs[key]?.let { candidates += it }
+            listOf(
+                "src", "data-src", "data-original", "data-original-src",
+                "data-lazy-src", "data-flickity-lazyload", "data-echo",
+                "data-image", "poster"
+            ).forEach { key -> attrs[key]?.let { candidates += it } }
+            listOf("srcset", "data-srcset", "data-lazy-srcset").forEach { key ->
+                attrs[key]?.split(',')?.forEach { entry ->
+                    entry.trim().substringBefore(' ').takeIf { it.isNotBlank() }?.let { candidates += it }
+                }
             }
-            attrs["srcset"]?.split(',')?.forEach { entry ->
-                entry.trim().substringBefore(' ').takeIf { it.isNotBlank() }?.let { candidates += it }
+            if (tag.value.contains("image_src", ignoreCase = true)) {
+                attrs["href"]?.let { candidates += it }
             }
             if (candidates.size >= MAX_IMAGES) break
         }
@@ -591,7 +601,14 @@ object PublicSourceScanner {
             val imageUrl = resolved.toString()
             found.putIfAbsent(imageUrl, DiscoveredImage(sourceId, pageUrl, imageUrl))
         }
-        return pageLinks
+        return pageLinks.sortedByDescending { isPriorityContentPage(it) }
+            .toCollection(linkedSetOf())
+    }
+
+    private fun isPriorityContentPage(address: String): Boolean {
+        val path = try { URL(address).path.lowercase(Locale.US) } catch (_: Exception) { return false }
+        val markers = listOf("gallery", "photo", "image", "album", "media", "post", "profile", "model", "thread", "topic")
+        return markers.any { marker -> path.contains(marker) }
     }
 
     private fun isLikelyHtmlPage(address: String): Boolean {

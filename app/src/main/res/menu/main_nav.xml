@@ -17,6 +17,10 @@
         android:icon="@drawable/ic_nav_help"
         android:title="@string/nav_help" />
     <item
+        android:id="@+id/nav_accounts"
+        android:icon="@drawable/ic_nav_search"
+        android:title="Accounts" />
+    <item
         android:id="@+id/nav_checklist"
         android:icon="@drawable/ic_nav_checklist"
         android:title="@string/nav_checklist" />

@@ -366,7 +366,7 @@ object PublicSourceScanner {
     private const val MAX_SITEMAPS = 40
     private const val MAX_IMAGES = 2500
     private const val MAX_SITEMAP_PAGES = 150
-    private const val MAX_LINKED_PAGES = 200
+    private const val MAX_LINKED_PAGES = 350
     private const val MAX_PAGE_BYTES = 1024 * 1024
 
     fun scan(source: WebsiteSource): List<DiscoveredImage> {
@@ -413,6 +413,27 @@ object PublicSourceScanner {
         // image sitemaps without turning the phone into an unbounded crawler.
         val pageQueue = ArrayDeque<String>()
         publicPages.take(MAX_SITEMAP_PAGES).forEach { pageQueue.addLast(it) }
+
+        // Forum software often exposes its useful public content from index,
+        // category, latest-topic and gallery routes rather than sitemaps.
+        // Each route is still checked against robots.txt before it is fetched.
+        val forumLike = source.name.contains("forum", true) ||
+            source.name.contains("community", true) ||
+            source.name.contains("board", true)
+        if (forumLike) {
+            val forumRoutes = listOf(
+                "/forums", "/forum", "/community", "/boards", "/latest",
+                "/categories", "/threads", "/topics", "/discussions",
+                "/forum/index.php", "/viewforum.php", "/gallery", "/media",
+                "/albums", "/members"
+            )
+            for (route in forumRoutes) {
+                val address = base.trimEnd('/') + route
+                if (!isDisallowed(address, rules) && address !in publicPages) {
+                    pageQueue.addLast(address)
+                }
+            }
+        }
         val visitedPages = linkedSetOf<String>()
         var linkedPagesQueued = 0
         while (pageQueue.isNotEmpty() &&
@@ -607,8 +628,13 @@ object PublicSourceScanner {
 
     private fun isPriorityContentPage(address: String): Boolean {
         val path = try { URL(address).path.lowercase(Locale.US) } catch (_: Exception) { return false }
-        val markers = listOf("gallery", "photo", "image", "album", "media", "post", "profile", "model", "thread", "topic")
-        return markers.any { marker -> path.contains(marker) }
+        val full = address.lowercase(Locale.US)
+        val markers = listOf(
+            "gallery", "photo", "image", "album", "media", "post", "profile",
+            "model", "thread", "topic", "forum", "discussion", "viewforum",
+            "showthread", "page=", "start=", "offset=", "p="
+        )
+        return markers.any { marker -> full.contains(marker) || path.contains(marker) }
     }
 
     private fun isLikelyHtmlPage(address: String): Boolean {

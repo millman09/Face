@@ -47,18 +47,37 @@ class WebScanActivity : AppCompatActivity() {
 
         val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(16), dp(20), dp(24))
+            setPadding(dp(20), dp(18), dp(20), dp(28))
+            setBackgroundColor(android.graphics.Color.rgb(13, 16, 24))
         }
-        setToolPage("Image search", page)
+        setToolPage("Deep image search", page)
 
         page.addView(TextView(this).apply {
-            text = "Search providers open in your browser. The batch scanner below checks public sitemap and feed endpoints for image links. It does not bypass logins, CAPTCHAs, robots restrictions, or site protections."
+            text = "FACE SEARCH  /  PRIVATE WORKSPACE"
+            textSize = 11f
+            letterSpacing = 0.12f
+            setTextColor(android.graphics.Color.rgb(155, 139, 255))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(10))
+        })
+        page.addView(TextView(this).apply {
+            text = "Search the web\nfor your face."
+            textSize = 31f
+            setTextColor(android.graphics.Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setLineSpacing(dp(2).toFloat(), 1f)
+            setPadding(0, 0, 0, dp(12))
+        })
+        page.addView(TextView(this).apply {
+            text = "Select your reference photos and scan supported public image sources. Matches are compared on this device."
             textSize = 15f
-            setPadding(0, 0, 0, dp(16))
+            setTextColor(android.graphics.Color.rgb(190, 195, 210))
+            setLineSpacing(dp(3).toFloat(), 1.04f)
+            setPadding(0, 0, 0, dp(20))
         })
 
         queryInput = EditText(this).apply {
-            hint = "Search terms, usernames, or site names"
+            hint = "Optional search terms or usernames"
             minLines = 2
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
@@ -66,7 +85,7 @@ class WebScanActivity : AppCompatActivity() {
         page.addSpaced(queryInput, 12)
 
         page.addView(TextView(this).apply {
-            text = "SearXNG instance address"
+            text = "IMAGE SEARCH PROVIDER"
             textSize = 14f
             setPadding(0, dp(4), 0, dp(4))
         })
@@ -87,21 +106,21 @@ class WebScanActivity : AppCompatActivity() {
         page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
 
         page.addView(TextView(this).apply {
-            text = "The built-in public-source catalogue is searched automatically. You do not need to select individual websites. The scanner respects public access limits and does not bypass logins, CAPTCHAs, robots restrictions, or site protections."
+            text = "AUTOMATIC PUBLIC-SOURCE SCAN\nThe built-in source catalogue is checked in one run. Coverage depends on public sitemaps, feeds, and accessible image links. No logins, CAPTCHAs, paywalls, or site protections are bypassed."
             textSize = 14f
             setPadding(0, dp(16), 0, dp(12))
         })
 
-        page.addSpaced(button("Choose photo(s) to search for") { referencePicker.launch(arrayOf("image/*")) }, 8)
-        page.addSpaced(button("Start automatic scan and match my photos") { launchAutomaticScan() }, 8)
+        page.addSpaced(button("1  ·  Choose reference photos") { referencePicker.launch(arrayOf("image/*")) }, 8)
+        page.addSpaced(button("2  ·  Start deep search") { launchAutomaticScan() }, 8)
 
         status = TextView(this).apply {
-            text = "No scan has been run yet."
+            text = "READY  ·  ${database.sources().size} public sources available"
             textSize = 14f
             setPadding(0, dp(14), 0, dp(8))
         }
         page.addView(status)
-        status.text = "${database.sources().size} public sources are ready. All are included automatically."
+        status.text = "READY  ·  ${database.sources().size} public sources available. All enabled sources are included automatically."
     }
 
     override fun onDestroy() {

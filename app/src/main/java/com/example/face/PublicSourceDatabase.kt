@@ -9,7 +9,6 @@ import org.xmlpull.v1.XmlPullParser
 import java.io.BufferedInputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLConnection
 import java.util.Locale
 
 data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean)
@@ -764,34 +763,4 @@ object PublicSourceScanner {
         return listOf(".jpg", ".jpeg", ".png", ".webp", ".gif").any { path.endsWith(it) }
     }
 
-    private fun readText(address: String): String? {
-        var connection: URLConnection? = null
-        return try {
-            connection = URL(address).openConnection()
-            connection.connectTimeout = 7000
-            connection.readTimeout = 9000
-            connection.setRequestProperty("User-Agent", "FacePersonalScanner/1.0 (public sitemap/feed reader)")
-            connection.setRequestProperty("Accept", "application/xml,text/xml,application/rss+xml,application/atom+xml,text/plain")
-            if (connection is HttpURLConnection) {
-                connection.instanceFollowRedirects = false
-                if (connection.responseCode !in 200..299) return null
-            }
-            if (connection.contentLengthLong > MAX_BYTES) return null
-            val bytes = BufferedInputStream(connection.getInputStream()).use { input ->
-                val output = java.io.ByteArrayOutputStream()
-                val buffer = ByteArray(8192)
-                var total = 0
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    total += count
-                    if (total > MAX_BYTES) return null
-                    output.write(buffer, 0, count)
-                }
-                output.toByteArray()
-            }
-            bytes.toString(Charsets.UTF_8)
-        } catch (_: Exception) { null }
-        finally { (connection as? HttpURLConnection)?.disconnect() }
-    }
 }

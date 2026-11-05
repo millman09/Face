@@ -17,7 +17,7 @@ data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: 
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 6) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 7) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -44,6 +44,17 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             db.delete("sources", "name IN (?, ?, ?, ?, ?, ?)", arrayOf(
                 "FabGuys", "LPSG Forum", "JustUsBoys Forum", "GayHeaven Forum",
                 "GayXNow", "AnyShemale"
+            ))
+        }
+        if (oldVersion < 7) {
+            // Remove anime, cartoon, hentai-comic, booru and furry-art sources.
+            db.delete("sources", "name IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", arrayOf(
+                "Baraag", "Paheal", "e621", "Gelbooru", "Rule34", "Danbooru",
+                "Safebooru", "ExHentai", "E-Hentai", "Hitomi", "Fakku",
+                "HentaiFoundry", "8muses", "Luscious", "HentaiRox", "Hentai0Day",
+                "Newgrounds", "Inkbunny", "Fur Affinity", "Hentai2Read",
+                "MyHentaiGallery", "MultPorn", "PornComics", "XXXComics",
+                "Fenoxo Blog", "Audiochan", "Nutaku", "DLsite", "Newgrounds Adult"
             ))
         }
     }
@@ -81,21 +92,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "Nudy.pics" to "https://nudy.pics",
             "Siss.pics" to "https://siss.pics",
             "Fapello" to "https://fapello.com",
-            "Baraag" to "https://baraag.net",
-            "Paheal" to "https://paheal.net",
-            "e621" to "https://e621.net",
-            "Gelbooru" to "https://gelbooru.com",
-            "Rule34" to "https://rule34.xxx",
-            "Danbooru" to "https://danbooru.donmai.us",
-            "Safebooru" to "https://safebooru.org",
-            "ExHentai" to "https://exhentai.org",
-            "E-Hentai" to "https://e-hentai.org",
-            "Hitomi" to "https://hitomi.la",
-            "Fakku" to "https://www.fakku.net",
-            "HentaiFoundry" to "https://www.hentai-foundry.com",
-            "8muses" to "https://www.8muses.com",
-            "Luscious" to "https://www.luscious.net",
-            "HentaiRox" to "https://hentairox.com",
             // Creator and community platforms
             "OnlyFans" to "https://onlyfans.com",
             "Fansly" to "https://fansly.com",
@@ -139,7 +135,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "JavLibrary" to "https://www.javlibrary.com",
             "JavBus" to "https://www.javbus.com",
             "JavDatabase" to "https://javdatabase.com",
-            "Hentai0Day" to "https://hentai0day.com",
             "CoedCherry" to "https://coedcherry.com",
             "Sex.com" to "https://www.sex.com",
             "SavePorn" to "https://saveporn.net",
@@ -187,17 +182,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "JPG Fish" to "https://jpg.fish",
             "Flickr" to "https://www.flickr.com",
             "Tumblr" to "https://www.tumblr.com",
-            "Newgrounds" to "https://www.newgrounds.com",
-            "Inkbunny" to "https://inkbunny.net",
-            "Fur Affinity" to "https://www.furaffinity.net",
-            "Hentai2Read" to "https://hentai2read.com",
-            "MyHentaiGallery" to "https://myhentaigallery.com",
-            "MultPorn" to "https://multporn.net",
-            "PornComics" to "https://porncomics.com",
-            "XXXComics" to "https://xxxcomics.org",
-            "Fenoxo Blog" to "https://www.fenoxo.com",
             "Marriage Heat" to "https://marriageheat.com",
-            "Audiochan" to "https://audiochan.com",
             "ChatZoZo" to "https://chatzozo.com",
             "European Girls Adult Film Database" to "https://www.egafd.com",
             "FapHouse" to "https://faphouse.com",
@@ -209,10 +194,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "BongaCams" to "https://bongacams.com",
             "MyFreeCams" to "https://www.myfreecams.com",
             "LiveJasmin" to "https://www.livejasmin.com",
-            "Nutaku" to "https://www.nutaku.net",
-            "DLsite" to "https://www.dlsite.com",
-            "Itch.io" to "https://itch.io",
-            "Newgrounds Adult" to "https://www.newgrounds.com"
         )
         for ((name, address) in starterDomains) {
             val values = ContentValues().apply {

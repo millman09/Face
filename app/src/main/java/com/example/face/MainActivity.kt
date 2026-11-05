@@ -59,6 +59,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var heroBar: LinearProgressIndicator
     private lateinit var heroText: TextView
     private lateinit var resultsContainer: LinearLayout
+    private lateinit var resultsList: LinearLayout
     private lateinit var resultsSummary: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -158,6 +159,8 @@ class MainActivity : AppCompatActivity() {
             refreshResults()
         }
         resultsContainer = container
+        resultsList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        container.addView(resultsList)
         refreshResults()
     }
 
@@ -165,20 +168,20 @@ class MainActivity : AppCompatActivity() {
         if (!::resultsContainer.isInitialized || !::resultsSummary.isInitialized) return
         val db = PublicSourceDatabase(this)
         val matches = try { db.possibleMatches() } finally { db.close() }
-        resultsContainer.removeViews(2, (resultsContainer.childCount - 2).coerceAtLeast(0))
+        resultsList.removeAllViews()
         resultsSummary.text = if (matches.isEmpty()) {
             getString(R.string.results_empty)
         } else {
             getString(R.string.results_count, matches.size)
         }
         if (matches.isEmpty()) {
-            addText(resultsContainer, getString(R.string.results_empty_detail))
+            addText(resultsList, getString(R.string.results_empty_detail))
             return
         }
         matches.forEach { match ->
             val host = Uri.parse(match.imageUrl).host ?: Uri.parse(match.sourceBaseUrl).host ?: "Website"
             val score = String.format(java.util.Locale.US, "%.3f", match.similarity)
-            addTile(resultsContainer, host, getString(R.string.results_match_score, score)) {
+            addTile(resultsList, host, getString(R.string.results_match_score, score)) {
                 val target = match.pageUrl.ifBlank { match.imageUrl }
                 openUrl(target)
             }

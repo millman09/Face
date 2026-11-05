@@ -531,7 +531,7 @@ object PublicSourceScanner {
                     try {
                         val resolved = URL(URL(pageUrl), value)
                         if (resolved.protocol in listOf("https", "http") && resolved.userInfo == null) {
-                            val normalized = URL(resolved.protocol, resolved.host, resolved.port, resolved.path).toString()
+                            val normalized = URL(resolved.protocol, resolved.host, resolved.port, resolved.file).toString()
                             if (normalized != pageUrl) pageLinks += normalized
                         }
                     } catch (_: Exception) { }

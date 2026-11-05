@@ -463,7 +463,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         scanButton.isEnabled = false
         progress.visibility = ProgressBar.VISIBLE
         progress.progress = 0
-        status.text = "Preparing automatic public-source scan…"
+        status.text = "Preparing on-device face matching…"
         executor.execute {
             var interpreter: Interpreter? = null
             var detector: FaceDetector? = null
@@ -472,13 +472,107 @@ class IdentityMatchActivity : AppCompatActivity() {
             try {
                 val sources = candidateDatabase.sources().filter { it.enabled }
                 require(sources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
-                // Keep the local candidate index. Previously compared URLs are skipped,
-                // while new URLs are queued for matching and unavailable URLs can be retried.
-                runOnUiThread { progress.max = sources.size }
-                var addedTotal = 0
+
+                validateMobileFaceNetModel(model)
+                val activeInterpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
+                interpreter = activeInterpreter
+                val activeDetector = FaceDetection.getClient(
+                    FaceDetectorOptions.Builder()
+                        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+                        .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+                        .build()
+                )
+                detector = activeDetector
+                references.forEachIndexed { index, uri ->
+                    val bitmap = decode(uri)
+                    try {
+                        val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
+                        val face = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                            ?: throw IllegalArgumentException("No face found in reference photo ${index + 1}.")
+                        alignedReferences += alignFace(bitmap, face)
+                    } finally {
+                        bitmap.recycle()
+                    }
+                }
+
                 var completedSources = 0
-                // Scan up to four different public hosts at once. Each host is still
-                // crawled sequentially, with the same page/image limits and robots checks.
+                var checked = 0
+                var possibleMatches = 0
+                var addedTotal = 0
+                val processedIds = mutableSetOf<Long>()
+                val report = StringBuilder()
+                runOnUiThread { progress.max = sources.size }
+
+                // Consume new candidates as each site finishes. Discovery continues on
+                // four network workers while this thread performs local face matching.
+                fun comparePendingCandidates() {
+                    val batch = candidateDatabase.pendingCandidates(5000)
+                        .filter { processedIds.add(it.id) }
+                    for (candidate in batch) {
+                        try {
+                            val bitmap = downloadPublicImageInMemory(candidate.imageUrl)
+                            try {
+                                val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
+                                var best: Float? = null
+                                var skipped = 0
+                                for (face in faces) {
+                                    var aligned: Bitmap? = null
+                                    try {
+                                        aligned = alignFace(bitmap, face)
+                                        for (reference in alignedReferences) {
+                                            val score = comparePair(activeInterpreter, reference, aligned)
+                                            if (best == null || score > best!!) best = score
+                                        }
+                                    } catch (_: IllegalArgumentException) {
+                                        skipped++
+                                    } finally {
+                                        aligned?.recycle()
+                                    }
+                                }
+                                val similarity = best
+                                val angle = similarity?.let {
+                                    Math.toDegrees(acos(it.coerceIn(-1f, 1f).toDouble()))
+                                }
+                                val possible = angle != null && angle <= 74.18
+                                if (possible) {
+                                    possibleMatches++
+                                    val preview = Bitmap.createScaledBitmap(
+                                        bitmap, 220,
+                                        (220f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), true
+                                    )
+                                    runOnUiThread {
+                                        addWebMatchPreview(candidate.pageUrl, candidate.imageUrl, similarity ?: 0f, preview)
+                                    }
+                                }
+                                report.append("${Uri.parse(candidate.imageUrl).host}: ${faces.size} face(s)")
+                                if (skipped > 0) report.append(" ($skipped could not be aligned)")
+                                if (similarity != null && angle != null) {
+                                    report.append(", cosine ${"%.3f".format(java.util.Locale.US, similarity)}")
+                                    report.append(if (possible) " - POSSIBLE MATCH" else " - lower similarity")
+                                }
+                                report.append("\n")
+                                candidateDatabase.updateCandidateResult(
+                                    candidate.id, if (possible) "Possible match" else "Compared", similarity
+                                )
+                            } finally {
+                                bitmap.recycle()
+                            }
+                        } catch (e: Exception) {
+                            report.append("${Uri.parse(candidate.imageUrl).host ?: "website"}: skipped - ${e.localizedMessage ?: "image unavailable"}\n")
+                            candidateDatabase.updateCandidateStatus(candidate.id, "Unavailable")
+                        }
+                        checked++
+                        val sourceDone = completedSources
+                        val imageDone = checked
+                        val matches = possibleMatches
+                        runOnUiThread {
+                            progress.max = (sources.size + imageDone).coerceAtLeast(1)
+                            progress.progress = sourceDone + imageDone
+                            status.text = "Live search: $sourceDone/${sources.size} sites checked, $imageDone images compared, $matches possible match(es)."
+                        }
+                    }
+                }
+
                 val sourcePool = Executors.newFixedThreadPool(4)
                 try {
                     val completion = java.util.concurrent.ExecutorCompletionService<Triple<WebsiteSource, Int, Int>>(sourcePool)
@@ -504,133 +598,31 @@ class IdentityMatchActivity : AppCompatActivity() {
                         val (source, discoveredCount, added) = completion.take().get()
                         completedSources++
                         addedTotal += added
-                        val done = completedSources
                         runOnUiThread {
-                            progress.max = sources.size
-                            progress.progress = done
+                            progress.max = (sources.size + checked).coerceAtLeast(1)
+                            progress.progress = completedSources + checked
                             status.text = if (discoveredCount >= 0) {
-                                "Website discovery: checked $done of ${sources.size}; ${source.name} exposed $discoveredCount image link(s); $addedTotal new overall…"
+                                "${source.name} returned $discoveredCount image link(s). $completedSources/${sources.size} sites checked; $checked images compared; $possibleMatches possible match(es)."
                             } else {
-                                "Website discovery: checked $done of ${sources.size}; ${source.name} was unavailable; $addedTotal new image link(s)…"
+                                "${source.name} was unavailable. $completedSources/${sources.size} sites checked; $checked images compared."
                             }
                         }
+                        comparePendingCandidates()
                     }
                 } finally {
                     sourcePool.shutdownNow()
                 }
 
-                val candidates = candidateDatabase.pendingCandidates(5000)
-                if (candidates.isEmpty()) {
-                    val saved = candidateDatabase.possibleMatches(100).size
-                    runOnUiThread {
-                        status.text = if (candidateDatabase.candidateCount() == 0) {
-                            "No public image links were discovered. Supported sites may not expose crawlable public pages."
-                        } else {
-                            "No new images need comparison. \${candidateDatabase.candidateCount()} image links are indexed and $saved possible match(es) are saved from earlier scans."
-                        }
-                        progress.visibility = ProgressBar.GONE
-                        updateReady()
-                    }
-                    return@execute
+                // Catch any final candidates saved just before the last completion signal.
+                comparePendingCandidates()
+                val totalIndexed = candidateDatabase.candidateCount()
+                val summary = if (totalIndexed == 0) {
+                    "No public image links were discovered. Supported sites may not expose crawlable public pages."
+                } else {
+                    "Search finished. Checked $completedSources/${sources.size} public sources, discovered $addedTotal new image link(s), compared $checked new or retryable image(s), and found $possibleMatches possible match(es). $totalIndexed image links remain indexed for future incremental searches. Public-source coverage is limited to pages made accessible by each website; this is not a complete index of the internet. Review matches manually."
                 }
                 runOnUiThread {
-                    progress.max = completedSources + candidates.size
-                    progress.progress = completedSources
-                    status.text = "Discovered ${candidateDatabase.candidateCount()} stored image link(s). Preparing on-device face matching for ${candidates.size} candidates…"
-                }
-
-                validateMobileFaceNetModel(model)
-                val activeInterpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
-                interpreter = activeInterpreter
-                val activeDetector = FaceDetection.getClient(
-                    FaceDetectorOptions.Builder()
-                        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
-                        .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-                        .build()
-                )
-                detector = activeDetector
-                references.forEachIndexed { index, uri ->
-                    val bitmap = decode(uri)
-                    try {
-                        val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
-                        val face = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
-                            ?: throw IllegalArgumentException("No face found in reference photo ${index + 1}.")
-                        alignedReferences += alignFace(bitmap, face)
-                    } finally {
-                        bitmap.recycle()
-                    }
-                }
-
-                val report = StringBuilder(
-                    "Checked $completedSources of ${sources.size} public catalogue sources. " +
-                    "Found ${candidateDatabase.candidateCount()} stored image links; comparing up to ${candidates.size} candidates. " +
-                    "All selected reference photos are used. Image bytes stay in memory only.\n\n"
-                )
-                var checked = 0
-                var possibleMatches = 0
-                candidates.forEachIndexed { index, candidate ->
-                    try {
-                        val bitmap = downloadPublicImageInMemory(candidate.imageUrl)
-                        try {
-                            val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
-                            var best: Float? = null
-                            var skipped = 0
-                            for (face in faces) {
-                                var aligned: Bitmap? = null
-                                try {
-                                    aligned = alignFace(bitmap, face)
-                                    for (reference in alignedReferences) {
-                                        val score = comparePair(activeInterpreter, reference, aligned)
-                                        if (best == null || score > best!!) best = score
-                                    }
-                                } catch (_: IllegalArgumentException) {
-                                    skipped++
-                                } finally {
-                                    aligned?.recycle()
-                                }
-                            }
-                            val similarity = best
-                            val angle = similarity?.let {
-                                Math.toDegrees(acos(it.coerceIn(-1f, 1f).toDouble()))
-                            }
-                            val possible = angle != null && angle <= 74.18
-                            if (possible) {
-                                possibleMatches++
-                                val preview = Bitmap.createScaledBitmap(
-                                    bitmap, 220,
-                                    (220f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), true
-                                )
-                                runOnUiThread { addWebMatchPreview(candidate.pageUrl, candidate.imageUrl, similarity ?: 0f, preview) }
-                            }
-                            report.append("${index + 1}. ${Uri.parse(candidate.imageUrl).host}: ${faces.size} face(s)")
-                            if (skipped > 0) report.append(" ($skipped could not be aligned)")
-                            if (similarity != null && angle != null) {
-                                report.append(", cosine ${"%.3f".format(java.util.Locale.US, similarity)}, angle ${"%.1f".format(java.util.Locale.US, angle)}° - ")
-                                report.append(if (possible) "POSSIBLE MATCH" else "lower similarity")
-                            }
-                            report.append("\n")
-                            candidateDatabase.updateCandidateResult(candidate.id, if (possible) "Possible match" else "Compared", similarity)
-                        } finally {
-                            bitmap.recycle()
-                        }
-                    } catch (e: Exception) {
-                        report.append("${index + 1}. ${Uri.parse(candidate.imageUrl).host ?: "website"}: skipped - ${e.localizedMessage ?: "image unavailable"}\n")
-                        candidateDatabase.updateCandidateStatus(candidate.id, "Unavailable")
-                    }
-                    checked++
-                    val current = checked
-                    runOnUiThread {
-                        progress.max = completedSources + candidates.size
-                        progress.progress = completedSources + current
-                        status.text = "Matching photos: $current of ${candidates.size} images checked. $possibleMatches possible match(es) so far."
-                    }
-                }
-                report.append(
-                    "\nFinished: $possibleMatches possible match(es). This checks public image links found in sitemap/feed entries and a bounded set of same-host linked pages. " +
-                    "Some sites expose no links, and this is not a complete search of the internet. Review every candidate manually."
-                )
-                runOnUiThread {
-                    status.text = report.toString()
+                    status.text = summary
                     progress.visibility = ProgressBar.GONE
                     updateReady()
                 }

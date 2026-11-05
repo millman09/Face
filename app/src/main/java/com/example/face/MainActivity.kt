@@ -150,6 +150,10 @@ class MainActivity : AppCompatActivity() {
         addSection(container, getString(R.string.section_search))
         handyLinks.forEach { addLinkTile(container, it) }
         exposureLinks.forEach { addLinkTile(container, it) }
+        addTile(container, "Privacy checklist", "Review the steps for checking and protecting your accounts.") {
+            val panels = listOf(R.id.panelTools, R.id.panelSearch, R.id.panelResults, R.id.panelHelp, R.id.panelChecklist)
+            panels.forEach { id -> findViewById<View>(id).visibility = if (id == R.id.panelChecklist) View.VISIBLE else View.GONE }
+        }
     }
 
     private fun buildSearchPanel(container: LinearLayout) {

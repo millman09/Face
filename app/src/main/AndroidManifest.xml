@@ -29,6 +29,10 @@
         </activity>
 
         <activity
+            android:name=".AccountAuditActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".WebScanActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:exported="false" />

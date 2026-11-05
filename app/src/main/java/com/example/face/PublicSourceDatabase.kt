@@ -647,37 +647,112 @@ object PublicSourceScanner {
         return path.isNotBlank() && blocked.none { path.endsWith(it) }
     }
 
-    private fun readPage(address: String): String? {
-        var connection: URLConnection? = null
-        return try {
-            connection = URL(address).openConnection()
-            connection.connectTimeout = 6000
-            connection.readTimeout = 7000
-            connection.setRequestProperty("User-Agent", "FacePersonalScanner/1.0 (public page metadata reader)")
-            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
-            if (connection is HttpURLConnection) {
+    private fun readPage(address: String): String? =
+        readPublicText(
+            address,
+            "text/html,application/xhtml+xml",
+            MAX_PAGE_BYTES,
+            setOf("text/html", "application/xhtml+xml")
+        )
+
+    /**
+     * Reads an openly accessible public endpoint. Temporary server/network
+     * failures get one bounded retry. 429 responses honor Retry-After; this
+     * is resilience, not an attempt to evade rate limits or access controls.
+     */
+    private fun readText(address: String): String? =
+        readPublicText(
+            address,
+            "application/xml,text/xml,application/rss+xml,application/atom+xml,text/plain",
+            MAX_BYTES,
+            null
+        )
+
+    private fun readPublicText(
+        address: String,
+        accept: String,
+        maxBytes: Int,
+        allowedTypes: Set<String>?
+    ): String? {
+        var attempt = 0
+        while (attempt < 2) {
+            var connection: HttpURLConnection? = null
+            try {
+                connection = URL(address).openConnection() as? HttpURLConnection ?: return null
+                connection.connectTimeout = 7000
+                connection.readTimeout = 9000
                 connection.instanceFollowRedirects = false
-                if (connection.responseCode !in 200..299) return null
-            }
-            val type = connection.contentType?.lowercase(Locale.US) ?: return null
-            if (!type.contains("text/html") && !type.contains("application/xhtml+xml")) return null
-            if (connection.contentLengthLong > MAX_PAGE_BYTES) return null
-            val bytes = BufferedInputStream(connection.getInputStream()).use { input ->
-                val output = java.io.ByteArrayOutputStream()
-                val buffer = ByteArray(8192)
-                var total = 0
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    total += count
-                    if (total > MAX_PAGE_BYTES) return null
-                    output.write(buffer, 0, count)
+                connection.setRequestProperty(
+                    "User-Agent",
+                    "FacePersonalScanner/1.1 (public page and sitemap reader)"
+                )
+                connection.setRequestProperty("Accept", accept)
+
+                val code = connection.responseCode
+                if (code in 300..399) {
+                    // Do not follow redirects automatically. The destination may
+                    // be another host or a path disallowed by that site's robots.txt.
+                    return null
                 }
-                output.toByteArray()
+                if (code !in 200..299) {
+                    val retryable = code == 408 || code == 425 || code == 429 ||
+                        code == 500 || code == 502 || code == 503 || code == 504
+                    if (attempt == 0 && retryable) {
+                        val retryAfter = connection.getHeaderField("Retry-After")
+                            ?.trim()?.toLongOrNull()
+                        val delayMs = if (code == 429 && retryAfter != null) {
+                            retryAfter.coerceIn(1L, 30L) * 1000L
+                        } else {
+                            1200L
+                        }
+                        connection.disconnect()
+                        connection = null
+                        Thread.sleep(delayMs)
+                        attempt++
+                        continue
+                    }
+                    return null
+                }
+
+                val type = connection.contentType?.substringBefore(';')
+                    ?.trim()?.lowercase(Locale.US) ?: return null
+                if (allowedTypes != null && allowedTypes.none { type.contains(it) }) return null
+                if (connection.contentLengthLong > maxBytes) return null
+
+                val bytes = BufferedInputStream(connection.inputStream).use { input ->
+                    val output = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    var total = 0
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        if (total > maxBytes) return null
+                        output.write(buffer, 0, count)
+                    }
+                    output.toByteArray()
+                }
+                return bytes.toString(Charsets.UTF_8)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return null
+            } catch (_: Exception) {
+                if (attempt == 0) {
+                    attempt++
+                    try {
+                        Thread.sleep(500L)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return null
+                    }
+                } else {
+                    return null
+                }
+            } finally {
+                connection?.disconnect()
             }
-            bytes.toString(Charsets.UTF_8)
-        } catch (_: Exception) { null }
-        finally { (connection as? HttpURLConnection)?.disconnect() }
+        }
+        return null
     }
 
     private fun sameHost(base: String, candidate: String): Boolean = try {

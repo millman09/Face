@@ -138,6 +138,9 @@ class MainActivity : AppCompatActivity() {
                 startActivity(Intent(this, tool.screen))
             }
         }
+        addSection(container, getString(R.string.section_search))
+        handyLinks.forEach { addLinkTile(container, it) }
+        exposureLinks.forEach { addLinkTile(container, it) }
     }
 
     private fun buildSearchPanel(container: LinearLayout) {
@@ -196,12 +199,7 @@ class MainActivity : AppCompatActivity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun buildHelp(container: LinearLayout) {
-        addSection(container, getString(R.string.section_remove))
         removeLinks.forEach { addLinkTile(container, it) }
-        addSection(container, getString(R.string.section_exposure))
-        exposureLinks.forEach { addLinkTile(container, it) }
-        addSection(container, getString(R.string.section_tools))
-        handyLinks.forEach { addLinkTile(container, it) }
         addText(container, getString(R.string.safety_note))
     }
 

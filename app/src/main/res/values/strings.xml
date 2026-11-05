@@ -1,10 +1,10 @@
 <resources>
     <string name="app_name">Face</string>
 
-    <string name="nav_tools">Tools</string>
+    <string name="nav_tools">Home</string>
     <string name="nav_search">Search</string>
     <string name="nav_results">Results</string>
-    <string name="nav_help">Get help</string>
+    <string name="nav_help">Remove</string>
     <string name="nav_checklist">Checklist</string>
 
     <string name="search_tab_title">Face search</string>
@@ -30,6 +30,7 @@
     <string name="section_remove">Get images taken down</string>
     <string name="section_exposure">Check your exposure</string>
     <string name="section_tools">Handy tools</string>
+    <string name="section_search">Search elsewhere</string>
 
     <string name="stopncii_title">Shared without your consent (18+)</string>
     <string name="stopncii_body">Makes a fingerprint on your phone so platforms can block copies. The image never leaves your device.</string>

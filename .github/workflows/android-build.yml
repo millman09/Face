@@ -2,7 +2,8 @@ name: Android build
 
 on:
   push:
-    branches: [main]
+    branches: [main, pimeyes-style-redesign]
+  workflow_dispatch:
   pull_request:
     branches: [main]
 

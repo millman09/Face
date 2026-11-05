@@ -264,6 +264,9 @@ class MainActivity : AppCompatActivity() {
                 setColor(android.graphics.Color.rgb(25, 29, 43))
                 cornerRadius = dp(16).toFloat()
             }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { openUrl(match.pageUrl.ifBlank { match.imageUrl }) }
         }
         val preview = ImageView(this).apply {
             layoutParams = LinearLayout.LayoutParams(dp(112), dp(112))

@@ -274,6 +274,23 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         writableDatabase.update("sources", values, "id=?", arrayOf(id.toString()))
     }
 
+    /** Candidates not yet compared in a previous run; unavailable URLs may be retried. */
+    @Synchronized fun pendingCandidates(limit: Int = 5000): List<StoredCandidate> {
+        val result = mutableListOf<StoredCandidate>()
+        readableDatabase.rawQuery(
+            """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
+               FROM candidates c JOIN sources s ON s.id=c.source_id
+               WHERE c.checked_at=0 OR c.scan_status='Unavailable'
+               ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
+            arrayOf(limit.coerceIn(1, 5000).toString())
+        ).use { c ->
+            while (c.moveToNext()) result += StoredCandidate(
+                c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4)
+            )
+        }
+        return result
+    }
+
     @Synchronized fun allCandidates(limit: Int = 100): List<StoredCandidate> {
         val result = mutableListOf<StoredCandidate>()
         readableDatabase.rawQuery(

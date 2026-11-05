@@ -64,4 +64,6 @@
     <string name="tineye_body">Another reverse image search that sometimes finds different matches.</string>
     <string name="guide_title">Removal guide</string>
     <string name="guide_body">Six steps, in order, to get an image taken down.</string>
+    <string name="log_title">Removal log</string>
+    <string name="log_body">Track pages you want removed, on this phone only.</string>
 </resources>

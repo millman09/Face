@@ -202,6 +202,9 @@ class MainActivity : AppCompatActivity() {
         addTile(container, getString(R.string.guide_title), getString(R.string.guide_body)) {
             startActivity(Intent(this, RemovalGuideActivity::class.java))
         }
+        addTile(container, getString(R.string.log_title), getString(R.string.log_body)) {
+            startActivity(Intent(this, RemovalLogActivity::class.java))
+        }
         removeLinks.forEach { addLinkTile(container, it) }
         addText(container, getString(R.string.safety_note))
     }

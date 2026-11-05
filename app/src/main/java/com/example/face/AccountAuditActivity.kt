@@ -55,7 +55,7 @@ class AccountAuditActivity : AppCompatActivity() {
         page.addView(label("EMAIL ADDRESS", 12, true, android.graphics.Color.rgb(173, 160, 255), dp(16)))
         email = EditText(this).apply {
             hint = "Enter your own email address"
-            singleLine = true
+            isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
             setTextColor(android.graphics.Color.WHITE)
             setHintTextColor(android.graphics.Color.GRAY)

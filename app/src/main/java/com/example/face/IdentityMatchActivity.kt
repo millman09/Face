@@ -536,10 +536,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 val possible = angle != null && angle <= 74.18
                                 if (possible) {
                                     possibleMatches++
-                                    val preview = Bitmap.createScaledBitmap(
-                                        bitmap, 220,
-                                        (220f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), true
-                                    )
+                                    val preview = makeResultPreview(bitmap)
                                     runOnUiThread {
                                         addWebMatchPreview(candidate.pageUrl, candidate.imageUrl, similarity ?: 0f, preview)
                                     }
@@ -641,6 +638,13 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
+    private fun makeResultPreview(bitmap: Bitmap): Bitmap {
+        val targetWidth = 220
+        val targetHeight = (targetWidth.toFloat() * bitmap.height / bitmap.width).toInt().coerceAtLeast(1)
+        val scaled = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+        return if (scaled === bitmap) bitmap.copy(Bitmap.Config.ARGB_8888, false) else scaled
+    }
+
     /** Restore recent match cards from the local database; image bytes remain temporary. */
     private fun restoreSavedMatches() {
         executor.execute {
@@ -650,10 +654,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             for (match in matches) {
                 try {
                     val bitmap = downloadPublicImageInMemory(match.imageUrl)
-                    val preview = Bitmap.createScaledBitmap(
-                        bitmap, 220,
-                        (220f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), true
-                    )
+                    val preview = makeResultPreview(bitmap)
                     bitmap.recycle()
                     runOnUiThread {
                         addWebMatchPreview(match.pageUrl, match.imageUrl, match.similarity, preview)

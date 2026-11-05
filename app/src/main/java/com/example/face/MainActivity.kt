@@ -317,8 +317,18 @@ class MainActivity : AppCompatActivity() {
                 val bitmap = try {
                     if (connection.responseCode !in 200..299 || !connection.contentType.orEmpty().startsWith("image/") || connection.contentLengthLong > 2L * 1024L * 1024L) null
                     else connection.inputStream.use { input ->
-                        val bytes = input.readBytes()
-                        if (bytes.size > 2 * 1024 * 1024) null else BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        val output = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        var total = 0
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            if (total > 2 * 1024 * 1024) throw IllegalArgumentException("Thumbnail exceeds temporary size limit")
+                            output.write(buffer, 0, count)
+                        }
+                        val bytes = output.toByteArray()
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                     }
                 } finally { connection.disconnect() }
                 if (bitmap != null) runOnUiThread { if (!isFinishing && !isDestroyed) preview.setImageBitmap(bitmap) else bitmap.recycle() }

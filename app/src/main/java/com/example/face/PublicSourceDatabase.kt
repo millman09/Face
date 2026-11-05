@@ -344,9 +344,9 @@ object PublicSourceScanner {
     // Deep but bounded per-domain crawl limits to protect phone performance.
     private const val MAX_BYTES = 4 * 1024 * 1024
     private const val MAX_SITEMAPS = 40
-    private const val MAX_IMAGES = 2500
-    private const val MAX_SITEMAP_PAGES = 150
-    private const val MAX_LINKED_PAGES = 350
+    private const val MAX_IMAGES = 5000
+    private const val MAX_SITEMAP_PAGES = 250
+    private const val MAX_LINKED_PAGES = 700
     private const val MAX_PAGE_BYTES = 1024 * 1024
 
     fun scan(source: WebsiteSource): List<DiscoveredImage> {
@@ -402,9 +402,12 @@ object PublicSourceScanner {
             source.name.contains("board", true)
         if (forumLike) {
             val forumRoutes = listOf(
-                "/forums", "/forum", "/community", "/boards", "/latest",
+                "/forums", "/forum", "/community", "/boards", "/board",
+                "/latest", "/recent", "/activity", "/whats-new/",
+                "/whats-new/posts/",
                 "/categories", "/threads", "/topics", "/discussions",
-                "/forum/index.php", "/viewforum.php", "/gallery", "/media",
+                "/forum/index.php", "/forumdisplay.php", "/showthread.php",
+                "/viewthread.php", "/viewtopic.php", "/viewforum.php", "/gallery", "/media",
                 "/albums", "/members"
             )
             for (route in forumRoutes) {
@@ -612,7 +615,8 @@ object PublicSourceScanner {
         val markers = listOf(
             "gallery", "photo", "image", "album", "media", "post", "profile",
             "model", "thread", "topic", "forum", "discussion", "viewforum",
-            "showthread", "page=", "start=", "offset=", "p="
+            "showthread", "viewthread", "viewtopic", "forumdisplay",
+            "whats-new", "recent", "activity", "page=", "start=", "offset=", "p="
         )
         return markers.any { marker -> full.contains(marker) || path.contains(marker) }
     }

@@ -1,11 +1,11 @@
 <resources>
     <string name="app_name">Face</string>
 
-    <string name="nav_tools">Home</string>
+    <string name="nav_tools">Overview</string>
     <string name="nav_search">Search</string>
     <string name="nav_results">Results</string>
-    <string name="nav_help">Remove</string>
-    <string name="nav_checklist">Checklist</string>
+    <string name="nav_help">Removal</string>
+    <string name="nav_checklist">Privacy</string>
 
     <string name="search_tab_title">Face search</string>
     <string name="search_tab_body">Choose one or more reference photos, then start the automatic scan. The next screen shows live website discovery progress, face-matching progress, and possible matches as they are found.</string>

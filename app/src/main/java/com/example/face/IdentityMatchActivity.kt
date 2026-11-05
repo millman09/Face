@@ -448,11 +448,11 @@ class IdentityMatchActivity : AppCompatActivity() {
                         }
                         val similarity = best
                         val angle = if (similarity != null) Math.toDegrees(acos(similarity.coerceIn(-1f, 1f).toDouble())) else null
-                        val possible = angle != null && angle <= 74.18
+                        val possible = similarity != null && similarity >= 0.4f
                         if (possible) matched++
                         report.append("${index + 1}. ${displayName(uri)}: ${faces.size} face(s)")
                         if (skipped > 0) report.append(" ($skipped skipped, landmarks not clear)")
-                        if (similarity != null && angle != null) {
+                        if (similarity != null && similarity >= 0.4f && angle != null) {
                             report.append(", cosine ${"%.3f".format(java.util.Locale.US, similarity)}, angle ${"%.1f".format(java.util.Locale.US, angle)}° - ")
                             report.append(if (possible) "POSSIBLE MATCH" else "lower similarity")
                         }
@@ -569,7 +569,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 val angle = similarity?.let {
                                     Math.toDegrees(acos(it.coerceIn(-1f, 1f).toDouble()))
                                 }
-                                val possible = angle != null && angle <= 74.18
+                                val possible = similarity != null && similarity >= 0.4f
                                 if (possible) {
                                     possibleMatches++
                                     val preview = makeResultPreview(bitmap)
@@ -579,13 +579,13 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 }
                                 report.append("${Uri.parse(candidate.imageUrl).host}: ${faces.size} face(s)")
                                 if (skipped > 0) report.append(" ($skipped could not be aligned)")
-                                if (similarity != null && angle != null) {
+                                if (similarity != null && similarity >= 0.4f && angle != null) {
                                     report.append(", cosine ${"%.3f".format(java.util.Locale.US, similarity)}")
                                     report.append(if (possible) " - POSSIBLE MATCH" else " - lower similarity")
                                 }
                                 report.append("\n")
                                 candidateDatabase.updateCandidateResult(
-                                    candidate.id, if (possible) "Possible match" else "Compared", similarity
+                                    candidate.id, if (possible) "Possible match" else "Compared", if (possible) similarity else null
                                 )
                             } finally {
                                 bitmap.recycle()

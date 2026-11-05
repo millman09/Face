@@ -58,6 +58,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var checklistText: TextView
     private lateinit var heroBar: LinearProgressIndicator
     private lateinit var heroText: TextView
+    private lateinit var resultsContainer: LinearLayout
+    private lateinit var resultsSummary: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,6 +76,7 @@ class MainActivity : AppCompatActivity() {
 
         buildTools(findViewById(R.id.toolsContainer))
         buildSearchPanel(findViewById(R.id.searchContainer))
+        buildResultsPanel(findViewById(R.id.resultsContainer))
         buildHelp(findViewById(R.id.helpContainer))
         buildChecklist(findViewById(R.id.checklistContainer))
         updateProgress()
@@ -82,6 +85,7 @@ class MainActivity : AppCompatActivity() {
         val panels = mapOf(
             R.id.nav_tools to findViewById<View>(R.id.panelTools),
             R.id.nav_search to findViewById<View>(R.id.panelSearch),
+            R.id.nav_results to findViewById<View>(R.id.panelResults),
             R.id.nav_help to findViewById<View>(R.id.panelHelp),
             R.id.nav_checklist to findViewById<View>(R.id.panelChecklist)
         )
@@ -142,6 +146,51 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, WebScanActivity::class.java))
         }
     }
+
+    private fun buildResultsPanel(container: LinearLayout) {
+        addSection(container, getString(R.string.results_title))
+        resultsSummary = TextView(this).apply {
+            textSize = 14f
+            setPadding(0, 0, 0, dp(12))
+        }
+        container.addView(resultsSummary)
+        addTile(container, getString(R.string.results_refresh), getString(R.string.results_refresh_body)) {
+            refreshResults()
+        }
+        resultsContainer = container
+        refreshResults()
+    }
+
+    private fun refreshResults() {
+        if (!::resultsContainer.isInitialized || !::resultsSummary.isInitialized) return
+        val db = PublicSourceDatabase(this)
+        val matches = try { db.possibleMatches() } finally { db.close() }
+        resultsContainer.removeViews(2, (resultsContainer.childCount - 2).coerceAtLeast(0))
+        resultsSummary.text = if (matches.isEmpty()) {
+            getString(R.string.results_empty)
+        } else {
+            getString(R.string.results_count, matches.size)
+        }
+        if (matches.isEmpty()) {
+            addText(resultsContainer, getString(R.string.results_empty_detail))
+            return
+        }
+        matches.forEach { match ->
+            val host = Uri.parse(match.imageUrl).host ?: Uri.parse(match.sourceBaseUrl).host ?: "Website"
+            val score = String.format(java.util.Locale.US, "%.3f", match.similarity)
+            addTile(resultsContainer, host, getString(R.string.results_match_score, score)) {
+                val target = match.pageUrl.ifBlank { match.imageUrl }
+                openUrl(target)
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::resultsContainer.isInitialized) refreshResults()
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun buildHelp(container: LinearLayout) {
         addSection(container, getString(R.string.section_remove))

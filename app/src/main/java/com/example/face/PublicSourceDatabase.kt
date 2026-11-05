@@ -346,6 +346,8 @@ object PublicSourceScanner {
     private const val MAX_BYTES = 2 * 1024 * 1024
     private const val MAX_SITEMAPS = 12
     private const val MAX_IMAGES = 500
+    private const val MAX_PAGES = 40
+    private const val MAX_PAGE_BYTES = 512 * 1024
 
     fun scan(source: WebsiteSource): List<DiscoveredImage> {
         val base = source.baseUrl
@@ -366,12 +368,21 @@ object PublicSourceScanner {
         val found = linkedMapOf<String, DiscoveredImage>()
         val pending = sitemapUrls.toMutableList()
         val visited = mutableSetOf<String>()
+        val publicPages = linkedSetOf<String>()
         while (pending.isNotEmpty() && visited.size < MAX_SITEMAPS && found.size < MAX_IMAGES) {
             val endpoint = pending.removeAt(0)
             if (!visited.add(endpoint)) continue
             if (!sameHost(base, endpoint) || isDisallowed(endpoint, rules)) continue
             val xml = readText(endpoint) ?: continue
-            parseXml(endpoint, xml, source.id, pending, found, base, rules)
+            parseXml(endpoint, xml, source.id, pending, found, publicPages, base, rules)
+        }
+
+        // Sitemap entries are often public gallery/article pages, not direct images.
+        // Inspect a bounded sample for declared image previews while respecting robots.
+        publicPages.take(MAX_PAGES).forEach { page ->
+            if (found.size >= MAX_IMAGES || isDisallowed(page, rules)) return@forEach
+            val html = readPage(page) ?: return@forEach
+            extractPageImages(page, html, source.id, found)
         }
         return found.values.take(MAX_IMAGES)
     }
@@ -404,7 +415,7 @@ object PublicSourceScanner {
 
     private fun parseXml(
         endpoint: String, xml: String, sourceId: Long, pending: MutableList<String>,
-        found: MutableMap<String, DiscoveredImage>, base: String, rules: List<String>
+        found: MutableMap<String, DiscoveredImage>, publicPages: MutableSet<String>, base: String, rules: List<String>
     ) {
         try {
             val parser = Xml.newPullParser()
@@ -453,7 +464,12 @@ object PublicSourceScanner {
                         when (parser.name.substringAfter(':').lowercase(Locale.US)) {
                             "sitemap" -> inSitemapEntry = false
                             "sitemapindex" -> inSitemapIndex = false
-                            "url" -> inUrl = false
+                            "url" -> {
+                                inUrl = false
+                                if ((pageUrl.startsWith("https://") || pageUrl.startsWith("http://")) &&
+                                    sameHost(base, pageUrl) && !isDisallowed(pageUrl, rules) &&
+                                    publicPages.size < MAX_PAGES * 4) publicPages += pageUrl
+                            }
                             "item", "entry" -> inFeedEntry = false
                         }
                     }
@@ -463,6 +479,83 @@ object PublicSourceScanner {
         } catch (_: Exception) {
             // Malformed, unsupported, or non-feed endpoints are skipped.
         }
+    }
+
+
+    private fun extractPageImages(
+        pageUrl: String,
+        html: String,
+        sourceId: Long,
+        found: MutableMap<String, DiscoveredImage>
+    ) {
+        val candidates = linkedSetOf<String>()
+        val metaTag = Regex("(?is)<meta\\b[^>]*>")
+        val attribute = Regex("(?is)([a-z_:][-a-z0-9_:.]*)\\s*=\\s*(['\"])(.*?)\\2")
+        for (tag in metaTag.findAll(html)) {
+            val attrs = attribute.findAll(tag.value).associate {
+                it.groupValues[1].lowercase(Locale.US) to it.groupValues[3]
+            }
+            val key = (attrs["property"] ?: attrs["name"] ?: "").lowercase(Locale.US)
+            if (key in setOf("og:image", "og:image:url", "twitter:image", "twitter:image:src")) {
+                attrs["content"]?.let { candidates += it }
+            }
+        }
+        val imgTag = Regex("(?is)<img\\b[^>]*>")
+        for (tag in imgTag.findAll(html)) {
+            val attrs = attribute.findAll(tag.value).associate {
+                it.groupValues[1].lowercase(Locale.US) to it.groupValues[3]
+            }
+            listOf("src", "data-src", "data-original").forEach { key ->
+                attrs[key]?.let { candidates += it }
+            }
+            attrs["srcset"]?.split(',')?.forEach { entry ->
+                entry.trim().substringBefore(' ').takeIf { it.isNotBlank() }?.let { candidates += it }
+            }
+            if (candidates.size >= MAX_IMAGES) break
+        }
+        for (raw in candidates) {
+            if (found.size >= MAX_IMAGES) break
+            val value = raw.trim().replace("&amp;", "&")
+            if (value.isBlank() || value.startsWith("data:", true) ||
+                value.startsWith("javascript:", true)) continue
+            val resolved = try { URL(URL(pageUrl), value) } catch (_: Exception) { continue }
+            if (resolved.protocol !in listOf("https", "http") || resolved.userInfo != null) continue
+            val imageUrl = resolved.toString()
+            found.putIfAbsent(imageUrl, DiscoveredImage(sourceId, pageUrl, imageUrl))
+        }
+    }
+
+    private fun readPage(address: String): String? {
+        var connection: URLConnection? = null
+        return try {
+            connection = URL(address).openConnection()
+            connection.connectTimeout = 6000
+            connection.readTimeout = 7000
+            connection.setRequestProperty("User-Agent", "FacePersonalScanner/1.0 (public page metadata reader)")
+            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
+            if (connection is HttpURLConnection) {
+                connection.instanceFollowRedirects = false
+                if (connection.responseCode !in 200..299) return null
+            }
+            val type = connection.contentType?.lowercase(Locale.US) ?: return null
+            if (!type.contains("text/html") && !type.contains("application/xhtml+xml")) return null
+            if (connection.contentLengthLong > MAX_PAGE_BYTES) return null
+            val bytes = BufferedInputStream(connection.getInputStream()).use { input ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                var total = 0
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    total += count
+                    if (total > MAX_PAGE_BYTES) return null
+                    output.write(buffer, 0, count)
+                }
+                output.toByteArray()
+            }
+            bytes.toString(Charsets.UTF_8)
+        } catch (_: Exception) { null }
+        finally { (connection as? HttpURLConnection)?.disconnect() }
     }
 
     private fun sameHost(base: String, candidate: String): Boolean = try {

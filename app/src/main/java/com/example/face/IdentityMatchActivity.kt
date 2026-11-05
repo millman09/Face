@@ -472,6 +472,8 @@ class IdentityMatchActivity : AppCompatActivity() {
             try {
                 val sources = candidateDatabase.sources().filter { it.enabled }
                 require(sources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
+                // Start with a clean candidate set so old URLs cannot masquerade as new scan results.
+                candidateDatabase.clearCandidatesForNewScan()
                 runOnUiThread { progress.max = sources.size }
                 var addedTotal = 0
                 var completedSources = 0

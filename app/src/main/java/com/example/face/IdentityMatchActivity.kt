@@ -78,6 +78,10 @@ class IdentityMatchActivity : AppCompatActivity() {
         if (uris.isNotEmpty()) { addCandidateUris(uris); status.text = "${imageUris.size} candidate image(s) ready."; updateReady() }
     }
 
+    private val exportResultsPicker = registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri != null) exportSavedMatches(uri)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val root = LinearLayout(this).apply {
@@ -122,6 +126,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         addButton(root, "Install face-matching model  ·  ~4 MB") { downloadOfficialModel() }
         addButton(root, "Choose a compatible face model") { modelPicker.launch(arrayOf("*/*")) }
         addButton(root, "Choose reference photos") { referencePicker.launch(arrayOf("image/*")) }
+        if (webScanMode) addButton(root, "Export saved matches (CSV)") { exportResultsPicker.launch("face-search-results.csv") }
         if (!webScanMode) addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
         scanButton = MaterialButton(this).apply {
             text = if (webScanMode) "Start deep search" else "Compare selected photos"
@@ -138,8 +143,23 @@ class IdentityMatchActivity : AppCompatActivity() {
             setPadding(0, 16, 0, 0)
         }
         root.addView(status)
-        val resultsScroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); isFillViewport = true }
         resultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val resultSortRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, dp(6))
+        }
+        resultSortRow.addView(MaterialButton(this).apply {
+            text = "Best matches"
+            isAllCaps = false
+            setOnClickListener { resultsContainer.removeAllViews(); restoreSavedMatches(bestFirst = true) }
+        }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(5) })
+        resultSortRow.addView(MaterialButton(this).apply {
+            text = "Most recent"
+            isAllCaps = false
+            setOnClickListener { resultsContainer.removeAllViews(); restoreSavedMatches(bestFirst = false) }
+        }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(5) })
+        if (webScanMode) root.addView(resultSortRow)
+        val resultsScroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); isFillViewport = true }
         resultsScroll.addView(resultsContainer)
         root.addView(resultsScroll)
         handleSharedImages(intent)
@@ -638,6 +658,36 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
+    private fun exportSavedMatches(destination: Uri) {
+        executor.execute {
+            val db = PublicSourceDatabase(this)
+            val matches = try { db.possibleMatches(2000, bestFirst = true) } finally { db.close() }
+            try {
+                contentResolver.openOutputStream(destination)?.bufferedWriter(Charsets.UTF_8).use { writer ->
+                    requireNotNull(writer) { "Could not open the export destination." }
+                    writer.appendLine("similarity_cosine,checked_at,source_url,page_url,image_url")
+                    for (match in matches) {
+                        val values = listOf(
+                            match.similarity.toString(),
+                            match.checkedAt.toString(),
+                            match.sourceBaseUrl,
+                            match.pageUrl,
+                            match.imageUrl
+                        ).joinToString(",") { "\"" + it.replace("\"", "\"\"") + "\"" }
+                        writer.appendLine(values)
+                    }
+                }
+                runOnUiThread {
+                    Toast.makeText(this, "Exported ${matches.size} saved match(es).", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Export failed: ${e.localizedMessage ?: "unknown error"}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     private fun makeResultPreview(bitmap: Bitmap): Bitmap {
         val targetWidth = 220
         val targetHeight = (targetWidth.toFloat() * bitmap.height / bitmap.width).toInt().coerceAtLeast(1)
@@ -646,10 +696,10 @@ class IdentityMatchActivity : AppCompatActivity() {
     }
 
     /** Restore recent match cards from the local database; image bytes remain temporary. */
-    private fun restoreSavedMatches() {
+    private fun restoreSavedMatches(bestFirst: Boolean = false) {
         executor.execute {
             val db = PublicSourceDatabase(this)
-            val matches = try { db.possibleMatches(30) } finally { db.close() }
+            val matches = try { db.possibleMatches(30, bestFirst) } finally { db.close() }
             var restored = 0
             for (match in matches) {
                 try {

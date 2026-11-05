@@ -83,7 +83,7 @@ class MainActivity : AppCompatActivity() {
         buildHelp(findViewById(R.id.helpContainer))
         buildChecklist(findViewById(R.id.checklistContainer))
         updateProgress()
-        startModelPrefetch()
+        // Keep first launch lightweight. Model download is deferred until a scan is requested.
 
         val panels = mapOf(
             R.id.nav_tools to findViewById<View>(R.id.panelTools),
@@ -100,6 +100,7 @@ class MainActivity : AppCompatActivity() {
             panels.forEach { (id, panel) ->
                 panel.visibility = if (id == item.itemId) View.VISIBLE else View.GONE
             }
+            if (item.itemId == R.id.nav_results) refreshResults()
             true
         }
         // Match the visible panel to the selected tab, including after a rotation.
@@ -239,7 +240,7 @@ class MainActivity : AppCompatActivity() {
         resultsContainer = container
         resultsList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         container.addView(resultsList)
-        refreshResults()
+        resultsSummary.text = getString(R.string.results_empty)
     }
 
     private fun refreshResults() {
@@ -347,7 +348,9 @@ class MainActivity : AppCompatActivity() {
     }
     override fun onResume() {
         super.onResume()
-        if (::resultsContainer.isInitialized) refreshResults()
+        if (::resultsContainer.isInitialized && findViewById<View>(R.id.panelResults).visibility == View.VISIBLE) {
+            refreshResults()
+        }
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

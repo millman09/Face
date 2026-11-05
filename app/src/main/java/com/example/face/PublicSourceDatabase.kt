@@ -248,7 +248,11 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         writableDatabase.execSQL("UPDATE sources SET enabled=? WHERE id=?", arrayOf(if (enabled) 1 else 0, id))
     }
 
-    @Synchronized fun saveCandidates(items: List<DiscoveredImage>): Int {
+        @Synchronized fun clearCandidatesForNewScan() {
+        writableDatabase.delete("candidates", null, null)
+    }
+
+@Synchronized fun saveCandidates(items: List<DiscoveredImage>): Int {
         var inserted = 0
         val db = writableDatabase
         db.beginTransaction()

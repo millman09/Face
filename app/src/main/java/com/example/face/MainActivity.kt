@@ -90,7 +90,6 @@ class MainActivity : AppCompatActivity() {
             R.id.nav_search to findViewById<View>(R.id.panelSearch),
             R.id.nav_results to findViewById<View>(R.id.panelResults),
             R.id.nav_help to findViewById<View>(R.id.panelHelp),
-            R.id.nav_checklist to findViewById<View>(R.id.panelChecklist)
         )
         val nav = findViewById<BottomNavigationView>(R.id.bottomNav)
         nav.setOnItemSelectedListener { item ->

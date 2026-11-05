@@ -565,7 +565,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 report.append(if (possible) "POSSIBLE MATCH" else "lower similarity")
                             }
                             report.append("\n")
-                            candidateDatabase.updateCandidateStatus(candidate.id, if (possible) "Possible match" else "Compared")
+                            candidateDatabase.updateCandidateResult(candidate.id, if (possible) "Possible match" else "Compared", similarity)
                         } finally {
                             bitmap.recycle()
                         }

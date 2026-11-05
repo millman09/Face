@@ -346,7 +346,8 @@ object PublicSourceScanner {
     private const val MAX_BYTES = 2 * 1024 * 1024
     private const val MAX_SITEMAPS = 12
     private const val MAX_IMAGES = 500
-    private const val MAX_PAGES = 40
+    private const val MAX_SITEMAP_PAGES = 40
+    private const val MAX_LINKED_PAGES = 40
     private const val MAX_PAGE_BYTES = 512 * 1024
 
     fun scan(source: WebsiteSource): List<DiscoveredImage> {
@@ -378,11 +379,28 @@ object PublicSourceScanner {
         }
 
         // Sitemap entries are often public gallery/article pages, not direct images.
-        // Inspect a bounded sample for declared image previews while respecting robots.
-        publicPages.take(MAX_PAGES).forEach { page ->
-            if (found.size >= MAX_IMAGES || isDisallowed(page, rules)) return@forEach
-            val html = readPage(page) ?: return@forEach
-            extractPageImages(page, html, source.id, found)
+        // Inspect a bounded sample, then follow a small number of same-host public
+        // links from those pages. This reaches gallery/detail pages omitted from
+        // image sitemaps without turning the phone into an unbounded crawler.
+        val pageQueue = ArrayDeque<String>()
+        publicPages.take(MAX_SITEMAP_PAGES).forEach { pageQueue.addLast(page) }
+        val visitedPages = linkedSetOf<String>()
+        var linkedPagesQueued = 0
+        while (pageQueue.isNotEmpty() &&
+            visitedPages.size < MAX_SITEMAP_PAGES + MAX_LINKED_PAGES &&
+            found.size < MAX_IMAGES) {
+            val page = pageQueue.removeFirst()
+            if (!visitedPages.add(page) || !sameHost(base, page) || isDisallowed(page, rules)) continue
+            val html = readPage(page) ?: continue
+            val links = extractPageImages(page, html, source.id, found)
+            for (link in links) {
+                if (linkedPagesQueued >= MAX_LINKED_PAGES) break
+                if (link !in visitedPages && pageQueue.none { it == link } &&
+                    sameHost(base, link) && !isDisallowed(link, rules) && isLikelyHtmlPage(link)) {
+                    pageQueue.addLast(link)
+                    linkedPagesQueued++
+                }
+            }
         }
         return found.values.take(MAX_IMAGES)
     }
@@ -487,8 +505,9 @@ object PublicSourceScanner {
         html: String,
         sourceId: Long,
         found: MutableMap<String, DiscoveredImage>
-    ) {
+    ): Set<String> {
         val candidates = linkedSetOf<String>()
+        val pageLinks = linkedSetOf<String>()
         val metaTag = Regex("(?is)<meta\\b[^>]*>")
         val attribute = Regex("(?is)([a-z_:][-a-z0-9_:.]*)\\s*=\\s*(['\"])(.*?)\\2")
         for (tag in metaTag.findAll(html)) {
@@ -499,6 +518,26 @@ object PublicSourceScanner {
             if (key in setOf("og:image", "og:image:url", "twitter:image", "twitter:image:src")) {
                 attrs["content"]?.let { candidates += it }
             }
+        }
+        val anchorTag = Regex("(?is)<a\\b[^>]*>")
+        for (tag in anchorTag.findAll(html)) {
+            val attrs = attribute.findAll(tag.value).associate {
+                it.groupValues[1].lowercase(Locale.US) to it.groupValues[3]
+            }
+            attrs["href"]?.let { raw ->
+                val value = raw.trim().replace("&amp;", "&")
+                if (value.isNotBlank() && !value.startsWith("javascript:", true) &&
+                    !value.startsWith("mailto:", true) && !value.startsWith("#")) {
+                    try {
+                        val resolved = URL(URL(pageUrl), value)
+                        if (resolved.protocol in listOf("https", "http") && resolved.userInfo == null) {
+                            val normalized = URL(resolved.protocol, resolved.host, resolved.port, resolved.path).toString()
+                            if (normalized != pageUrl) pageLinks += normalized
+                        }
+                    } catch (_: Exception) { }
+                }
+            }
+            if (pageLinks.size >= MAX_LINKED_PAGES) break
         }
         val imgTag = Regex("(?is)<img\\b[^>]*>")
         for (tag in imgTag.findAll(html)) {
@@ -523,6 +562,17 @@ object PublicSourceScanner {
             val imageUrl = resolved.toString()
             found.putIfAbsent(imageUrl, DiscoveredImage(sourceId, pageUrl, imageUrl))
         }
+        return pageLinks
+    }
+
+    private fun isLikelyHtmlPage(address: String): Boolean {
+        val path = try { URL(address).path.lowercase(Locale.US) } catch (_: Exception) { return false }
+        val blocked = listOf(
+            ".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".mp4", ".webm",
+            ".mov", ".mp3", ".pdf", ".zip", ".rar", ".7z", ".css", ".js",
+            ".woff", ".woff2", ".ttf", ".ico", ".xml", ".json"
+        )
+        return path.isNotBlank() && blocked.none { path.endsWith(it) }
     }
 
     private fun readPage(address: String): String? {

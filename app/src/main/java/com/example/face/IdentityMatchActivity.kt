@@ -483,7 +483,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 try {
                     val completion = java.util.concurrent.ExecutorCompletionService<Triple<WebsiteSource, Int, Int>>(sourcePool)
                     sources.forEach { source ->
-                        completion.submit<Triple<WebsiteSource, Int, Int>> {
+                        completion.submit {
                             try {
                                 val discovered = PublicSourceScanner.scan(source)
                                 val added = candidateDatabase.saveCandidates(discovered)

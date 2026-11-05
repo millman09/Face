@@ -18,7 +18,7 @@ data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: 
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 5) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 6) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -39,6 +39,13 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         if (oldVersion < 5) {
             db.execSQL("ALTER TABLE candidates ADD COLUMN similarity REAL")
             db.execSQL("ALTER TABLE candidates ADD COLUMN checked_at INTEGER NOT NULL DEFAULT 0")
+        }
+        if (oldVersion < 6) {
+            // Remove male-focused and gay-specific entries from existing installations.
+            db.delete("sources", "name IN (?, ?, ?, ?, ?, ?)", arrayOf(
+                "FabGuys", "LPSG Forum", "JustUsBoys Forum", "GayHeaven Forum",
+                "GayXNow", "AnyShemale"
+            ))
         }
     }
 
@@ -135,7 +142,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "JavDatabase" to "https://javdatabase.com",
             "Hentai0Day" to "https://hentai0day.com",
             "CoedCherry" to "https://coedcherry.com",
-            "FabGuys" to "https://www.fabguys.com",
             "Sex.com" to "https://www.sex.com",
             "SavePorn" to "https://saveporn.net",
             "91Porn" to "https://91porn.com",
@@ -145,7 +151,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "SkipTheGames" to "https://skipthegames.com",
             // Additional public adult forums and communities
             "PlanetSuzy Forum" to "https://www.planetsuzy.org",
-            "LPSG Forum" to "https://www.lpsg.com",
             "ViperGirls Forum" to "https://vipergirls.to",
             "Forumophilia" to "https://forumophilia.com",
             "Climax Connection Forum" to "https://climaxconnection.com",
@@ -155,9 +160,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "VAmateur Forum" to "https://www.vamateur.com",
             "LoversLab Forum" to "https://www.loverslab.com",
             "LewdCorner Forum" to "https://lewdcorner.com",
-            "JustUsBoys Forum" to "https://www.justusboys.com",
             "Fenoxo Forums" to "https://forum.fenoxo.com",
-            "GayHeaven Forum" to "https://www.gayheaven.org",
             "Serious Bondage Forum" to "https://www.seriousbondage.com",
             "The Cage Forum" to "https://thecage.co",
             "Extreme Board" to "https://www.extreme-board.com",
@@ -197,8 +200,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "Marriage Heat" to "https://marriageheat.com",
             "Audiochan" to "https://audiochan.com",
             "ChatZoZo" to "https://chatzozo.com",
-            "AnyShemale" to "https://anyshemale.com",
-            "GayXNow" to "https://gayxnow.com",
             "European Girls Adult Film Database" to "https://www.egafd.com",
             "FapHouse" to "https://faphouse.com",
             "Eporner" to "https://www.eporner.com",

@@ -383,7 +383,7 @@ object PublicSourceScanner {
         // links from those pages. This reaches gallery/detail pages omitted from
         // image sitemaps without turning the phone into an unbounded crawler.
         val pageQueue = ArrayDeque<String>()
-        publicPages.take(MAX_SITEMAP_PAGES).forEach { pageQueue.addLast(page) }
+        publicPages.take(MAX_SITEMAP_PAGES).forEach { pageQueue.addLast(it) }
         val visitedPages = linkedSetOf<String>()
         var linkedPagesQueued = 0
         while (pageQueue.isNotEmpty() &&

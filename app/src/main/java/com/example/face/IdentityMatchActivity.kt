@@ -49,7 +49,9 @@ class IdentityMatchActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var progress: ProgressBar
     private lateinit var scanButton: MaterialButton
+    private lateinit var cancelButton: MaterialButton
     private lateinit var resultsContainer: LinearLayout
+    private var activeWebScan: java.util.concurrent.Future<*>? = null
     private var modelFile: File? = null
     private var referenceUri: Uri? = null
     private var referenceUris: List<Uri> = emptyList()
@@ -137,6 +139,16 @@ class IdentityMatchActivity : AppCompatActivity() {
         root.addSpaced(scanButton)
         progress =ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { visibility = ProgressBar.GONE }
         root.addView(progress)
+        cancelButton = MaterialButton(this).apply {
+            text = "Cancel search"
+            isAllCaps = false
+            visibility = android.view.View.GONE
+            setOnClickListener {
+                activeWebScan?.cancel(true)
+                status.text = "Cancelling search…"
+            }
+        }
+        root.addView(cancelButton)
         status = TextView(this).apply {
             text = if (webScanMode) "Install the model and choose reference photo(s)." else "No model or images selected."
             textSize = 14f
@@ -484,7 +496,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         progress.visibility = ProgressBar.VISIBLE
         progress.progress = 0
         status.text = "Preparing on-device face matching…"
-        executor.execute {
+        cancelButton.visibility = android.view.View.VISIBLE
+        activeWebScan = executor.submit {
             var interpreter: Interpreter? = null
             var detector: FaceDetector? = null
             val alignedReferences = mutableListOf<Bitmap>()
@@ -645,11 +658,19 @@ class IdentityMatchActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    status.text = "Automatic scan or matching could not finish: ${e.localizedMessage ?: "unknown error"}"
+                    status.text = if (e is InterruptedException || Thread.currentThread().isInterrupted) {
+                        "Search cancelled. Previously saved matches are still available."
+                    } else {
+                        "Automatic scan or matching could not finish: ${e.localizedMessage ?: "unknown error"}"
+                    }
                     progress.visibility = ProgressBar.GONE
                     updateReady()
                 }
             } finally {
+                runOnUiThread {
+                    cancelButton.visibility = android.view.View.GONE
+                    activeWebScan = null
+                }
                 alignedReferences.forEach { it.recycle() }
                 detector?.close()
                 interpreter?.close()

@@ -477,32 +477,46 @@ class IdentityMatchActivity : AppCompatActivity() {
                 runOnUiThread { progress.max = sources.size }
                 var addedTotal = 0
                 var completedSources = 0
-                for (source in sources) {
-                    if (Thread.currentThread().isInterrupted) break
-                    runOnUiThread {
-                        status.text = "Discovering public images: ${source.name} (${completedSources + 1}/${sources.size})…"
+                // Scan up to four different public hosts at once. Each host is still
+                // crawled sequentially, with the same page/image limits and robots checks.
+                val sourcePool = Executors.newFixedThreadPool(4)
+                try {
+                    val completion = java.util.concurrent.ExecutorCompletionService<Triple<WebsiteSource, Int, Int>>(sourcePool)
+                    sources.forEach { source ->
+                        completion.submit<Triple<WebsiteSource, Int, Int>> {
+                            try {
+                                val discovered = PublicSourceScanner.scan(source)
+                                val added = candidateDatabase.saveCandidates(discovered)
+                                candidateDatabase.updateSourceStatus(
+                                    source.id, "Checked; ${discovered.size} public image link(s), $added new"
+                                )
+                                Triple(source, discovered.size, added)
+                            } catch (e: Exception) {
+                                candidateDatabase.updateSourceStatus(
+                                    source.id, "Could not scan: ${e.localizedMessage ?: "network error"}"
+                                )
+                                Triple(source, -1, 0)
+                            }
+                        }
                     }
-                    try {
-                        val discovered = PublicSourceScanner.scan(source)
-                        val added = candidateDatabase.saveCandidates(discovered)
+                    repeat(sources.size) {
+                        if (Thread.currentThread().isInterrupted) throw InterruptedException("Search cancelled")
+                        val (source, discoveredCount, added) = completion.take().get()
+                        completedSources++
                         addedTotal += added
-                        candidateDatabase.updateSourceStatus(
-                            source.id, "Checked; ${discovered.size} public image link(s), ${added} new"
-                        )
-                    } catch (e: Exception) {
-                        candidateDatabase.updateSourceStatus(
-                            source.id, "Could not scan: ${e.localizedMessage ?: "network error"}"
-                        )
+                        val done = completedSources
+                        runOnUiThread {
+                            progress.max = sources.size
+                            progress.progress = done
+                            status.text = if (discoveredCount >= 0) {
+                                "Website discovery: checked $done of ${sources.size}; ${source.name} exposed $discoveredCount image link(s); $addedTotal new overall…"
+                            } else {
+                                "Website discovery: checked $done of ${sources.size}; ${source.name} was unavailable; $addedTotal new image link(s)…"
+                            }
+                        }
                     }
-                    completedSources++
-                    val done = completedSources
-                    runOnUiThread {
-                        progress.max = sources.size
-                        progress.progress = done
-                        status.text = "Website discovery: checked $done of ${sources.size}; found $addedTotal new image link(s)…"
-                    }
-                    // Sequential requests with a short pause avoid flooding public hosts.
-                    try { Thread.sleep(1200) } catch (_: InterruptedException) { break }
+                } finally {
+                    sourcePool.shutdownNow()
                 }
 
                 val candidates = candidateDatabase.allCandidates(5000)
@@ -576,7 +590,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                     bitmap, 220,
                                     (220f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), true
                                 )
-                                runOnUiThread { addWebMatchPreview(candidate.imageUrl, similarity ?: 0f, preview) }
+                                runOnUiThread { addWebMatchPreview(candidate.pageUrl, candidate.imageUrl, similarity ?: 0f, preview) }
                             }
                             report.append("${index + 1}. ${Uri.parse(candidate.imageUrl).host}: ${faces.size} face(s)")
                             if (skipped > 0) report.append(" ($skipped could not be aligned)")
@@ -625,7 +639,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
-    private fun addWebMatchPreview(imageUrl: String, similarity: Float, preview: Bitmap) {
+    private fun addWebMatchPreview(pageUrl: String, imageUrl: String, similarity: Float, preview: Bitmap) {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(10), dp(10), dp(10), dp(10))
@@ -634,10 +648,16 @@ class IdentityMatchActivity : AppCompatActivity() {
                 cornerRadius = dp(12).toFloat()
             }
         }
+        card.isClickable = true
+        card.isFocusable = true
+        card.setOnClickListener { openResultUrl(pageUrl.ifBlank { imageUrl }) }
         card.addView(ImageView(this).apply {
             setImageBitmap(preview)
             scaleType = ImageView.ScaleType.CENTER_CROP
             layoutParams = LinearLayout.LayoutParams(dp(104), dp(104))
+            contentDescription = "Possible match preview. Tap to open the source page."
+            isClickable = true
+            setOnClickListener { openResultUrl(imageUrl) }
         })
         val details = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -651,16 +671,32 @@ class IdentityMatchActivity : AppCompatActivity() {
         })
         details.addView(TextView(this).apply { text = Uri.parse(imageUrl).host ?: imageUrl; textSize = 12f })
         details.addView(MaterialButton(this).apply {
-            text = "Open source"
+            text = "Open source page"
             isAllCaps = false
-            setOnClickListener {
-                try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(imageUrl))) } catch (_: Exception) {}
-            }
+            setOnClickListener { openResultUrl(pageUrl.ifBlank { imageUrl }) }
+        })
+        details.addView(MaterialButton(this).apply {
+            text = "View image"
+            isAllCaps = false
+            setOnClickListener { openResultUrl(imageUrl) }
         })
         card.addView(details)
         resultsContainer.addView(card, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { bottomMargin = dp(10) })
+    }
+
+    private fun openResultUrl(address: String) {
+        val uri = Uri.parse(address)
+        if (uri.scheme !in listOf("https", "http") || uri.host.isNullOrBlank() || uri.userInfo != null) {
+            Toast.makeText(this, "This result link is not a valid public web address.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
+        } catch (_: Exception) {
+            Toast.makeText(this, "No browser is available to open this result.", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** Fetches a public HTTPS image into a bounded byte array; never writes it to disk. */

@@ -425,6 +425,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 } else {
                     ""
                 }
+                val referenceEmbeddings = alignedReferences.map { embedFace(interpreter, it) }
                 val report = StringBuilder("${alignedReferences.size} reference photo(s) aligned for this scan session.\n$referenceNote")
                 var checked = 0
                 var matched = 0
@@ -439,10 +440,10 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 try {
                                     val aligned = alignFace(bitmap, face)
                                     try {
-                                        val referenceScores = alignedReferences.map { reference ->
-                                            comparePair(interpreter, reference, aligned)
-                                        }
-                                        val score = combineReferenceScores(referenceScores)
+                                        val candidateEmbedding = embedFace(interpreter, aligned)
+                                        val score = combineReferenceScores(
+                                            referenceEmbeddings.map { reference -> cosineSimilarity(reference, candidateEmbedding) }
+                                        )
                                         if (best == null || score > best!!) best = score
                                     } finally {
                                         aligned.recycle()
@@ -538,6 +539,10 @@ class IdentityMatchActivity : AppCompatActivity() {
                     }
                 }
 
+                // Cache each reference embedding once. Each candidate face is embedded once,
+                // then compared in memory against all references.
+                val referenceEmbeddings = alignedReferences.map { embedFace(activeInterpreter, it) }
+
                 var completedSources = 0
                 var checked = 0
                 var possibleMatches = 0
@@ -577,12 +582,12 @@ class IdentityMatchActivity : AppCompatActivity() {
                                     var aligned: Bitmap? = null
                                     try {
                                         aligned = alignFace(bitmap, face)
-                                        val referenceScores = alignedReferences.map { reference ->
-                                            comparePair(activeInterpreter, reference, aligned)
-                                        }
+                                        val candidateEmbedding = embedFace(activeInterpreter, aligned)
                                         // With multiple reference photos, require agreement from the
                                         // two strongest views instead of accepting one lucky high score.
-                                        val faceScore = combineReferenceScores(referenceScores)
+                                        val faceScore = combineReferenceScores(
+                                            referenceEmbeddings.map { reference -> cosineSimilarity(reference, candidateEmbedding) }
+                                        )
                                         if (best == null || faceScore > best!!) best = faceScore
                                     } catch (_: IllegalArgumentException) {
                                         skipped++
@@ -946,28 +951,39 @@ class IdentityMatchActivity : AppCompatActivity() {
         return scores.sortedDescending().take(2).average().toFloat()
     }
 
-    private fun comparePair(interpreter: Interpreter, first: Bitmap, second: Bitmap): Float {
+    /**
+     * MobileFaceNet is a two-input verification model. Its two output vectors are
+     * independently derived from the two input faces, so feeding the same face to
+     * both inputs lets us extract one reusable embedding. Reference embeddings are
+     * cached for the scan; each candidate face then needs only one model inference.
+     */
+    private fun embedFace(interpreter: Interpreter, bitmap: Bitmap): FloatArray {
         val inputShape0 = interpreter.getInputTensor(0).shape()
         val inputShape1 = interpreter.getInputTensor(1).shape()
-        val inputs = arrayOf(makeInput(first, inputShape0), makeInput(second, inputShape1))
+        val input0 = makeInput(bitmap, inputShape0)
+        val input1 = makeInput(bitmap, inputShape1)
         val outputShape = interpreter.getOutputTensor(0).shape()
         val output = ByteBuffer.allocateDirect(outputShape.fold(1) { acc, dim -> acc * dim } * 4)
             .order(ByteOrder.nativeOrder())
-        interpreter.runForMultipleInputsOutputs(inputs, mutableMapOf<Int, Any>(0 to output))
+        interpreter.runForMultipleInputsOutputs(arrayOf(input0, input1), mutableMapOf<Int, Any>(0 to output))
         output.rewind()
-        val firstEmbedding = FloatArray(128) { output.float }
-        val secondEmbedding = FloatArray(128) { output.float }
-        val a = normalize(firstEmbedding)
-        val b = normalize(secondEmbedding)
-        return a.indices.sumOf { (a[it] * b[it]).toDouble() }.toFloat().coerceIn(-1f, 1f)
+        return normalize(FloatArray(128) { output.float })
+    }
+
+    private fun cosineSimilarity(first: FloatArray, second: FloatArray): Float {
+        require(first.size == second.size) { "Embedding dimensions do not match." }
+        return first.indices.sumOf { (first[it] * second[it]).toDouble() }
+            .toFloat().coerceIn(-1f, 1f)
     }
 
     private fun makeInput(bitmap: Bitmap, shape: IntArray): ByteBuffer {
+        require(bitmap.width == 112 && bitmap.height == 112) { "Face input must be 112 by 112 pixels." }
         val nchw = shape.contentEquals(intArrayOf(1, 3, 112, 112))
+        val pixels = IntArray(112 * 112)
+        bitmap.getPixels(pixels, 0, 112, 0, 0, 112, 112)
         val buffer = ByteBuffer.allocateDirect(112 * 112 * 3 * 4).order(ByteOrder.nativeOrder())
         if (nchw) {
-            for (channel in 0..2) for (y in 0 until 112) for (x in 0 until 112) {
-                val pixel = bitmap.getPixel(x, y)
+            for (channel in 0..2) for (pixel in pixels) {
                 val value = when (channel) {
                     0 -> (pixel shr 16) and 255
                     1 -> (pixel shr 8) and 255
@@ -976,8 +992,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 buffer.putFloat(value / 255f)
             }
         } else {
-            for (y in 0 until 112) for (x in 0 until 112) {
-                val pixel = bitmap.getPixel(x, y)
+            for (pixel in pixels) {
                 buffer.putFloat(((pixel shr 16) and 255) / 255f)
                 buffer.putFloat(((pixel shr 8) and 255) / 255f)
                 buffer.putFloat((pixel and 255) / 255f)

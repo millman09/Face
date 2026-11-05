@@ -544,7 +544,22 @@ class IdentityMatchActivity : AppCompatActivity() {
                 var addedTotal = 0
                 val processedIds = mutableSetOf<Long>()
                 val report = StringBuilder()
-                runOnUiThread { progress.max = sources.size }
+                progress.max = 100
+                progress.progress = 0
+
+                // The bar and displayed percentage both represent the same metric:
+                // completed public sources divided by the total enabled sources.
+                // Image comparisons remain a separate count because the total number
+                // of images is not known until each source has been scanned.
+                fun updateSearchProgress(detail: String) {
+                    val percent = ((completedSources * 100f) / sources.size)
+                        .toInt().coerceIn(0, 100)
+                    runOnUiThread {
+                        progress.max = 100
+                        progress.progress = percent
+                        status.text = "Source scan: $percent% · $detail"
+                    }
+                }
 
                 // Consume new candidates as each site finishes. Discovery continues on
                 // four network workers while this thread performs local face matching.
@@ -605,14 +620,9 @@ class IdentityMatchActivity : AppCompatActivity() {
                             candidateDatabase.updateCandidateStatus(candidate.id, "Unavailable")
                         }
                         checked++
-                        val sourceDone = completedSources
-                        val imageDone = checked
-                        val matches = possibleMatches
-                        runOnUiThread {
-                            progress.max = (sources.size + imageDone).coerceAtLeast(1)
-                            progress.progress = sourceDone + imageDone
-                            status.text = "Live search: $sourceDone/${sources.size} sites checked, $imageDone images compared, $matches possible match(es)."
-                        }
+                        updateSearchProgress(
+                            "$completedSources/${sources.size} sites checked, $checked images compared, $possibleMatches possible match(es)"
+                        )
                     }
                 }
 
@@ -641,15 +651,13 @@ class IdentityMatchActivity : AppCompatActivity() {
                         val (source, discoveredCount, added) = completion.take().get()
                         completedSources++
                         addedTotal += added
-                        runOnUiThread {
-                            progress.max = (sources.size + checked).coerceAtLeast(1)
-                            progress.progress = completedSources + checked
-                            status.text = if (discoveredCount >= 0) {
+                        updateSearchProgress(
+                            if (discoveredCount >= 0) {
                                 "${source.name} returned $discoveredCount image link(s). $completedSources/${sources.size} sites checked; $checked images compared; $possibleMatches possible match(es)."
                             } else {
                                 "${source.name} was unavailable. $completedSources/${sources.size} sites checked; $checked images compared."
                             }
-                        }
+                        )
                         comparePendingCandidates()
                     }
                 } finally {
@@ -665,7 +673,9 @@ class IdentityMatchActivity : AppCompatActivity() {
                     "Search finished. Checked $completedSources/${sources.size} public sources, discovered $addedTotal new image link(s), compared $checked new or retryable image(s), and found $possibleMatches possible match(es). $totalIndexed image links remain indexed for future incremental searches. Public-source coverage is limited to pages made accessible by each website; this is not a complete index of the internet. Review matches manually."
                 }
                 runOnUiThread {
-                    status.text = summary
+                    progress.max = 100
+                    progress.progress = 100
+                    status.text = "Source scan: 100% · $summary"
                     progress.visibility = ProgressBar.GONE
                     updateReady()
                 }

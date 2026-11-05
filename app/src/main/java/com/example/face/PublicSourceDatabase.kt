@@ -320,13 +320,13 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         writableDatabase.update("candidates", values, "id=?", arrayOf(id.toString()))
     }
 
-    @Synchronized fun possibleMatches(limit: Int = 500): List<MatchResult> {
+    @Synchronized fun possibleMatches(limit: Int = 500, bestFirst: Boolean = false): List<MatchResult> {
         val result = mutableListOf<MatchResult>()
         readableDatabase.rawQuery(
             """SELECT c.id,s.base_url,c.page_url,c.image_url,c.similarity,c.checked_at
                FROM candidates c JOIN sources s ON s.id=c.source_id
                WHERE c.scan_status='Possible match' AND c.similarity IS NOT NULL
-               ORDER BY c.checked_at DESC LIMIT ?""".trimIndent(),
+               ORDER BY ${if (bestFirst) "c.similarity DESC, c.checked_at DESC" else "c.checked_at DESC"} LIMIT ?""".trimIndent(),
             arrayOf(limit.coerceIn(1, 2000).toString())
         ).use { c ->
             while (c.moveToNext()) result += MatchResult(

@@ -507,7 +507,7 @@ class IdentityMatchActivity : AppCompatActivity() {
 
                 val candidates = candidateDatabase.allCandidates(5000)
                 require(candidates.isNotEmpty()) {
-                    "The catalogue scan finished, but its public sitemap/feed endpoints exposed no image links. Many sites do not publish crawlable image sitemaps."
+                    "The public-source crawl finished, but the accessible sitemap/feed pages exposed no image links. Many sites block or do not publish crawlable public pages."
                 }
                 runOnUiThread {
                     progress.max = completedSources + candidates.size
@@ -602,7 +602,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     }
                 }
                 report.append(
-                    "\nFinished: $possibleMatches possible match(es). This only checks public image links exposed by the catalogue sources' sitemap/feed endpoints. " +
+                    "\nFinished: $possibleMatches possible match(es). This checks public image links found in sitemap/feed entries and a bounded set of same-host linked pages. " +
                     "Some sites expose no links, and this is not a complete search of the internet. Review every candidate manually."
                 )
                 runOnUiThread {

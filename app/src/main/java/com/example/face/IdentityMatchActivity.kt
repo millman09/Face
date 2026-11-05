@@ -571,7 +571,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                     possibleMatches++
                                     val preview = makeResultPreview(bitmap)
                                     runOnUiThread {
-                                        addWebMatchPreview(candidate.pageUrl, candidate.imageUrl, similarity ?: 0f, preview)
+                                        addWebMatchPreview(candidate.id, candidate.pageUrl, candidate.imageUrl, similarity ?: 0f, preview)
                                     }
                                 }
                                 report.append("${Uri.parse(candidate.imageUrl).host}: ${faces.size} face(s)")
@@ -728,7 +728,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     val preview = makeResultPreview(bitmap)
                     bitmap.recycle()
                     runOnUiThread {
-                        addWebMatchPreview(match.pageUrl, match.imageUrl, match.similarity, preview)
+                        addWebMatchPreview(match.id, match.pageUrl, match.imageUrl, match.similarity, preview)
                     }
                     restored++
                 } catch (_: Exception) {
@@ -743,7 +743,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
-    private fun addWebMatchPreview(pageUrl: String, imageUrl: String, similarity: Float, preview: Bitmap) {
+    private fun addWebMatchPreview(candidateId: Long, pageUrl: String, imageUrl: String, similarity: Float, preview: Bitmap) {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(10), dp(10), dp(10), dp(10))
@@ -783,6 +783,18 @@ class IdentityMatchActivity : AppCompatActivity() {
             text = "View image"
             isAllCaps = false
             setOnClickListener { openResultUrl(imageUrl) }
+        })
+        details.addView(MaterialButton(this).apply {
+            text = "Not a match"
+            isAllCaps = false
+            setOnClickListener {
+                executor.execute {
+                    val db = PublicSourceDatabase(this@IdentityMatchActivity)
+                    try { db.updateCandidateResult(candidateId, "Not a match", similarity) } finally { db.close() }
+                }
+                resultsContainer.removeView(card)
+                Toast.makeText(this@IdentityMatchActivity, "Removed from possible matches.", Toast.LENGTH_SHORT).show()
+            }
         })
         card.addView(details)
         resultsContainer.addView(card, LinearLayout.LayoutParams(

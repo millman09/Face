@@ -62,4 +62,6 @@
     <string name="lens_body">Find where copies of your own photos appear online with Google Lens.</string>
     <string name="tineye_title">Second opinion with TinEye</string>
     <string name="tineye_body">Another reverse image search that sometimes finds different matches.</string>
+    <string name="guide_title">Removal guide</string>
+    <string name="guide_body">Six steps, in order, to get an image taken down.</string>
 </resources>

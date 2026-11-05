@@ -199,6 +199,9 @@ class MainActivity : AppCompatActivity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun buildHelp(container: LinearLayout) {
+        addTile(container, getString(R.string.guide_title), getString(R.string.guide_body)) {
+            startActivity(Intent(this, RemovalGuideActivity::class.java))
+        }
         removeLinks.forEach { addLinkTile(container, it) }
         addText(container, getString(R.string.safety_note))
     }

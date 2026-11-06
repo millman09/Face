@@ -15,10 +15,11 @@ data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, va
 data class CandidateUpdate(val id: Long, val status: String, val similarity: Float?, val faceBox: String? = null)
 data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl: String)
 data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String)
+data class SearchInfo(val id: Long, val savedAt: Long, val matchCount: Int)
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long, val faceBox: String? = null, val confirmed: Boolean = false)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 9) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 10) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -39,8 +40,20 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_pending ON candidates(checked_at, discovered_at)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_matches ON candidates(scan_status, similarity, checked_at)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_sources_enabled_scan ON sources(enabled, last_scan)")
+        createArchiveTables(db)
         seedSources(db)
     }
+
+    private fun createArchiveTables(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS searches (id INTEGER PRIMARY KEY AUTOINCREMENT, saved_at INTEGER NOT NULL)")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS archived_matches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, search_id INTEGER NOT NULL,
+            source_base_url TEXT NOT NULL, page_url TEXT NOT NULL, image_url TEXT NOT NULL,
+            similarity REAL NOT NULL, checked_at INTEGER NOT NULL, face_box TEXT, confirmed INTEGER NOT NULL DEFAULT 0
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_archived_search ON archived_matches(search_id)")
+    }
+
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 4) seedSources(db)
         if (oldVersion < 5) {
@@ -73,6 +86,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         if (oldVersion < 9) {
             db.execSQL("ALTER TABLE candidates ADD COLUMN face_box TEXT")
         }
+        if (oldVersion < 10) createArchiveTables(db)
     }
 
     private fun seedSources(db: SQLiteDatabase) {
@@ -367,6 +381,65 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             )
         }
         return result
+    }
+
+    /**
+     * Saves the current possible matches as a separate past search, then empties the working data so a new
+     * search starts from scratch. Returns how many matches were saved (0 means nothing was worth keeping).
+     */
+    @Synchronized fun archiveCurrentSearch(): Int {
+        val db = writableDatabase
+        var saved = 0
+        val keep = "c.scan_status IN ('Possible match','Confirmed match') AND c.similarity >= 0.3"
+        db.beginTransaction()
+        try {
+            db.rawQuery("SELECT COUNT(*) FROM candidates c WHERE $keep", null).use { if (it.moveToFirst()) saved = it.getInt(0) }
+            if (saved > 0) {
+                db.execSQL("INSERT INTO searches(saved_at) VALUES (${System.currentTimeMillis()})")
+                db.execSQL(
+                    """INSERT INTO archived_matches(search_id, source_base_url, page_url, image_url, similarity, checked_at, face_box, confirmed)
+                       SELECT (SELECT MAX(id) FROM searches), s.base_url, c.page_url, c.image_url, c.similarity, c.checked_at, c.face_box,
+                              CASE WHEN c.scan_status='Confirmed match' THEN 1 ELSE 0 END
+                       FROM candidates c JOIN sources s ON s.id=c.source_id WHERE $keep""".trimIndent()
+                )
+            }
+            db.execSQL("DELETE FROM candidates")
+            db.execSQL("UPDATE sources SET last_scan=0, last_status='Not scanned'")
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        return saved
+    }
+
+    @Synchronized fun pastSearches(): List<SearchInfo> {
+        val result = mutableListOf<SearchInfo>()
+        readableDatabase.rawQuery(
+            "SELECT s.id, s.saved_at, (SELECT COUNT(*) FROM archived_matches a WHERE a.search_id=s.id) FROM searches s ORDER BY s.id DESC", null
+        ).use { c -> while (c.moveToNext()) result += SearchInfo(c.getLong(0), c.getLong(1), c.getInt(2)) }
+        return result
+    }
+
+    @Synchronized fun pastSearchMatches(searchId: Long): List<MatchResult> {
+        val result = mutableListOf<MatchResult>()
+        readableDatabase.rawQuery(
+            "SELECT id, source_base_url, page_url, image_url, similarity, checked_at, face_box, confirmed " +
+                "FROM archived_matches WHERE search_id=? ORDER BY similarity DESC", arrayOf(searchId.toString())
+        ).use { c ->
+            while (c.moveToNext()) result += MatchResult(
+                c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getFloat(4), c.getLong(5),
+                c.getString(6), c.getInt(7) == 1
+            )
+        }
+        return result
+    }
+
+    @Synchronized fun deletePastSearch(searchId: Long) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("archived_matches", "search_id=?", arrayOf(searchId.toString()))
+            db.delete("searches", "id=?", arrayOf(searchId.toString()))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
     }
 
     /** Wipes every collected image link and result and marks all sources as never scanned, for a fresh search. */

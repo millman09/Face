@@ -136,7 +136,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         addButton(root, "Install face-matching model  ·  ~4 MB") { downloadOfficialModel() }
         addButton(root, "Choose a compatible face model") { modelPicker.launch(arrayOf("*/*")) }
         addButton(root, "Choose reference photos") { referencePicker.launch(arrayOf("image/*")) }
-        if (webScanMode) addButton(root, "Clear search and start over") { confirmClearSearch() }
+        if (webScanMode) addButton(root, "Past searches") { showPastSearches() }
+        if (webScanMode) addButton(root, "Clear current search") { confirmClearSearch() }
         if (webScanMode) addButton(root, "Export saved matches (CSV)") { exportResultsPicker.launch("face-search-results.csv") }
         if (webScanMode) addButton(root, "Export report with images (PDF)") { exportReportPicker.launch("face-matches-report.pdf") }
         if (!webScanMode) addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
@@ -821,7 +822,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
-    /** If an earlier search left results behind, lets the user continue it or clear it and start a new one. */
+    /** If an earlier search left results behind, lets the user continue it or save it and start a new one. */
     private fun startDeepSearchChoosing() {
         val hasPrevious = try {
             val db = PublicSourceDatabase(this)
@@ -830,15 +831,15 @@ class IdentityMatchActivity : AppCompatActivity() {
         if (!hasPrevious) { runComparison(); return }
         MaterialAlertDialogBuilder(this)
             .setTitle("Start a deep search")
-            .setMessage("You have results from a previous search.")
-            .setPositiveButton("Clear it and start new") { _, _ ->
+            .setMessage("You have results from a previous search. A new search keeps them under \"Past searches\" and starts from scratch.")
+            .setPositiveButton("Start new search") { _, _ ->
                 resultsContainer.removeAllViews()
                 hintView.visibility = android.view.View.GONE
-                // The scan below is queued behind this on the same thread, so it begins after the clear.
+                // The scan below is queued behind this on the same thread, so it begins after the old one is saved.
                 executor.execute {
                     try {
                         val db = PublicSourceDatabase(this)
-                        try { db.clearSearch() } finally { db.close() }
+                        try { db.archiveCurrentSearch() } finally { db.close() }
                         ImageCache.clear(this)
                     } catch (_: Exception) {}
                 }
@@ -849,10 +850,81 @@ class IdentityMatchActivity : AppCompatActivity() {
             .show()
     }
 
+    /** Lists saved past searches; picking one shows its matches below, separate from the current search. */
+    private fun showPastSearches() {
+        executor.execute {
+            val searches = try {
+                val db = PublicSourceDatabase(this)
+                try { db.pastSearches() } finally { db.close() }
+            } catch (_: Exception) { emptyList() }
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                if (searches.isEmpty()) {
+                    Toast.makeText(this, "No past searches yet. Starting a new search saves the old one here.", Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                val format = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+                val labels = searches.map { "${format.format(java.util.Date(it.savedAt))}  ·  ${it.matchCount} match(es)" }.toTypedArray()
+                MaterialAlertDialogBuilder(this)
+                    .setTitle("Past searches")
+                    .setItems(labels) { _, which -> showPastSearch(searches[which], labels[which]) }
+                    .setNegativeButton("Close", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun showPastSearch(search: SearchInfo, label: String) {
+        resultsContainer.removeAllViews()
+        status.text = "Showing a past search saved $label. Tap Best matches or Most recent to go back to the current search."
+        resultsContainer.addView(MaterialButton(this).apply {
+            text = "Delete this past search"
+            isAllCaps = false
+            setOnClickListener {
+                MaterialAlertDialogBuilder(this@IdentityMatchActivity)
+                    .setTitle("Delete this past search?")
+                    .setMessage("Its saved matches will be removed. The current search is not affected.")
+                    .setPositiveButton("Delete") { _, _ ->
+                        executor.execute {
+                            val db = PublicSourceDatabase(this@IdentityMatchActivity)
+                            try { db.deletePastSearch(search.id) } finally { db.close() }
+                            runOnUiThread {
+                                resultsContainer.removeAllViews()
+                                status.text = "Past search deleted."
+                            }
+                        }
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+        })
+        executor.execute {
+            val matches = try {
+                val db = PublicSourceDatabase(this)
+                try { db.pastSearchMatches(search.id) } finally { db.close() }
+            } catch (_: Exception) { emptyList() }
+            for (match in matches) {
+                try {
+                    val bitmap = loadForDisplay(match.imageUrl)
+                    val preview = makeResultPreview(bitmap)
+                    val faceCrop = try { MatchTuning.cropFace(bitmap, match.faceBox) } catch (_: Exception) { null }
+                    bitmap.recycle()
+                    runOnUiThread {
+                        if (!isFinishing) addWebMatchPreview(
+                            match.id, match.pageUrl, match.imageUrl, match.similarity, preview, faceCrop, match.faceBox, match.confirmed, readOnly = true
+                        )
+                    }
+                } catch (_: Exception) {
+                    // The image may have been taken down since; that is good news, so just skip it.
+                }
+            }
+        }
+    }
+
     private fun confirmClearSearch() {
         MaterialAlertDialogBuilder(this)
             .setTitle("Clear this search?")
-            .setMessage("This stops any running search and removes all results and collected image links, including ones marked \"That's me\". Your reference photos and settings stay. Your next search starts from scratch.")
+            .setMessage("This stops any running search and removes the current results and collected image links, including ones marked \"That's me\". Past searches, your reference photos and settings stay.")
             .setPositiveButton("Clear") { _, _ ->
                 activeWebScan?.cancel(true)
                 status.text = "Clearing…"
@@ -969,7 +1041,7 @@ class IdentityMatchActivity : AppCompatActivity() {
 
     private fun addWebMatchPreview(
         candidateId: Long, pageUrl: String, imageUrl: String, similarity: Float, preview: Bitmap,
-        faceCrop: Bitmap?, faceBox: String?, confirmed: Boolean
+        faceCrop: Bitmap?, faceBox: String?, confirmed: Boolean, readOnly: Boolean = false
     ) {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1031,7 +1103,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             isAllCaps = false
             setOnClickListener { showMatchActions(pageUrl, imageUrl) }
         })
-        details.addView(MaterialButton(this).apply {
+        if (!readOnly) details.addView(MaterialButton(this).apply {
             text = if (confirmed) "Confirmed ✓" else "That's me"
             isAllCaps = false
             isEnabled = !confirmed
@@ -1046,7 +1118,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 Toast.makeText(this@IdentityMatchActivity, "Saved. Future scans will use this to judge matches.", Toast.LENGTH_SHORT).show()
             }
         })
-        details.addView(MaterialButton(this).apply {
+        if (!readOnly) details.addView(MaterialButton(this).apply {
             text = "Not a match"
             isAllCaps = false
             setOnClickListener {

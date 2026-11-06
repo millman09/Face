@@ -63,6 +63,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var resultsContainer: LinearLayout
     private lateinit var resultsList: LinearLayout
     private lateinit var resultsSummary: TextView
+    private val resultsExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    @Volatile private var resultsRefreshInFlight = false
+    private var resultsLoaded = false
+    private var lastResultsTimestamp = -1L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -235,7 +239,7 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(resultsSummary)
         addTile(container, "Refresh results", "Reload the saved possible matches from your previous scans.") {
-            refreshResults()
+            refreshResults(force = true)
         }
         resultsContainer = container
         resultsList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -243,22 +247,34 @@ class MainActivity : AppCompatActivity() {
         resultsSummary.text = getString(R.string.results_empty)
     }
 
-    private fun refreshResults() {
-        if (!::resultsContainer.isInitialized || !::resultsSummary.isInitialized) return
-        val db = PublicSourceDatabase(this)
-        val matches = try { db.possibleMatches() } finally { db.close() }
-        resultsList.removeAllViews()
-        resultsSummary.text = if (matches.isEmpty()) {
-            getString(R.string.results_empty)
-        } else {
-            getString(R.string.results_count, matches.size)
-        }
-        if (matches.isEmpty()) {
-            addText(resultsList, getString(R.string.results_empty_detail))
-            return
-        }
-        matches.sortedByDescending { it.similarity }.forEach { match ->
-            addMatchCard(match)
+    private fun refreshResults(force: Boolean = false) {
+        if (!::resultsContainer.isInitialized || !::resultsSummary.isInitialized || resultsRefreshInFlight) return
+        resultsRefreshInFlight = true
+        resultsSummary.text = "Checking saved matches…"
+        resultsExecutor.execute {
+            var latest = 0L
+            var matches: List<MatchResult> = emptyList()
+            var changed = false
+            val db = PublicSourceDatabase(applicationContext)
+            try {
+                latest = db.latestMatchTimestamp()
+                changed = force || !resultsLoaded || latest != lastResultsTimestamp
+                if (changed) matches = db.possibleMatches(50, bestFirst = true)
+            } finally { db.close() }
+            runOnUiThread {
+                resultsRefreshInFlight = false
+                if (isFinishing || isDestroyed || !changed) return@runOnUiThread
+                lastResultsTimestamp = latest
+                resultsLoaded = true
+                resultsList.removeAllViews()
+                resultsSummary.text = if (matches.isEmpty()) getString(R.string.results_empty)
+                    else getString(R.string.results_count, matches.size)
+                if (matches.isEmpty()) {
+                    addText(resultsList, getString(R.string.results_empty_detail))
+                } else {
+                    matches.forEach { match -> addMatchCard(match) }
+                }
+            }
         }
     }
 
@@ -351,6 +367,11 @@ class MainActivity : AppCompatActivity() {
         if (::resultsContainer.isInitialized && findViewById<View>(R.id.panelResults).visibility == View.VISIBLE) {
             refreshResults()
         }
+    }
+
+    override fun onDestroy() {
+        resultsExecutor.shutdownNow()
+        super.onDestroy()
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

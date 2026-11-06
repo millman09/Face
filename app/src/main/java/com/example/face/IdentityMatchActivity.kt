@@ -47,6 +47,7 @@ import kotlin.math.acos
  */
 class IdentityMatchActivity : AppCompatActivity() {
     private lateinit var status: TextView
+    private lateinit var hintView: TextView
     private lateinit var progress: ProgressBar
     private lateinit var scanButton: MaterialButton
     private lateinit var cancelButton: MaterialButton
@@ -155,6 +156,13 @@ class IdentityMatchActivity : AppCompatActivity() {
             setPadding(0, 16, 0, 0)
         }
         root.addView(status)
+        hintView = TextView(this).apply {
+            textSize = 13f
+            setTextColor(android.graphics.Color.rgb(255, 200, 120))
+            setPadding(0, dp(6), 0, 0)
+            visibility = android.view.View.GONE
+        }
+        root.addView(hintView)
         resultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val resultSortRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -540,17 +548,26 @@ class IdentityMatchActivity : AppCompatActivity() {
                         .build()
                 )
                 detector = activeDetector
+                val photoHints = mutableListOf<String>()
                 references.forEachIndexed { index, uri ->
                     val bitmap = decode(uri)
                     try {
                         val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
                         val face = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
                             ?: throw IllegalArgumentException("No face found in reference photo ${index + 1}.")
+                        MatchTuning.photoHint(bitmap, face, index + 1)?.let { photoHints += it }
                         alignedReferences += alignFace(bitmap, face)
                     } finally {
                         bitmap.recycle()
                     }
                 }
+
+                if (references.size == 1) photoHints += "Add 2–3 more photos of you (different angle or lighting) for better matching."
+                runOnUiThread {
+                    hintView.text = photoHints.joinToString("\n")
+                    hintView.visibility = if (photoHints.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
+                }
+                val threshold = MatchTuning.threshold(this)
 
                 // Cache each reference embedding once. Each candidate face is embedded once,
                 // then compared in memory against all references.
@@ -588,7 +605,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         .filter { processedIds.add(it.id) }
                     if (batch.isEmpty()) return
                     data class Downloaded(val candidate: StoredCandidate, val bitmap: Bitmap?, val error: String?)
-                    data class MatchPreview(val id: Long, val pageUrl: String, val imageUrl: String, val score: Float, val bitmap: Bitmap)
+                    data class MatchPreview(val id: Long, val pageUrl: String, val imageUrl: String, val score: Float, val bitmap: Bitmap, val faceBox: String?, val faceCrop: Bitmap?)
                     val completion = java.util.concurrent.ExecutorCompletionService<Downloaded>(activeDownloadPool)
                     for (chunk in batch.chunked(12)) {
                         val futures = chunk.map { candidate ->
@@ -609,6 +626,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 try {
                                     val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
                                     var best: Float? = null
+                                    var bestFace: Face? = null
                                     for (face in faces) {
                                         if (!isUsableFace(face)) continue
                                         var aligned: Bitmap? = null
@@ -616,18 +634,22 @@ class IdentityMatchActivity : AppCompatActivity() {
                                             aligned = alignFace(bitmap, face)
                                             val candidateEmbedding = embedFace(activeInterpreter, aligned)
                                             val faceScore = combineReferenceScores(referenceEmbeddings.map { reference -> cosineSimilarity(reference, candidateEmbedding) })
-                                            if (best == null || faceScore > best!!) best = faceScore
+                                            if (best == null || faceScore > best!!) { best = faceScore; bestFace = face }
                                         } catch (_: IllegalArgumentException) {
                                             // Faces without the five required landmarks cannot be aligned.
                                         } finally { aligned?.recycle() }
                                     }
                                     val similarity = best
-                                    val possible = similarity != null && similarity >= 0.4f
+                                    val possible = similarity != null && similarity >= threshold
+                                    val faceBox = if (possible && bestFace != null) MatchTuning.formatBox(bestFace!!, bitmap.width, bitmap.height) else null
                                     if (possible) {
                                         possibleMatches++
-                                        previews += MatchPreview(candidate.id, candidate.pageUrl, candidate.imageUrl, similarity!!, makeResultPreview(bitmap))
+                                        previews += MatchPreview(
+                                            candidate.id, candidate.pageUrl, candidate.imageUrl, similarity!!,
+                                            makeResultPreview(bitmap), faceBox, MatchTuning.cropFace(bitmap, faceBox)
+                                        )
                                     }
-                                    updates += CandidateUpdate(candidate.id, if (possible) "Possible match" else "Compared", if (possible) similarity else null)
+                                    updates += CandidateUpdate(candidate.id, if (possible) "Possible match" else "Compared", if (possible) similarity else null, faceBox)
                                 } catch (_: Exception) {
                                     updates += CandidateUpdate(candidate.id, "Unavailable", null)
                                 } finally { bitmap.recycle() }
@@ -637,7 +659,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         // One transaction per chunk replaces one database write per image.
                         candidateDatabase.updateCandidateResults(updates)
                         if (previews.isNotEmpty()) runOnUiThread {
-                            previews.forEach { item -> addWebMatchPreview(item.id, item.pageUrl, item.imageUrl, item.score, item.bitmap) }
+                            previews.forEach { item -> addWebMatchPreview(item.id, item.pageUrl, item.imageUrl, item.score, item.bitmap, item.faceCrop, item.faceBox, false) }
                         }
                         // Progress updates are deliberately batched instead of posted once per image.
                         updateSearchProgress("$completedSources/${sources.size} sites checked, $checked images compared, $possibleMatches possible match(es)")
@@ -774,9 +796,10 @@ class IdentityMatchActivity : AppCompatActivity() {
                 try {
                     val bitmap = downloadPublicImageInMemory(match.imageUrl)
                     val preview = makeResultPreview(bitmap)
+                    val faceCrop = try { MatchTuning.cropFace(bitmap, match.faceBox) } catch (_: Exception) { null }
                     bitmap.recycle()
                     runOnUiThread {
-                        addWebMatchPreview(match.id, match.pageUrl, match.imageUrl, match.similarity, preview)
+                        addWebMatchPreview(match.id, match.pageUrl, match.imageUrl, match.similarity, preview, faceCrop, match.faceBox, match.confirmed)
                     }
                     restored++
                 } catch (_: Exception) {
@@ -791,7 +814,10 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
-    private fun addWebMatchPreview(candidateId: Long, pageUrl: String, imageUrl: String, similarity: Float, preview: Bitmap) {
+    private fun addWebMatchPreview(
+        candidateId: Long, pageUrl: String, imageUrl: String, similarity: Float, preview: Bitmap,
+        faceCrop: Bitmap?, faceBox: String?, confirmed: Boolean
+    ) {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(10), dp(10), dp(10), dp(10))
@@ -803,20 +829,35 @@ class IdentityMatchActivity : AppCompatActivity() {
         card.isClickable = true
         card.isFocusable = true
         card.setOnClickListener { openResultUrl(pageUrl.ifBlank { imageUrl }) }
-        card.addView(ImageView(this).apply {
-            setImageBitmap(preview)
-            scaleType = ImageView.ScaleType.CENTER_CROP
+        val thumbs = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(dp(104), LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        thumbs.addView(ImageView(this).apply {
+            setImageBitmap(MatchTuning.highlight(preview, faceBox))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            adjustViewBounds = true
             layoutParams = LinearLayout.LayoutParams(dp(104), dp(104))
-            contentDescription = "Possible match preview. Tap to open the source page."
+            contentDescription = "Possible match preview with the matched face outlined. Tap to open the image."
             isClickable = true
             setOnClickListener { openResultUrl(imageUrl) }
         })
+        if (faceCrop != null) thumbs.addView(ImageView(this).apply {
+            setImageBitmap(faceCrop)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            layoutParams = LinearLayout.LayoutParams(dp(64), dp(64)).apply { topMargin = dp(6) }
+            contentDescription = "Close-up of the matched face"
+        })
+        card.addView(thumbs)
         val details = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), 0, 0, 0)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        details.addView(TextView(this).apply { text = matchLabel(similarity); textSize = 16f })
+        details.addView(TextView(this).apply {
+            text = if (confirmed) "Confirmed: this is you" else matchLabel(similarity)
+            textSize = 16f
+        })
         details.addView(TextView(this).apply {
             text = "Cosine similarity: " + String.format(java.util.Locale.US, "%.3f", similarity)
             textSize = 14f
@@ -833,9 +874,25 @@ class IdentityMatchActivity : AppCompatActivity() {
             setOnClickListener { openResultUrl(imageUrl) }
         })
         details.addView(MaterialButton(this).apply {
+            text = if (confirmed) "Confirmed ✓" else "That's me"
+            isAllCaps = false
+            isEnabled = !confirmed
+            setOnClickListener {
+                isEnabled = false
+                text = "Confirmed ✓"
+                MatchTuning.record(this@IdentityMatchActivity, true, similarity)
+                executor.execute {
+                    val db = PublicSourceDatabase(this@IdentityMatchActivity)
+                    try { db.updateCandidateResult(candidateId, "Confirmed match", similarity) } finally { db.close() }
+                }
+                Toast.makeText(this@IdentityMatchActivity, "Saved. Future scans will use this to judge matches.", Toast.LENGTH_SHORT).show()
+            }
+        })
+        details.addView(MaterialButton(this).apply {
             text = "Not a match"
             isAllCaps = false
             setOnClickListener {
+                MatchTuning.record(this@IdentityMatchActivity, false, similarity)
                 executor.execute {
                     val db = PublicSourceDatabase(this@IdentityMatchActivity)
                     try { db.updateCandidateResult(candidateId, "Not a match", similarity) } finally { db.close() }

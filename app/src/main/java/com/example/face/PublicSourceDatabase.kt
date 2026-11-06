@@ -12,13 +12,13 @@ import java.net.URL
 import java.util.Locale
 
 data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean, val lastScan: Long = 0L)
-data class CandidateUpdate(val id: Long, val status: String, val similarity: Float?)
+data class CandidateUpdate(val id: Long, val status: String, val similarity: Float?, val faceBox: String? = null)
 data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl: String)
 data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String)
-data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long)
+data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long, val faceBox: String? = null, val confirmed: Boolean = false)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 8) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 9) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -33,7 +33,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER NOT NULL,
             page_url TEXT NOT NULL, image_url TEXT NOT NULL UNIQUE,
             discovered_at INTEGER NOT NULL, scan_status TEXT NOT NULL DEFAULT 'Discovered',
-            similarity REAL, checked_at INTEGER NOT NULL DEFAULT 0,
+            similarity REAL, checked_at INTEGER NOT NULL DEFAULT 0, face_box TEXT,
             FOREIGN KEY(source_id) REFERENCES sources(id)
         )""".trimIndent())
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_pending ON candidates(checked_at, discovered_at)")
@@ -69,6 +69,9 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_pending ON candidates(checked_at, discovered_at)")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_matches ON candidates(scan_status, similarity, checked_at)")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_sources_enabled_scan ON sources(enabled, last_scan)")
+        }
+        if (oldVersion < 9) {
+            db.execSQL("ALTER TABLE candidates ADD COLUMN face_box TEXT")
         }
     }
 
@@ -319,14 +322,15 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         val db = writableDatabase
         db.beginTransaction()
         try {
-            val statement = db.compileStatement("UPDATE candidates SET scan_status=?, similarity=?, checked_at=? WHERE id=?")
+            val statement = db.compileStatement("UPDATE candidates SET scan_status=?, similarity=?, checked_at=?, face_box=? WHERE id=?")
             val now = System.currentTimeMillis()
             for (item in updates) {
                 statement.clearBindings()
                 statement.bindString(1, item.status.take(100))
                 if (item.similarity == null) statement.bindNull(2) else statement.bindDouble(2, item.similarity.toDouble())
                 statement.bindLong(3, now)
-                statement.bindLong(4, item.id)
+                if (item.faceBox == null) statement.bindNull(4) else statement.bindString(4, item.faceBox)
+                statement.bindLong(5, item.id)
                 statement.executeUpdateDelete()
             }
             db.setTransactionSuccessful()
@@ -334,7 +338,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
     }
 
     @Synchronized fun matchRevision(): String {
-        readableDatabase.rawQuery("SELECT COALESCE(MAX(checked_at), 0), COUNT(*) FROM candidates WHERE scan_status='Possible match' AND similarity >= 0.4", null).use {
+        readableDatabase.rawQuery("SELECT COALESCE(MAX(checked_at), 0), COUNT(*) FROM candidates WHERE scan_status IN ('Possible match','Confirmed match') AND similarity >= 0.3", null).use {
             return if (it.moveToFirst()) "${it.getLong(0)}:${it.getLong(1)}" else "0:0"
         }
     }
@@ -351,17 +355,26 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
     @Synchronized fun possibleMatches(limit: Int = 50, bestFirst: Boolean = false): List<MatchResult> {
         val result = mutableListOf<MatchResult>()
         readableDatabase.rawQuery(
-            """SELECT c.id,s.base_url,c.page_url,c.image_url,c.similarity,c.checked_at
+            """SELECT c.id,s.base_url,c.page_url,c.image_url,c.similarity,c.checked_at,c.face_box,c.scan_status
                FROM candidates c JOIN sources s ON s.id=c.source_id
-               WHERE c.scan_status='Possible match' AND c.similarity >= 0.4
+               WHERE c.scan_status IN ('Possible match','Confirmed match') AND c.similarity >= 0.3
                ORDER BY ${if (bestFirst) "c.similarity DESC, c.checked_at DESC" else "c.checked_at DESC"} LIMIT ?""".trimIndent(),
             arrayOf(limit.coerceIn(1, 2000).toString())
         ).use { c ->
             while (c.moveToNext()) result += MatchResult(
-                c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getFloat(4), c.getLong(5)
+                c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getFloat(4), c.getLong(5),
+                c.getString(6), c.getString(7) == "Confirmed match"
             )
         }
         return result
+    }
+
+    /** Possible matches first seen after [sinceMillis]; used by the scheduled re-scan. */
+    @Synchronized fun newMatchCountSince(sinceMillis: Long): Int {
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM candidates WHERE scan_status='Possible match' AND similarity >= 0.3 AND checked_at > ?",
+            arrayOf(sinceMillis.toString())
+        ).use { return if (it.moveToFirst()) it.getInt(0) else 0 }
     }
 
     @Synchronized fun candidateCount(): Int {

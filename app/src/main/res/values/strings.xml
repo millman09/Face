@@ -20,16 +20,9 @@
     <string name="hero_title">Your privacy check-up</string>
     <string name="hero_progress">%1$d of %2$d checklist steps done</string>
 
-    <string name="tool_scan_title">Scan photos on this phone</string>
-    <string name="tool_scan_body">Count the faces in photos you pick. Nothing is uploaded.</string>
-    <string name="tool_match_title">Match my face in photos</string>
-    <string name="tool_match_body">Compare a reference photo with photos you choose, on this phone.</string>
     <string name="tool_search_title">Search the web for images</string>
     <string name="tool_search_body">Open image searches in Yandex, SearXNG and DuckDuckGo.</string>
 
-    <string name="section_remove">Get images taken down</string>
-    <string name="section_exposure">Check your exposure</string>
-    <string name="section_tools">Handy tools</string>
     <string name="section_search">Search elsewhere</string>
 
     <string name="stopncii_title">Shared without your consent (18+)</string>

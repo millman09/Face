@@ -9,26 +9,19 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.result.contract.ActivityResultContracts
-import com.google.android.material.button.MaterialButton
-import java.util.concurrent.Executors
+import androidx.appcompat.app.AppCompatActivity
 
 /**
- * Browser search plus a local registry of public websites whose published
- * sitemap/feed endpoints can be checked in one batch.
+ * Image search screen: opens web image searches in the browser, and starts the
+ * automatic scan of the built-in public-source catalogue.
  */
 class WebScanActivity : AppCompatActivity() {
 
     private lateinit var queryInput: EditText
     private lateinit var searxInput: EditText
     private lateinit var status: TextView
-    private lateinit var sourceNameInput: EditText
-    private lateinit var sourceUrlInput: EditText
-    private lateinit var bulkSourcesInput: EditText
-    private lateinit var sourceList: LinearLayout
     private lateinit var database: PublicSourceDatabase
-    private val scanExecutor = Executors.newSingleThreadExecutor()
     private var referencePhotos: List<Uri> = emptyList()
     private val referencePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
@@ -39,7 +32,6 @@ class WebScanActivity : AppCompatActivity() {
             status.text = "${referencePhotos.size} reference photo(s) selected. Start the automatic scan when ready."
         }
     }
-    @Volatile private var scanning = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,69 +43,45 @@ class WebScanActivity : AppCompatActivity() {
         }
         setToolPage("Image search", page)
 
-        page.addView(TextView(this).apply {
-            text = "Search providers open in your browser. The batch scanner below checks public sitemap and feed endpoints for image links. It does not bypass logins, CAPTCHAs, robots restrictions, or site protections."
-            textSize = 15f
-            setPadding(0, 0, 0, dp(16))
-        })
+        // Part 1: search engines, opened in the browser.
+        page.addSpaced(sectionTitle("Search the web"), 4)
+        page.addSpaced(bodyText("Opens image searches in your browser. Nothing here bypasses logins, CAPTCHAs or site protections."), 12)
 
-        queryInput = EditText(this).apply {
-            hint = "Search terms, usernames, or site names"
+        val (queryBox, query) = textField("Search terms, usernames or site names")
+        queryInput = query.apply {
             minLines = 2
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         }
-        page.addSpaced(queryInput, 12)
+        page.addSpaced(queryBox, 12)
 
-        page.addView(TextView(this).apply {
-            text = "SearXNG instance address"
-            textSize = 14f
-            setPadding(0, dp(4), 0, dp(4))
-        })
-        searxInput = EditText(this).apply {
-            hint = "https://your-trusted-searxng-instance.example"
+        val (searxBox, searx) = textField("SearXNG instance (HTTPS)")
+        searxInput = searx.apply {
             setSingleLine(true)
             setText("https://searx.be")
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         }
-        page.addView(searxInput)
-        page.addView(TextView(this).apply {
-            text = "SearXNG is community-hosted. Its operator may see your searches. Use an instance you trust."
-            textSize = 13f
-            setPadding(0, dp(4), 0, dp(12))
-        })
+        searxBox.helperText = "Community-hosted. Its operator may see your searches, so use an instance you trust."
+        page.addSpaced(searxBox, 12)
 
-        page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
+        page.addSpaced(secondaryButton("Search Yandex, SearXNG and DuckDuckGo") { searchAll() }, 28)
 
-        page.addView(TextView(this).apply {
-            text = "The built-in public-source catalogue is searched automatically. You do not need to select individual websites. The scanner respects public access limits and does not bypass logins, CAPTCHAs, robots restrictions, or site protections."
-            textSize = 14f
-            setPadding(0, dp(16), 0, dp(12))
-        })
+        // Part 2: automatic scan of the catalogue.
+        page.addSpaced(sectionTitle("Scan public websites"), 4)
+        page.addSpaced(bodyText("Checks every site in the built-in catalogue for public image links and compares them with your photos on this phone. Photos are not uploaded."), 12)
 
-        page.addSpaced(button("Choose photo(s) to search for") { referencePicker.launch(arrayOf("image/*")) }, 8)
-        page.addSpaced(button("Start automatic scan and match my photos") { launchAutomaticScan() }, 8)
+        page.addSpaced(secondaryButton("Choose photo(s) to search for") { referencePicker.launch(arrayOf("image/*")) }, 8)
+        page.addSpaced(primaryButton("Start automatic scan") { launchAutomaticScan() }, 16)
 
-        status = TextView(this).apply {
-            text = "No scan has been run yet."
-            textSize = 14f
-            setPadding(0, dp(14), 0, dp(8))
-        }
-        page.addView(status)
-        status.text = "${database.sources().size} public sources are ready. All are included automatically."
+        status = bodyText("${database.sources().size} public sources are ready. All are included automatically.")
+        status.setPadding(dp(16), dp(14), dp(16), dp(14))
+        page.addSpaced(infoCard(status))
     }
 
     override fun onDestroy() {
-        scanExecutor.shutdownNow()
         database.close()
         super.onDestroy()
-    }
-
-    private fun button(label: String, action: () -> Unit) = MaterialButton(this).apply {
-        text = label
-        isAllCaps = false
-        setOnClickListener { action() }
     }
 
     private fun currentQuery(): String? {
@@ -176,97 +144,6 @@ class WebScanActivity : AppCompatActivity() {
         if (pendingSearches.isNotEmpty()) openNextSearch()
     }
 
-    private fun openLink(link: String) {
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
-            status.text = "Search page opened in your browser."
-        } catch (_: Exception) {
-            Toast.makeText(this, "Unable to open this search page.", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun addSource() {
-        val raw = sourceUrlInput.text.toString()
-        val normalized = PublicSourceDatabase.normalizeBaseUrl(raw)
-        if (normalized == null) {
-            Toast.makeText(this, "Enter a valid public website domain or HTTP(S) address.", Toast.LENGTH_LONG).show()
-            return
-        }
-        val added = database.addSource(sourceNameInput.text.toString(), normalized)
-        if (!added) {
-            Toast.makeText(this, "That website is already in the database.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        sourceNameInput.text.clear()
-        sourceUrlInput.text.clear()
-        status.text = "Website added. It will be checked during the next batch scan."
-        refreshSources()
-    }
-
-
-    private fun importSources() {
-        val lines = bulkSourcesInput.text.toString().lines().map { it.trim() }.filter { it.isNotBlank() }
-        if (lines.isEmpty()) {
-            Toast.makeText(this, "Paste one domain per line first.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        var added = 0
-        var skipped = 0
-        for (line in lines) {
-            val parts = line.split("|", limit = 2)
-            val name = if (parts.size == 2) parts[0].trim() else ""
-            val address = if (parts.size == 2) parts[1].trim() else parts[0].trim()
-            if (PublicSourceDatabase.normalizeBaseUrl(address) != null && database.addSource(name, address)) added++ else skipped++
-        }
-        bulkSourcesInput.text.clear()
-        status.text = "Bulk import finished: $added added, $skipped invalid or already in the database."
-        refreshSources()
-    }
-
-    private fun refreshSources() {
-        sourceList.removeAllViews()
-        val items = database.sources()
-        if (items.isEmpty()) {
-            sourceList.addView(TextView(this).apply {
-                text = "No websites added yet. Add the public domains you want scanned."
-                textSize = 14f
-                setPadding(0, dp(8), 0, dp(8))
-            })
-        }
-        for (source in items) {
-            sourceList.addView(TextView(this).apply {
-                text = "${source.name}  •  ${source.baseUrl}"
-                textSize = 13f
-                setPadding(dp(4), dp(7), dp(4), dp(7))
-            })
-        }
-        status.text = "${items.size} website(s) in database • ${database.candidateCount()} unique image link(s) collected."
-    }
-
-    private fun browseCollectedLinks() {
-        val candidates = database.allCandidates(100)
-        if (candidates.isEmpty()) {
-            Toast.makeText(this, "No image links have been collected yet. Run a batch scan first.", Toast.LENGTH_LONG).show()
-            return
-        }
-        val labels = candidates.mapIndexed { index, item ->
-            "${index + 1}. ${Uri.parse(item.pageUrl).host ?: item.sourceBaseUrl}  •  ${Uri.parse(item.imageUrl).lastPathSegment ?: "Image link"}"
-        }.toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Collected public image links")
-            .setItems(labels) { _, which ->
-                val selected = candidates[which]
-                try {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(selected.imageUrl)))
-                    status.text = "Opened the selected image link in your browser."
-                } catch (_: Exception) {
-                    Toast.makeText(this, "Unable to open that image link.", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNegativeButton("Close", null)
-            .show()
-    }
-
     /** Opens the live results page immediately. Source discovery and face matching run there. */
     private fun launchAutomaticScan() {
         if (referencePhotos.isEmpty()) {
@@ -285,5 +162,4 @@ class WebScanActivity : AppCompatActivity() {
         }
         startActivity(intent)
     }
-
 }

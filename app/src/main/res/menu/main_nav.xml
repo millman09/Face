@@ -10,7 +10,7 @@
         android:title="@string/nav_search" />
     <item
         android:id="@+id/nav_results"
-        android:icon="@drawable/ic_nav_search"
+        android:icon="@drawable/ic_nav_results"
         android:title="@string/nav_results" />
     <item
         android:id="@+id/nav_help"

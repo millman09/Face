@@ -19,6 +19,8 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceLandmark
@@ -49,6 +51,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var progress: ProgressBar
     private lateinit var scanButton: MaterialButton
+    private var modelButtons: List<MaterialButton> = emptyList()
     private lateinit var resultsContainer: LinearLayout
     private var modelFile: File? = null
     private var referenceUri: Uri? = null
@@ -90,36 +93,32 @@ class IdentityMatchActivity : AppCompatActivity() {
         @Suppress("DEPRECATION")
         referenceUris = intent.getParcelableArrayListExtra<Uri>(EXTRA_REFERENCE_URIS)?.distinct().orEmpty()
         referenceUri = referenceUris.firstOrNull()
-        root.addView(TextView(this).apply {
-            text = if (webScanMode) {
-                "This page automatically checks every enabled source in the built-in public catalogue, discovers available public image links, and compares them with your selected photos. Candidate images are processed temporarily in memory on this phone and are not saved or uploaded."
+        root.addSpaced(bodyText(
+            if (webScanMode) {
+                "Checks every enabled site in the built-in catalogue for public image links and compares them with your photos. Images are processed in memory on this phone and are not saved or uploaded."
             } else {
-                "Downloads Qualcomm AI Hub MobileFaceNet from its public release (Apache 2.0 model weights). It runs locally on this phone. Select reference photo(s) and candidate images. Photos are aligned on-device; no images are uploaded."
+                "Runs on this phone with the MobileFaceNet model. Choose your reference photo(s) and the images to compare. Nothing is uploaded."
             }
-            textSize = 14f
-            setPadding(0, 0, 0, 16)
-        })
+        ), 16)
         val existingModel = File(filesDir, modelTargetName)
         if (existingModel.exists()) modelFile = existingModel
-        addButton(root, "Download official MobileFaceNet model (~4 MB)") { downloadOfficialModel() }
-        addButton(root, "Choose compatible TFLite model") { modelPicker.launch(arrayOf("*/*")) }
+        // The model normally downloads on its own at first launch, so these two
+        // buttons only show while no model is installed.
+        modelButtons = listOf(
+            addButton(root, "Download official MobileFaceNet model (~4 MB)") { downloadOfficialModel() },
+            addButton(root, "Choose compatible TFLite model") { modelPicker.launch(arrayOf("*/*")) }
+        )
         addButton(root, "Choose reference photo(s)") { referencePicker.launch(arrayOf("image/*")) }
         if (!webScanMode) addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
-        scanButton = MaterialButton(this).apply {
-            text = if (webScanMode) "Scan all public websites and match my photos" else "Compare faces on this phone"
-            isAllCaps = false
-            isEnabled = false
-            setOnClickListener { runComparison() }
-        }
-        root.addSpaced(scanButton)
-        progress =ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { visibility = ProgressBar.GONE }
-        root.addView(progress)
-        status = TextView(this).apply {
-            text = if (webScanMode) "Install the model and choose reference photo(s)." else "No model or images selected."
-            textSize = 14f
-            setPadding(0, 16, 0, 0)
-        }
-        root.addView(status)
+        scanButton = primaryButton(
+            if (webScanMode) "Scan all public websites and match my photos" else "Compare faces on this phone"
+        ) { runComparison() }.apply { isEnabled = false }
+        root.addSpaced(scanButton, 12)
+        progress = LinearProgressIndicator(this).apply { visibility = ProgressBar.GONE }
+        root.addSpaced(progress, 12)
+        status = bodyText(if (webScanMode) "Install the model and choose reference photo(s)." else "No model or images selected.")
+        status.setPadding(dp(16), dp(14), dp(16), dp(14))
+        root.addSpaced(infoCard(status), 12)
         val resultsScroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); isFillViewport = true }
         resultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         resultsScroll.addView(resultsContainer)
@@ -319,11 +318,15 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
-    private fun addButton(root: LinearLayout, label: String, action: () -> Unit) {
-        root.addSpaced(MaterialButton(this).apply { text = label; isAllCaps = false; setOnClickListener { action() } })
+    private fun addButton(root: LinearLayout, label: String, action: () -> Unit): MaterialButton {
+        val button = secondaryButton(label, action)
+        root.addSpaced(button)
+        return button
     }
 
     private fun updateReady() {
+        val modelReady = modelFile?.exists() == true
+        modelButtons.forEach { it.visibility = if (modelReady) android.view.View.GONE else android.view.View.VISIBLE }
         scanButton.isEnabled = modelFile?.exists() == true && referenceUris.isNotEmpty() &&
             (webScanMode || imageUris.isNotEmpty())
     }
@@ -606,15 +609,11 @@ class IdentityMatchActivity : AppCompatActivity() {
     }
 
     private fun addWebMatchPreview(imageUrl: String, similarity: Float, preview: Bitmap) {
-        val card = LinearLayout(this).apply {
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(0xFF202832.toInt())
-                cornerRadius = dp(12).toFloat()
-            }
+            setPadding(dp(12), dp(12), dp(12), dp(12))
         }
-        card.addView(ImageView(this).apply {
+        row.addView(ImageView(this).apply {
             setImageBitmap(preview)
             scaleType = ImageView.ScaleType.CENTER_CROP
             layoutParams = LinearLayout.LayoutParams(dp(104), dp(104))
@@ -624,20 +623,15 @@ class IdentityMatchActivity : AppCompatActivity() {
             setPadding(dp(12), 0, 0, 0)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        details.addView(TextView(this).apply { text = "Possible match"; textSize = 16f })
-        details.addView(TextView(this).apply {
-            text = "Cosine similarity: " + String.format(java.util.Locale.US, "%.3f", similarity)
-            textSize = 14f
+        details.addView(sectionTitle("Possible match"))
+        details.addView(bodyText("Similarity " + String.format(java.util.Locale.US, "%.3f", similarity)))
+        details.addView(bodyText(Uri.parse(imageUrl).host ?: imageUrl))
+        details.addView(secondaryButton("Open source") {
+            try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(imageUrl))) } catch (_: Exception) {}
         })
-        details.addView(TextView(this).apply { text = Uri.parse(imageUrl).host ?: imageUrl; textSize = 12f })
-        details.addView(MaterialButton(this).apply {
-            text = "Open source"
-            isAllCaps = false
-            setOnClickListener {
-                try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(imageUrl))) } catch (_: Exception) {}
-            }
-        })
-        card.addView(details)
+        row.addView(details)
+        val card = MaterialCardView(this, null, com.google.android.material.R.attr.materialCardViewFilledStyle)
+        card.addView(row)
         resultsContainer.addView(card, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { bottomMargin = dp(10) })

@@ -1,7 +1,6 @@
 package com.example.face
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
@@ -38,6 +37,7 @@ import java.util.concurrent.Executors
 import java.util.zip.ZipInputStream
 import java.io.BufferedInputStream
 import kotlin.math.sqrt
+import kotlin.math.abs
 import kotlin.math.acos
 
 /**
@@ -437,6 +437,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         val faces = try {
                             val detected = Tasks.await(faceDetector.process(InputImage.fromBitmap(bitmap, 0)))
                             detected.forEach { face ->
+                                if (!isUsableFace(face)) return@forEach
                                 try {
                                     val aligned = alignFace(bitmap, face)
                                     try {
@@ -516,6 +517,13 @@ class IdentityMatchActivity : AppCompatActivity() {
             val alignedReferences = mutableListOf<Bitmap>()
             val candidateDatabase = PublicSourceDatabase(this)
             try {
+                // Scoring changed (alignment, mirror averaging, face checks), so images compared with
+                // the older method are scored once more. Matches marked "Not a match" stay dismissed.
+                val scanState = getSharedPreferences("scan_state", MODE_PRIVATE)
+                if (scanState.getInt("scoring_version", 0) != SCORING_VERSION) {
+                    candidateDatabase.resetCheckedResults()
+                    scanState.edit().putInt("scoring_version", SCORING_VERSION).apply()
+                }
                 val enabledSources = candidateDatabase.sources().filter { it.enabled }
                 require(enabledSources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
                 // Avoid re-crawling the same domains on every run. A source becomes eligible again after 24 hours.
@@ -602,6 +610,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                     val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
                                     var best: Float? = null
                                     for (face in faces) {
+                                        if (!isUsableFace(face)) continue
                                         var aligned: Bitmap? = null
                                         try {
                                             aligned = alignFace(bitmap, face)
@@ -807,7 +816,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             setPadding(dp(12), 0, 0, 0)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        details.addView(TextView(this).apply { text = "Possible match"; textSize = 16f })
+        details.addView(TextView(this).apply { text = matchLabel(similarity); textSize = 16f })
         details.addView(TextView(this).apply {
             text = "Cosine similarity: " + String.format(java.util.Locale.US, "%.3f", similarity)
             textSize = 14f
@@ -893,34 +902,29 @@ class IdentityMatchActivity : AppCompatActivity() {
                 }
             }
             val data = bytes.toByteArray()
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
-            require(bounds.outWidth > 0 && bounds.outHeight > 0) { "Image could not be decoded." }
-            var sample = 1
-            while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > 1000) sample *= 2
-            val options = BitmapFactory.Options().apply {
-                inSampleSize = sample
-                inPreferredConfig = Bitmap.Config.ARGB_8888
+            // ImageDecoder applies the photo's rotation, which BitmapFactory ignores. Without it,
+            // sideways phone photos would never show a face.
+            return ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(data))) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                val scale = minOf(1f, 1000f / maxOf(info.size.width, info.size.height))
+                decoder.setTargetSize(
+                    (info.size.width * scale).toInt().coerceAtLeast(1),
+                    (info.size.height * scale).toInt().coerceAtLeast(1)
+                )
             }
-            return BitmapFactory.decodeByteArray(data, 0, data.size, options)
-                ?: throw IllegalArgumentException("Image could not be decoded.")
         } finally {
             connection?.disconnect()
         }
     }
 
     private fun alignFace(bitmap: Bitmap, face: Face): Bitmap {
-        val landmarkTypes = intArrayOf(
-            FaceLandmark.LEFT_EYE,
-            FaceLandmark.RIGHT_EYE,
-            FaceLandmark.NOSE_BASE,
-            FaceLandmark.MOUTH_LEFT,
-            FaceLandmark.MOUTH_RIGHT
-        )
-        val src = landmarkTypes.map { type ->
-            face.getLandmark(type)?.position
-                ?: throw IllegalArgumentException("This face does not have all five landmarks needed for MobileFaceNet alignment.")
-        }
+        fun point(type: Int) = face.getLandmark(type)?.position
+            ?: throw IllegalArgumentException("This face does not have all five landmarks needed for MobileFaceNet alignment.")
+        // The alignment template expects the eye and mouth corner that appear on the left of the
+        // photo first. Sorting by position makes this correct whichever side a landmark is labelled.
+        val eyes = listOf(point(FaceLandmark.LEFT_EYE), point(FaceLandmark.RIGHT_EYE)).sortedBy { it.x }
+        val mouth = listOf(point(FaceLandmark.MOUTH_LEFT), point(FaceLandmark.MOUTH_RIGHT)).sortedBy { it.x }
+        val src = listOf(eyes[0], eyes[1], point(FaceLandmark.NOSE_BASE), mouth[0], mouth[1])
         val dstX = doubleArrayOf(38.2946, 73.5318, 56.0252, 41.5493, 70.7299)
         val dstY = doubleArrayOf(51.6963, 51.5014, 71.7366, 92.3655, 92.2041)
         val meanX = src.map { it.x.toDouble() }.average()
@@ -956,6 +960,10 @@ class IdentityMatchActivity : AppCompatActivity() {
         return aligned
     }
 
+    /** Tiny or strongly turned faces give unreliable scores, so they are not compared. */
+    private fun isUsableFace(face: Face): Boolean =
+        face.boundingBox.width() >= MIN_FACE_PIXELS && abs(face.headEulerAngleY) <= MAX_FACE_YAW
+
     private fun combineReferenceScores(scores: List<Float>): Float {
         require(scores.isNotEmpty()) { "At least one reference embedding is required." }
         if (scores.size == 1) return scores.first()
@@ -964,21 +972,24 @@ class IdentityMatchActivity : AppCompatActivity() {
 
     /**
      * MobileFaceNet is a two-input verification model. Its two output vectors are
-     * independently derived from the two input faces, so feeding the same face to
-     * both inputs lets us extract one reusable embedding. Reference embeddings are
-     * cached for the scan; each candidate face then needs only one model inference.
+     * independently derived from the two input faces. The face goes into the first input and
+     * its mirror image into the second, and the two embeddings are averaged, which is steadier
+     * than one view and costs nothing extra. Reference embeddings are cached for the scan;
+     * each candidate face then needs only one model inference.
      */
     private fun embedFace(interpreter: Interpreter, bitmap: Bitmap): FloatArray {
         val inputShape0 = interpreter.getInputTensor(0).shape()
         val inputShape1 = interpreter.getInputTensor(1).shape()
         val input0 = makeInput(bitmap, inputShape0)
-        val input1 = makeInput(bitmap, inputShape1)
+        val input1 = makeInput(bitmap, inputShape1, mirror = true)
         val outputShape = interpreter.getOutputTensor(0).shape()
         val output = ByteBuffer.allocateDirect(outputShape.fold(1) { acc, dim -> acc * dim } * 4)
             .order(ByteOrder.nativeOrder())
         interpreter.runForMultipleInputsOutputs(arrayOf(input0, input1), mutableMapOf<Int, Any>(0 to output))
         output.rewind()
-        return normalize(FloatArray(128) { output.float })
+        val straight = normalize(FloatArray(128) { output.float })
+        val mirrored = normalize(FloatArray(128) { output.float })
+        return normalize(FloatArray(128) { straight[it] + mirrored[it] })
     }
 
     private fun cosineSimilarity(first: FloatArray, second: FloatArray): Float {
@@ -987,11 +998,14 @@ class IdentityMatchActivity : AppCompatActivity() {
             .toFloat().coerceIn(-1f, 1f)
     }
 
-    private fun makeInput(bitmap: Bitmap, shape: IntArray): ByteBuffer {
+    private fun makeInput(bitmap: Bitmap, shape: IntArray, mirror: Boolean = false): ByteBuffer {
         require(bitmap.width == 112 && bitmap.height == 112) { "Face input must be 112 by 112 pixels." }
         val nchw = shape.contentEquals(intArrayOf(1, 3, 112, 112))
         val pixels = IntArray(112 * 112)
         bitmap.getPixels(pixels, 0, 112, 0, 0, 112, 112)
+        if (mirror) {
+            for (y in 0 until 112) pixels.reverse(y * 112, (y + 1) * 112)
+        }
         val buffer = ByteBuffer.allocateDirect(112 * 112 * 3 * 4).order(ByteOrder.nativeOrder())
         if (nchw) {
             for (channel in 0..2) for (pixel in pixels) {
@@ -1048,6 +1062,9 @@ class IdentityMatchActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val SCORING_VERSION = 2
+        private const val MIN_FACE_PIXELS = 40
+        private const val MAX_FACE_YAW = 45f
         const val EXTRA_WEB_SCAN_MODE = "com.example.face.EXTRA_WEB_SCAN_MODE"
         const val EXTRA_AUTO_START = "com.example.face.EXTRA_AUTO_START"
         const val EXTRA_REFERENCE_URIS = "com.example.face.EXTRA_REFERENCE_URIS"

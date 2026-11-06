@@ -285,6 +285,14 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         return result
     }
 
+    /** Forget earlier comparisons so every image is scored again. Matches marked "Not a match" stay dismissed. */
+    @Synchronized fun resetCheckedResults() {
+        writableDatabase.execSQL(
+            "UPDATE candidates SET scan_status='Discovered', similarity=NULL, checked_at=0 " +
+                "WHERE scan_status IN ('Possible match','Compared','Unavailable')"
+        )
+    }
+
     @Synchronized fun allCandidates(limit: Int = 100): List<StoredCandidate> {
         val result = mutableListOf<StoredCandidate>()
         readableDatabase.rawQuery(

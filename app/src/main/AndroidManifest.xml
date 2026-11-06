@@ -38,11 +38,6 @@
             android:exported="false" />
 
         <activity
-            android:name=".ScanActivity"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
-            android:exported="false" />
-
-        <activity
             android:name=".RemovalGuideActivity"
             android:exported="false" />
 

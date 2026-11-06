@@ -310,7 +310,7 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         details.addView(TextView(this).apply {
-            text = "Possible match"
+            text = matchLabel(match.similarity)
             textSize = 16f
             setTextColor(android.graphics.Color.WHITE)
             setTypeface(typeface, android.graphics.Typeface.BOLD)

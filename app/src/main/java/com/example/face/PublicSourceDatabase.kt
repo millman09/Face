@@ -494,7 +494,19 @@ object PublicSourceScanner {
                     val type = connection.contentType?.substringBefore(';')?.trim()?.lowercase(Locale.US).orEmpty()
                     if (!type.contains("text/plain") && !type.contains("text")) return null
                     if (connection.contentLengthLong > 256 * 1024) return null
-                    connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(256 * 1024) }
+                    val output = java.io.ByteArrayOutputStream()
+                    connection.inputStream.use { input ->
+                        val buffer = ByteArray(8192)
+                        var total = 0
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            if (total > 256 * 1024) return null
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                    output.toString(Charsets.UTF_8.name())
                 }
                 else -> null
             }

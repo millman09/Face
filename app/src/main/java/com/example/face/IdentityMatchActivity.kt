@@ -1,7 +1,6 @@
 package com.example.face
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
@@ -45,6 +44,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipInputStream
 import java.io.BufferedInputStream
 import kotlin.math.sqrt
+import kotlin.math.abs
 import kotlin.math.acos
 
 /**
@@ -531,7 +531,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                 }
 
                 // ---- Step 2: work out which images still need checking ----------------
-                val referenceKey = references.map { it.toString() }.sorted().joinToString("|").hashCode()
+                // SCORING_VERSION is part of the key, so images compared with an older scoring method are checked again.
+                val referenceKey = ("v$SCORING_VERSION|" + references.map { it.toString() }.sorted().joinToString("|")).hashCode()
                 val scanState = getSharedPreferences("scan_state", MODE_PRIVATE)
                 if (!scanState.contains("reference_key") || scanState.getInt("reference_key", 0) != referenceKey) {
                     // Different reference photos than last time, so earlier comparisons no longer apply.
@@ -574,6 +575,11 @@ class IdentityMatchActivity : AppCompatActivity() {
                 }
                 // The reference faces never change, so their embeddings are computed once.
                 val referenceEmbeddings = embedAll(activeInterpreter, alignedReferences)
+                // With several reference photos, compare against their average. That is steadier
+                // than taking the best of several single photos, which adds chances for false hits.
+                val referenceTemplate = normalize(FloatArray(128) { i ->
+                    referenceEmbeddings.sumOf { it[i].toDouble() }.toFloat()
+                })
                 alignedReferences.forEach { it.recycle() }
                 alignedReferences.clear()
 
@@ -622,15 +628,13 @@ class IdentityMatchActivity : AppCompatActivity() {
                             var best: Float? = null
                             try {
                                 for (face in faces) {
+                                    // Tiny or sideways faces give unreliable scores, so they are skipped.
+                                    if (face.boundingBox.width() < MIN_FACE_PIXELS || abs(face.headEulerAngleY) > MAX_FACE_YAW) continue
                                     try { alignedFaces += alignFace(bitmap, face) } catch (_: IllegalArgumentException) {}
                                 }
-                                if (alignedFaces.isNotEmpty()) {
-                                    for (embedding in embedAll(activeInterpreter, alignedFaces)) {
-                                        for (reference in referenceEmbeddings) {
-                                            val score = dot(reference, embedding)
-                                            if (best == null || score > best) best = score
-                                        }
-                                    }
+                                for (embedding in embedAll(activeInterpreter, alignedFaces)) {
+                                    val score = dot(referenceTemplate, embedding)
+                                    if (best == null || score > best) best = score
                                 }
                             } finally {
                                 alignedFaces.forEach { it.recycle() }
@@ -727,7 +731,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             setPadding(dp(12), 0, 0, 0)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        details.addView(sectionTitle("Possible match"))
+        details.addView(sectionTitle(matchLabel(similarity)))
         details.addView(bodyText("Similarity " + String.format(java.util.Locale.US, "%.3f", similarity)))
         details.addView(bodyText(Uri.parse(imageUrl).host ?: imageUrl))
         details.addView(secondaryButton("Open source") {
@@ -780,34 +784,29 @@ class IdentityMatchActivity : AppCompatActivity() {
                 }
             }
             val data = bytes.toByteArray()
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
-            require(bounds.outWidth > 0 && bounds.outHeight > 0) { "Image could not be decoded." }
-            var sample = 1
-            while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > MAX_CANDIDATE_SIDE) sample *= 2
-            val options = BitmapFactory.Options().apply {
-                inSampleSize = sample
-                inPreferredConfig = Bitmap.Config.ARGB_8888
+            // ImageDecoder applies the photo's rotation, which BitmapFactory ignores. Without
+            // it, sideways phone photos would never show a face.
+            return ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(data))) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                val scale = minOf(1f, MAX_CANDIDATE_SIDE.toFloat() / maxOf(info.size.width, info.size.height))
+                decoder.setTargetSize(
+                    (info.size.width * scale).toInt().coerceAtLeast(1),
+                    (info.size.height * scale).toInt().coerceAtLeast(1)
+                )
             }
-            return BitmapFactory.decodeByteArray(data, 0, data.size, options)
-                ?: throw IllegalArgumentException("Image could not be decoded.")
         } finally {
             connection?.disconnect()
         }
     }
 
     private fun alignFace(bitmap: Bitmap, face: Face): Bitmap {
-        val landmarkTypes = intArrayOf(
-            FaceLandmark.LEFT_EYE,
-            FaceLandmark.RIGHT_EYE,
-            FaceLandmark.NOSE_BASE,
-            FaceLandmark.MOUTH_LEFT,
-            FaceLandmark.MOUTH_RIGHT
-        )
-        val src = landmarkTypes.map { type ->
-            face.getLandmark(type)?.position
-                ?: throw IllegalArgumentException("This face does not have all five landmarks needed for MobileFaceNet alignment.")
-        }
+        fun point(type: Int) = face.getLandmark(type)?.position
+            ?: throw IllegalArgumentException("This face does not have all five landmarks needed for MobileFaceNet alignment.")
+        // The alignment template expects the eye and mouth corner that appear on the left of the
+        // photo first. Sorting by position makes this correct whichever side a landmark is labelled.
+        val eyes = listOf(point(FaceLandmark.LEFT_EYE), point(FaceLandmark.RIGHT_EYE)).sortedBy { it.x }
+        val mouth = listOf(point(FaceLandmark.MOUTH_LEFT), point(FaceLandmark.MOUTH_RIGHT)).sortedBy { it.x }
+        val src = listOf(eyes[0], eyes[1], point(FaceLandmark.NOSE_BASE), mouth[0], mouth[1])
         val dstX = doubleArrayOf(38.2946, 73.5318, 56.0252, 41.5493, 70.7299)
         val dstY = doubleArrayOf(51.6963, 51.5014, 71.7366, 92.3655, 92.2041)
         val meanX = src.map { it.x.toDouble() }.average()
@@ -868,20 +867,31 @@ class IdentityMatchActivity : AppCompatActivity() {
         return normalize(firstEmbedding) to normalize(secondEmbedding)
     }
 
-    /** Embeddings for a list of faces, two faces per model run. */
-    private fun embedAll(interpreter: Interpreter, faces: List<Bitmap>): List<FloatArray> {
-        val result = ArrayList<FloatArray>(faces.size)
-        var i = 0
-        while (i < faces.size) {
-            val first = faces[i]
-            val hasSecond = i + 1 < faces.size
-            val pair = embedPair(interpreter, first, if (hasSecond) faces[i + 1] else first)
-            result += pair.first
-            if (hasSecond) result += pair.second
-            i += 2
-        }
-        return result
+    /**
+     * One embedding per face. The model takes two inputs, so each run sees the face and its
+     * mirror image, and the two results are averaged. That is steadier than a single view
+     * and costs nothing extra, because the second input slot was otherwise unused.
+     */
+    private fun embedFace(interpreter: Interpreter, face: Bitmap): FloatArray {
+        val shape0 = interpreter.getInputTensor(0).shape()
+        val shape1 = interpreter.getInputTensor(1).shape()
+        val pixels = readPixels(face)
+        val inputs = arrayOf<Any>(
+            toBuffer(tensorFrom(pixels, shape0)),
+            toBuffer(tensorFrom(mirrorPixels(pixels), shape1))
+        )
+        val outputShape = interpreter.getOutputTensor(0).shape()
+        val output = ByteBuffer.allocateDirect(outputShape.fold(1) { acc, dim -> acc * dim } * 4)
+            .order(ByteOrder.nativeOrder())
+        interpreter.runForMultipleInputsOutputs(inputs, mutableMapOf<Int, Any>(0 to output))
+        output.rewind()
+        val straight = normalize(FloatArray(128) { output.float })
+        val mirrored = normalize(FloatArray(128) { output.float })
+        return normalize(FloatArray(128) { straight[it] + mirrored[it] })
     }
+
+    private fun embedAll(interpreter: Interpreter, faces: List<Bitmap>): List<FloatArray> =
+        faces.map { embedFace(interpreter, it) }
 
     private fun dot(a: FloatArray, b: FloatArray): Float {
         var sum = 0f
@@ -889,14 +899,27 @@ class IdentityMatchActivity : AppCompatActivity() {
         return sum.coerceIn(-1f, 1f)
     }
 
-    /** Converts a 112x112 face to the model's input layout, reading all pixels in one call. */
-    private fun faceTensor(bitmap: Bitmap, shape: IntArray): FloatArray {
-        val size = 112
-        val pixels = IntArray(size * size)
-        bitmap.getPixels(pixels, 0, size, 0, 0, size, size)
-        val values = FloatArray(size * size * 3)
+    private fun faceTensor(bitmap: Bitmap, shape: IntArray): FloatArray = tensorFrom(readPixels(bitmap), shape)
+
+    private fun readPixels(bitmap: Bitmap): IntArray {
+        val pixels = IntArray(FACE_SIZE * FACE_SIZE)
+        bitmap.getPixels(pixels, 0, FACE_SIZE, 0, 0, FACE_SIZE, FACE_SIZE)
+        return pixels
+    }
+
+    private fun mirrorPixels(pixels: IntArray): IntArray {
+        val flipped = IntArray(pixels.size)
+        for (y in 0 until FACE_SIZE) for (x in 0 until FACE_SIZE) {
+            flipped[y * FACE_SIZE + x] = pixels[y * FACE_SIZE + (FACE_SIZE - 1 - x)]
+        }
+        return flipped
+    }
+
+    /** Converts 112x112 pixels to the model's input layout and scales them to -1..1. */
+    private fun tensorFrom(pixels: IntArray, shape: IntArray): FloatArray {
+        val values = FloatArray(FACE_SIZE * FACE_SIZE * 3)
         if (shape.contentEquals(intArrayOf(1, 3, 112, 112))) {
-            val plane = size * size
+            val plane = FACE_SIZE * FACE_SIZE
             for (i in pixels.indices) {
                 val pixel = pixels[i]
                 values[i] = ((pixel shr 16) and 255) / 127.5f - 1f
@@ -962,6 +985,10 @@ class IdentityMatchActivity : AppCompatActivity() {
         private const val DOWNLOAD_QUEUE = 4
         private const val SOURCE_RECHECK_MS = 24L * 60 * 60 * 1000
         private const val MAX_CANDIDATE_SIDE = 1280
+        private const val SCORING_VERSION = 2
+        private const val FACE_SIZE = 112
+        private const val MIN_FACE_PIXELS = 40
+        private const val MAX_FACE_YAW = 45f
         const val EXTRA_WEB_SCAN_MODE = "com.example.face.EXTRA_WEB_SCAN_MODE"
         const val EXTRA_AUTO_START = "com.example.face.EXTRA_AUTO_START"
         const val EXTRA_REFERENCE_URIS = "com.example.face.EXTRA_REFERENCE_URIS"

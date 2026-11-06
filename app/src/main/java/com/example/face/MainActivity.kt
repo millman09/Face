@@ -196,7 +196,7 @@ class MainActivity : AppCompatActivity() {
         matches.forEach { match ->
             val host = Uri.parse(match.imageUrl).host ?: Uri.parse(match.sourceBaseUrl).host ?: "Website"
             val score = String.format(java.util.Locale.US, "%.3f", match.similarity)
-            addTile(resultsList, host, getString(R.string.results_match_score, score)) {
+            addTile(resultsList, host, getString(R.string.results_match_score, matchLabel(match.similarity), score)) {
                 val target = match.pageUrl.ifBlank { match.imageUrl }
                 openUrl(target)
             }

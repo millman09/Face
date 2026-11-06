@@ -16,7 +16,7 @@
     <string name="results_empty">No possible matches saved yet.</string>
     <string name="results_empty_detail">Run an automatic scan from the Search tab. Possible matches will appear here and stay available when you return to the app.</string>
     <string name="results_count">%1$d possible match(es) saved</string>
-    <string name="results_match_score">Possible match • cosine similarity %1$s. Tap to open the source page.</string>
+    <string name="results_match_score">%1$s • similarity %2$s. Tap to open the source page.</string>
     <string name="hero_title">Your privacy check-up</string>
     <string name="hero_progress">%1$d of %2$d checklist steps done</string>
 

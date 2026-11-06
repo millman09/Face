@@ -122,3 +122,14 @@ fun LinearLayout.addSpaced(view: View, bottomDp: Int = 8) {
     params.bottomMargin = (bottomDp * resources.displayMetrics.density).toInt()
     addView(view, params)
 }
+
+/**
+ * Plain-language strength for a face similarity score (cosine, up to 1.0). Anything shown as a
+ * match is already above the model's published threshold; these cut-offs only rank the matches.
+ * They are starting points: try them on photos of yourself and adjust.
+ */
+fun matchLabel(similarity: Float): String = when {
+    similarity >= 0.50f -> "Strong match"
+    similarity >= 0.38f -> "Likely match"
+    else -> "Possible match"
+}

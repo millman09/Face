@@ -17,6 +17,7 @@ import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.checkbox.MaterialCheckBox
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.progressindicator.LinearProgressIndicator
 
 class MainActivity : AppCompatActivity() {
@@ -402,7 +403,65 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    private val notificationPermission = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            AppSettings.setReminderEnabled(this, true)
+            ScanReminderWorker.schedule(this)
+        } else {
+            AppSettings.setReminderEnabled(this, false)
+            reminderSwitch?.isChecked = false
+            Toast.makeText(this, "Allow notifications to get the weekly reminder.", Toast.LENGTH_LONG).show()
+        }
+    }
+    private var reminderSwitch: MaterialSwitch? = null
+
+    private fun addSwitch(container: ViewGroup, text: String, checked: Boolean, onChange: (MaterialSwitch, Boolean) -> Unit): MaterialSwitch {
+        val toggle = MaterialSwitch(this).apply {
+            this.text = text
+            isChecked = checked
+            setPadding(dp(8), dp(10), dp(8), dp(10))
+            setOnCheckedChangeListener { view, isOn -> onChange(this, isOn) }
+        }
+        container.addView(toggle, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+        return toggle
+    }
+
+    private fun buildSettings(container: LinearLayout) {
+        addSection(container, "Settings")
+        addSwitch(container, "Ask for my screen lock when opening the app", AppSettings.lockEnabled(this)) { toggle, on ->
+            val keyguard = getSystemService(KEYGUARD_SERVICE) as android.app.KeyguardManager
+            if (on && !keyguard.isDeviceSecure) {
+                toggle.isChecked = false
+                Toast.makeText(this, "Set a screen lock (PIN, pattern or fingerprint) in your phone settings first.", Toast.LENGTH_LONG).show()
+            } else {
+                AppSettings.setLockEnabled(this, on)
+            }
+        }
+        addSwitch(container, "Only scan on Wi-Fi", AppSettings.wifiOnly(this)) { _, on -> AppSettings.setWifiOnly(this, on) }
+        addSwitch(container, "Pause scans when battery is under 20%", AppSettings.pauseOnLowBattery(this)) { _, on ->
+            AppSettings.setPauseOnLowBattery(this, on)
+        }
+        reminderSwitch = addSwitch(container, "Remind me weekly to run a deep search", AppSettings.reminderEnabled(this)) { _, on ->
+            if (!on) {
+                AppSettings.setReminderEnabled(this, false)
+                ScanReminderWorker.cancel(this)
+            } else if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                AppSettings.setReminderEnabled(this, true)
+                ScanReminderWorker.schedule(this)
+            }
+        }
+    }
+
     private fun buildHelp(container: LinearLayout) {
+        buildSettings(container)
         addTile(container, getString(R.string.guide_title), getString(R.string.guide_body)) {
             startActivity(Intent(this, RemovalGuideActivity::class.java))
         }

@@ -18,6 +18,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceLandmark
@@ -51,6 +52,8 @@ class IdentityMatchActivity : AppCompatActivity() {
     private lateinit var progress: ProgressBar
     private lateinit var scanButton: MaterialButton
     private lateinit var cancelButton: MaterialButton
+    private lateinit var pauseButton: MaterialButton
+    @Volatile private var paused = false
     private lateinit var resultsContainer: LinearLayout
     private var activeWebScan: java.util.concurrent.Future<*>? = null
     private var modelFile: File? = null
@@ -79,6 +82,10 @@ class IdentityMatchActivity : AppCompatActivity() {
     }
     private val imagesPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) { addCandidateUris(uris); status.text = "${imageUris.size} candidate image(s) ready."; updateReady() }
+    }
+
+    private val exportReportPicker = registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        if (uri != null) exportReport(uri)
     }
 
     private val exportResultsPicker = registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
@@ -130,6 +137,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         addButton(root, "Choose a compatible face model") { modelPicker.launch(arrayOf("*/*")) }
         addButton(root, "Choose reference photos") { referencePicker.launch(arrayOf("image/*")) }
         if (webScanMode) addButton(root, "Export saved matches (CSV)") { exportResultsPicker.launch("face-search-results.csv") }
+        if (webScanMode) addButton(root, "Export report with images (PDF)") { exportReportPicker.launch("face-matches-report.pdf") }
         if (!webScanMode) addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
         scanButton = MaterialButton(this).apply {
             text = if (webScanMode) "Start deep search" else "Compare selected photos"
@@ -150,6 +158,17 @@ class IdentityMatchActivity : AppCompatActivity() {
             }
         }
         root.addView(cancelButton)
+        pauseButton = MaterialButton(this).apply {
+            text = "Pause"
+            isAllCaps = false
+            visibility = android.view.View.GONE
+            setOnClickListener {
+                paused = !paused
+                text = if (paused) "Resume" else "Pause"
+                status.text = if (paused) "Paused. Tap Resume to continue." else "Resuming…"
+            }
+        }
+        root.addView(pauseButton)
         status = TextView(this).apply {
             text = if (webScanMode) "Install the model and choose reference photo(s)." else "No model or images selected."
             textSize = 14f
@@ -518,6 +537,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         progress.progress = 0
         status.text = "Preparing on-device face matching…"
         cancelButton.visibility = android.view.View.VISIBLE
+        pauseButton.visibility = android.view.View.VISIBLE
         activeWebScan = executor.submit {
             var interpreter: Interpreter? = null
             var detector: FaceDetector? = null
@@ -608,6 +628,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     data class MatchPreview(val id: Long, val pageUrl: String, val imageUrl: String, val score: Float, val bitmap: Bitmap, val faceBox: String?, val faceCrop: Bitmap?)
                     val completion = java.util.concurrent.ExecutorCompletionService<Downloaded>(activeDownloadPool)
                     for (chunk in batch.chunked(12)) {
+                        awaitScanAllowed()
                         val futures = chunk.map { candidate ->
                             completion.submit(java.util.concurrent.Callable {
                                 try { Downloaded(candidate, downloadPublicImageInMemory(candidate.imageUrl), null) }
@@ -674,6 +695,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         completion.submit {
                             val host = URL(source.baseUrl).host.lowercase(java.util.Locale.US)
                             val hostLock = hostLocks.computeIfAbsent(host) { java.util.concurrent.Semaphore(1) }
+                            awaitScanAllowed()
                             hostLock.acquire()
                             try {
                                 val discovered = PublicSourceScanner.scan(source)
@@ -739,6 +761,9 @@ class IdentityMatchActivity : AppCompatActivity() {
                 downloadPool?.shutdownNow()
                 runOnUiThread {
                     cancelButton.visibility = android.view.View.GONE
+                    pauseButton.visibility = android.view.View.GONE
+                    pauseButton.text = "Pause"
+                    paused = false
                     activeWebScan = null
                 }
                 alignedReferences.forEach { it.recycle() }
@@ -747,6 +772,78 @@ class IdentityMatchActivity : AppCompatActivity() {
                 candidateDatabase.close()
             }
         }
+    }
+
+    /** Blocks the scan thread while the user has paused it or Wi-Fi / battery limits say to wait. */
+    private fun awaitScanAllowed() {
+        var shown: String? = null
+        while (true) {
+            val reason = if (paused) "Paused. Tap Resume to continue." else AppSettings.scanBlockedReason(this)
+            if (reason == null) {
+                if (shown != null) runOnUiThread { if (!isFinishing) status.text = "Resuming…" }
+                return
+            }
+            if (reason != shown) {
+                shown = reason
+                runOnUiThread { if (!isFinishing) status.text = reason }
+            }
+            Thread.sleep(1000)
+        }
+    }
+
+    /** Match image for display: from the short-lived cache when possible, otherwise downloaded and cached. */
+    private fun loadForDisplay(address: String): Bitmap {
+        ImageCache.get(this, address)?.let { cached ->
+            try { return decodeBytes(cached) } catch (_: Exception) { /* fall through and download again */ }
+        }
+        val bitmap = downloadPublicImageInMemory(address)
+        try {
+            val out = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+            ImageCache.put(this, address, out.toByteArray())
+        } catch (_: Exception) {}
+        return bitmap
+    }
+
+    private fun exportReport(destination: Uri) {
+        Toast.makeText(this, "Building the report…", Toast.LENGTH_SHORT).show()
+        kotlin.concurrent.thread {
+            try {
+                val db = PublicSourceDatabase(this)
+                val matches = try { db.possibleMatches(50, bestFirst = true) } finally { db.close() }
+                val stream = requireNotNull(contentResolver.openOutputStream(destination)) { "Could not open the destination." }
+                stream.use { ReportBuilder.write(matches, it) { match -> loadForDisplay(match.imageUrl) } }
+                runOnUiThread { Toast.makeText(this, "Report saved (${matches.size} match(es)).", Toast.LENGTH_LONG).show() }
+            } catch (e: Exception) {
+                runOnUiThread { Toast.makeText(this, "Report failed: ${e.localizedMessage ?: "unknown error"}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
+    private fun copyText(label: String, text: String) {
+        val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+        Toast.makeText(this, "$label copied.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showMatchActions(pageUrl: String, imageUrl: String) {
+        val labels = arrayOf(
+            "Copy image link", "Copy page link",
+            "Report to Google (remove from search)", "StopNCII.org (hash-based blocking)", "Removal guide in this app"
+        )
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Get this removed")
+            .setItems(labels) { _, which ->
+                when (which) {
+                    0 -> copyText("Image link", imageUrl)
+                    1 -> copyText("Page link", pageUrl.ifBlank { imageUrl })
+                    2 -> openResultUrl("https://support.google.com/websearch/answer/13650142")
+                    3 -> openResultUrl("https://stopncii.org")
+                    else -> startActivity(Intent(this, RemovalGuideActivity::class.java))
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     private fun exportSavedMatches(destination: Uri) {
@@ -794,7 +891,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             var restored = 0
             for (match in matches) {
                 try {
-                    val bitmap = downloadPublicImageInMemory(match.imageUrl)
+                    val bitmap = loadForDisplay(match.imageUrl)
                     val preview = makeResultPreview(bitmap)
                     val faceCrop = try { MatchTuning.cropFace(bitmap, match.faceBox) } catch (_: Exception) { null }
                     bitmap.recycle()
@@ -874,6 +971,11 @@ class IdentityMatchActivity : AppCompatActivity() {
             setOnClickListener { openResultUrl(imageUrl) }
         })
         details.addView(MaterialButton(this).apply {
+            text = "Get it removed…"
+            isAllCaps = false
+            setOnClickListener { showMatchActions(pageUrl, imageUrl) }
+        })
+        details.addView(MaterialButton(this).apply {
             text = if (confirmed) "Confirmed ✓" else "That's me"
             isAllCaps = false
             isEnabled = !confirmed
@@ -920,7 +1022,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
-    /** Fetches a public HTTPS image into a bounded byte array; never writes it to disk. */
+    /** Fetches a public HTTPS image into a bounded byte array. Scanning keeps it in memory only; see [loadForDisplay] for matches. */
     private fun downloadPublicImageInMemory(address: String): Bitmap {
         val uri = Uri.parse(address)
         require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) {
@@ -958,19 +1060,22 @@ class IdentityMatchActivity : AppCompatActivity() {
                     bytes.write(buffer, 0, count)
                 }
             }
-            val data = bytes.toByteArray()
-            // ImageDecoder applies the photo's rotation, which BitmapFactory ignores. Without it,
-            // sideways phone photos would never show a face.
-            return ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(data))) { decoder, info, _ ->
-                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                val scale = minOf(1f, 1000f / maxOf(info.size.width, info.size.height))
-                decoder.setTargetSize(
-                    (info.size.width * scale).toInt().coerceAtLeast(1),
-                    (info.size.height * scale).toInt().coerceAtLeast(1)
-                )
-            }
+            return decodeBytes(bytes.toByteArray())
         } finally {
             connection?.disconnect()
+        }
+    }
+
+    private fun decodeBytes(data: ByteArray): Bitmap {
+        // ImageDecoder applies the photo's rotation, which BitmapFactory ignores. Without it,
+        // sideways phone photos would never show a face.
+        return ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(data))) { decoder, info, _ ->
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            val scale = minOf(1f, 1000f / maxOf(info.size.width, info.size.height))
+            decoder.setTargetSize(
+                (info.size.width * scale).toInt().coerceAtLeast(1),
+                (info.size.height * scale).toInt().coerceAtLeast(1)
+            )
         }
     }
 

@@ -9,5 +9,8 @@ class FaceApp : Application() {
         super.onCreate()
         CrashReport.install(this)
         DynamicColors.applyToActivitiesIfAvailable(this)
+        registerActivityLifecycleCallbacks(AppLock)
+        ImageCache.trim(this)
+        if (AppSettings.reminderEnabled(this)) ScanReminderWorker.schedule(this)
     }
 }

@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".FaceApp"
@@ -36,6 +38,12 @@
             android:name=".WebScanActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:exported="false" />
+
+        <activity
+            android:name=".LockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.Face" />
 
         <activity
             android:name=".RemovalGuideActivity"

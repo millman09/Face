@@ -7,6 +7,7 @@ import com.google.android.material.color.DynamicColors
 class FaceApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        CrashReport.install(this)
         DynamicColors.applyToActivitiesIfAvailable(this)
     }
 }

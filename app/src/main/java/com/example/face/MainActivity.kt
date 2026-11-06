@@ -16,6 +16,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.checkbox.MaterialCheckBox
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.LinearProgressIndicator
 
 class MainActivity : AppCompatActivity() {
@@ -113,6 +114,26 @@ class MainActivity : AppCompatActivity() {
         }
         panels.forEach { (id, panel) ->
             panel.visibility = if (id == nav.selectedItemId) View.VISIBLE else View.GONE
+        }
+        showLastCrashIfAny()
+    }
+
+    /** If the app closed unexpectedly last time, show the error so it can be copied and sent for a fix. */
+    private fun showLastCrashIfAny() {
+        val report = CrashReport.take(this) ?: return
+        try {
+            MaterialAlertDialogBuilder(this)
+                .setTitle("The app closed last time")
+                .setMessage(report)
+                .setPositiveButton("Copy") { _, _ ->
+                    val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Crash report", report))
+                    Toast.makeText(this, "Copied.", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("Close", null)
+                .show()
+        } catch (_: Exception) {
+            // The report is only a debugging aid; never let it cause another crash.
         }
     }
 

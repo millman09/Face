@@ -584,10 +584,10 @@ class IdentityMatchActivity : AppCompatActivity() {
                     val completion = java.util.concurrent.ExecutorCompletionService<Downloaded>(activeDownloadPool)
                     for (chunk in batch.chunked(24)) {
                         val futures = chunk.map { candidate ->
-                            completion.submit<Downloaded> {
+                            completion.submit(java.util.concurrent.Callable {
                                 try { Downloaded(candidate, downloadPublicImageInMemory(candidate.imageUrl), null) }
                                 catch (e: Exception) { Downloaded(candidate, null, e.localizedMessage ?: "image unavailable") }
-                            }
+                            })
                         }
                         val updates = mutableListOf<CandidateUpdate>()
                         val previews = mutableListOf<MatchPreview>()

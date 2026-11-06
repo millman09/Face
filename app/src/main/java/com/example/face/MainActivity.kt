@@ -442,9 +442,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
         addSwitch(container, "Only scan on Wi-Fi", AppSettings.wifiOnly(this)) { _, on -> AppSettings.setWifiOnly(this, on) }
-        addSwitch(container, "Pause scans when battery is under 20%", AppSettings.pauseOnLowBattery(this)) { _, on ->
-            AppSettings.setPauseOnLowBattery(this, on)
-        }
         reminderSwitch = addSwitch(container, "Remind me weekly to run a deep search", AppSettings.reminderEnabled(this)) { _, on ->
             if (!on) {
                 AppSettings.setReminderEnabled(this, false)

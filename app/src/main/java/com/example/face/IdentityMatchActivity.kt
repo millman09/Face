@@ -511,18 +511,22 @@ class IdentityMatchActivity : AppCompatActivity() {
         activeWebScan = executor.submit {
             var interpreter: Interpreter? = null
             var detector: FaceDetector? = null
+            var downloadPool: java.util.concurrent.ExecutorService? = null
             val alignedReferences = mutableListOf<Bitmap>()
             val candidateDatabase = PublicSourceDatabase(this)
             try {
-                val sources = candidateDatabase.sources().filter { it.enabled }
-                require(sources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
+                val enabledSources = candidateDatabase.sources().filter { it.enabled }
+                require(enabledSources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
+                // Avoid re-crawling the same domains on every run. A source becomes eligible again after 24 hours.
+                val rescanBefore = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
+                val sources = enabledSources.filter { it.lastScan == 0L || it.lastScan < rescanBefore }
 
                 validateMobileFaceNetModel(model)
                 val activeInterpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
                 interpreter = activeInterpreter
                 val activeDetector = FaceDetection.getClient(
                     FaceDetectorOptions.Builder()
-                        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+                        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
                         .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                         .build()
                 )
@@ -566,76 +570,77 @@ class IdentityMatchActivity : AppCompatActivity() {
                     }
                 }
 
-                // Consume new candidates as each site finishes. Discovery continues on
-                // four network workers while this thread performs local face matching.
+                // Download up to six public images concurrently, but keep ML Kit detection and
+                // TFLite inference on this single scan worker to avoid concurrent model access.
+                downloadPool = Executors.newFixedThreadPool(6)
                 fun comparePendingCandidates() {
                     val batch = candidateDatabase.pendingCandidates(5000)
                         .filter { processedIds.add(it.id) }
-                    for (candidate in batch) {
-                        try {
-                            val bitmap = downloadPublicImageInMemory(candidate.imageUrl)
-                            try {
-                                val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
-                                var best: Float? = null
-                                var skipped = 0
-                                for (face in faces) {
-                                    var aligned: Bitmap? = null
-                                    try {
-                                        aligned = alignFace(bitmap, face)
-                                        val candidateEmbedding = embedFace(activeInterpreter, aligned)
-                                        // With multiple reference photos, require agreement from the
-                                        // two strongest views instead of accepting one lucky high score.
-                                        val faceScore = combineReferenceScores(
-                                            referenceEmbeddings.map { reference -> cosineSimilarity(reference, candidateEmbedding) }
-                                        )
-                                        if (best == null || faceScore > best!!) best = faceScore
-                                    } catch (_: IllegalArgumentException) {
-                                        skipped++
-                                    } finally {
-                                        aligned?.recycle()
-                                    }
-                                }
-                                val similarity = best
-                                val angle = similarity?.let {
-                                    Math.toDegrees(acos(it.coerceIn(-1f, 1f).toDouble()))
-                                }
-                                val possible = similarity != null && similarity >= 0.4f
-                                if (possible) {
-                                    possibleMatches++
-                                    val preview = makeResultPreview(bitmap)
-                                    runOnUiThread {
-                                        addWebMatchPreview(candidate.id, candidate.pageUrl, candidate.imageUrl, similarity ?: 0f, preview)
-                                    }
-                                }
-                                report.append("${Uri.parse(candidate.imageUrl).host}: ${faces.size} face(s)")
-                                if (skipped > 0) report.append(" ($skipped could not be aligned)")
-                                if (similarity != null && similarity >= 0.4f && angle != null) {
-                                    report.append(", cosine ${"%.3f".format(java.util.Locale.US, similarity)}")
-                                    report.append(if (possible) " - POSSIBLE MATCH" else " - lower similarity")
-                                }
-                                report.append("\n")
-                                candidateDatabase.updateCandidateResult(
-                                    candidate.id, if (possible) "Possible match" else "Compared", if (possible) similarity else null
-                                )
-                            } finally {
-                                bitmap.recycle()
+                    if (batch.isEmpty()) return
+                    data class Downloaded(val candidate: StoredCandidate, val bitmap: Bitmap?, val error: String?)
+                    val completion = java.util.concurrent.ExecutorCompletionService<Downloaded>(downloadPool)
+                    for (chunk in batch.chunked(24)) {
+                        val futures = chunk.map { candidate ->
+                            completion.submit<Downloaded> {
+                                try { Downloaded(candidate, downloadPublicImageInMemory(candidate.imageUrl), null) }
+                                catch (e: Exception) { Downloaded(candidate, null, e.localizedMessage ?: "image unavailable") }
                             }
-                        } catch (e: Exception) {
-                            report.append("${Uri.parse(candidate.imageUrl).host ?: "website"}: skipped - ${e.localizedMessage ?: "image unavailable"}\n")
-                            candidateDatabase.updateCandidateStatus(candidate.id, "Unavailable")
                         }
-                        checked++
-                        updateSearchProgress(
-                            "$completedSources/${sources.size} sites checked, $checked images compared, $possibleMatches possible match(es)"
-                        )
+                        val updates = mutableListOf<CandidateUpdate>()
+                        val previews = mutableListOf<Triple<String, Float, Bitmap>>()
+                        repeat(futures.size) {
+                            val downloaded = completion.take().get()
+                            val candidate = downloaded.candidate
+                            val bitmap = downloaded.bitmap
+                            if (bitmap == null) {
+                                updates += CandidateUpdate(candidate.id, "Unavailable", null)
+                            } else {
+                                try {
+                                    val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
+                                    var best: Float? = null
+                                    for (face in faces) {
+                                        var aligned: Bitmap? = null
+                                        try {
+                                            aligned = alignFace(bitmap, face)
+                                            val candidateEmbedding = embedFace(activeInterpreter, aligned)
+                                            val faceScore = combineReferenceScores(referenceEmbeddings.map { reference -> cosineSimilarity(reference, candidateEmbedding) })
+                                            if (best == null || faceScore > best!!) best = faceScore
+                                        } catch (_: IllegalArgumentException) {
+                                            // Faces without the five required landmarks cannot be aligned.
+                                        } finally { aligned?.recycle() }
+                                    }
+                                    val similarity = best
+                                    val possible = similarity != null && similarity >= 0.4f
+                                    if (possible) {
+                                        possibleMatches++
+                                        previews += Triple(candidate.imageUrl, similarity!!, makeResultPreview(bitmap))
+                                    }
+                                    updates += CandidateUpdate(candidate.id, if (possible) "Possible match" else "Compared", if (possible) similarity else null)
+                                } catch (_: Exception) {
+                                    updates += CandidateUpdate(candidate.id, "Unavailable", null)
+                                } finally { bitmap.recycle() }
+                            }
+                            checked++
+                        }
+                        // One transaction per chunk replaces one database write per image.
+                        candidateDatabase.updateCandidateResults(updates)
+                        if (previews.isNotEmpty()) runOnUiThread {
+                            previews.forEach { (imageUrl, score, preview) -> addWebMatchPreview(0L, imageUrl, imageUrl, score, preview) }
+                        }
+                        // Progress updates are deliberately batched instead of posted once per image.
+                        updateSearchProgress("$completedSources/${sources.size} sites checked, $checked images compared, $possibleMatches possible match(es)")
                     }
                 }
 
-                val sourcePool = Executors.newFixedThreadPool(4)
+                val sourcePool = Executors.newFixedThreadPool(6)
                 try {
                     val completion = java.util.concurrent.ExecutorCompletionService<Triple<WebsiteSource, Int, Int>>(sourcePool)
+                    val hostLocks = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.Semaphore>()
                     sources.forEach { source ->
                         completion.submit {
+                            val host = URL(source.baseUrl).host.lowercase(java.util.Locale.US)
+                            val hostLock = hostLocks.computeIfAbsent(host) { java.util.concurrent.Semaphore(1) }
+                            hostLock.acquire()
                             try {
                                 val discovered = PublicSourceScanner.scan(source)
                                 val added = candidateDatabase.saveCandidates(discovered)
@@ -648,7 +653,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                     source.id, "Could not scan: ${e.localizedMessage ?: "network error"}"
                                 )
                                 Triple(source, -1, 0)
-                            }
+                            } finally { hostLock.release() }
                         }
                     }
                     repeat(sources.size) {
@@ -672,7 +677,9 @@ class IdentityMatchActivity : AppCompatActivity() {
                 // Catch any final candidates saved just before the last completion signal.
                 comparePendingCandidates()
                 val totalIndexed = candidateDatabase.candidateCount()
-                val summary = if (totalIndexed == 0) {
+                val summary = if (sources.isEmpty()) {
+                    "All ${enabledSources.size} enabled public sources were scanned within the last 24 hours, so discovery was skipped. Checked $checked previously unprocessed images and found $possibleMatches possible match(es)."
+                } else if (totalIndexed == 0) {
                     "No public image links were discovered. Supported sites may not expose crawlable public pages."
                 } else {
                     "Search finished. Checked $completedSources/${sources.size} public sources, discovered $addedTotal new image link(s), compared $checked new or retryable image(s), and found $possibleMatches possible match(es). $totalIndexed image links remain indexed for future incremental searches. Public-source coverage is limited to pages made accessible by each website; this is not a complete index of the internet. Review matches manually."
@@ -695,6 +702,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     updateReady()
                 }
             } finally {
+                downloadPool?.shutdownNow()
                 runOnUiThread {
                     cancelButton.visibility = android.view.View.GONE
                     activeWebScan = null
@@ -886,7 +894,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
             require(bounds.outWidth > 0 && bounds.outHeight > 0) { "Image could not be decoded." }
             var sample = 1
-            while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > 2000) sample *= 2
+            while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > 1000) sample *= 2
             val options = BitmapFactory.Options().apply {
                 inSampleSize = sample
                 inPreferredConfig = Bitmap.Config.ARGB_8888
@@ -1015,7 +1023,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
         return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val scale = minOf(1f, 2000f / maxOf(info.size.width, info.size.height))
+            val scale = minOf(1f, 1000f / maxOf(info.size.width, info.size.height))
             decoder.setTargetSize((info.size.width * scale).toInt().coerceAtLeast(1), (info.size.height * scale).toInt().coerceAtLeast(1))
         }
     }

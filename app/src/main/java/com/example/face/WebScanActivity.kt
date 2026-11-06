@@ -288,31 +288,6 @@ class WebScanActivity : AppCompatActivity() {
         if (pendingSearches.isNotEmpty()) openNextSearch()
     }
 
-    private fun browseCollectedLinks() {
-        if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading.", Toast.LENGTH_SHORT).show(); return }
-        val candidates = database.allCandidates(100)
-        if (candidates.isEmpty()) {
-            Toast.makeText(this, "No image links have been collected yet. Run a batch scan first.", Toast.LENGTH_LONG).show()
-            return
-        }
-        val labels = candidates.mapIndexed { index, item ->
-            "${index + 1}. ${Uri.parse(item.pageUrl).host ?: item.sourceBaseUrl}  •  ${Uri.parse(item.imageUrl).lastPathSegment ?: "Image link"}"
-        }.toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Collected public image links")
-            .setItems(labels) { _, which ->
-                val selected = candidates[which]
-                try {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(selected.imageUrl)))
-                    status.text = "Opened the selected image link in your browser."
-                } catch (_: Exception) {
-                    Toast.makeText(this, "Unable to open that image link.", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNegativeButton("Close", null)
-            .show()
-    }
-
     /** Opens the live results page immediately. Source discovery and face matching run there. */
     private fun launchAutomaticScan() {
         if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading. Try again in a moment.", Toast.LENGTH_LONG).show(); return }

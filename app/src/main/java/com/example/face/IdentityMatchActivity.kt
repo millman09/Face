@@ -582,7 +582,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     data class Downloaded(val candidate: StoredCandidate, val bitmap: Bitmap?, val error: String?)
                     data class MatchPreview(val id: Long, val pageUrl: String, val imageUrl: String, val score: Float, val bitmap: Bitmap)
                     val completion = java.util.concurrent.ExecutorCompletionService<Downloaded>(activeDownloadPool)
-                    for (chunk in batch.chunked(24)) {
+                    for (chunk in batch.chunked(12)) {
                         val futures = chunk.map { candidate ->
                             completion.submit(java.util.concurrent.Callable {
                                 try { Downloaded(candidate, downloadPublicImageInMemory(candidate.imageUrl), null) }

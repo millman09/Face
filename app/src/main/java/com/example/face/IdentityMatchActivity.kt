@@ -402,7 +402,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 validateMobileFaceNetModel(model)
                 interpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
                 val options = FaceDetectorOptions.Builder()
-                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
                     .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                     .build()
                 faceDetector = FaceDetection.getClient(options)
@@ -426,7 +426,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     ""
                 }
                 val referenceEmbeddings = alignedReferences.map { embedFace(interpreter, it) }
-                val report = StringBuilder("${alignedReferences.size} reference photo(s) aligned for this scan session.\n$referenceNote")
+                val localMatches = mutableListOf<String>()
                 var checked = 0
                 var matched = 0
                 candidates.forEachIndexed { index, uri ->
@@ -458,27 +458,28 @@ class IdentityMatchActivity : AppCompatActivity() {
                             bitmap.recycle()
                         }
                         val similarity = best
-                        val angle = if (similarity != null) Math.toDegrees(acos(similarity.coerceIn(-1f, 1f).toDouble())) else null
                         val possible = similarity != null && similarity >= 0.4f
-                        if (possible) matched++
-                        report.append("${index + 1}. ${displayName(uri)}: ${faces.size} face(s)")
-                        if (skipped > 0) report.append(" ($skipped skipped, landmarks not clear)")
-                        if (similarity != null && similarity >= 0.4f && angle != null) {
-                            report.append(", cosine ${"%.3f".format(java.util.Locale.US, similarity)}, angle ${"%.1f".format(java.util.Locale.US, angle)}° - ")
-                            report.append(if (possible) "POSSIBLE MATCH" else "lower similarity")
+                        if (possible) {
+                            matched++
+                            localMatches += "${displayName(uri)} · cosine ${"%.3f".format(java.util.Locale.US, similarity)}"
                         }
-                        report.append("\n")
-                    } catch (e: Exception) {
-                        report.append("${index + 1}. ${displayName(uri)}: error - ${e.localizedMessage ?: "unknown"}\n")
+                    } catch (_: Exception) {
+                        // Keep the result view focused on successful possible matches.
                     }
                     checked++
-                    runOnUiThread {
-                        progress.progress = checked
-                        status.text = "Compared $checked of ${candidates.size} images…"
+                    if (checked % 10 == 0 || checked == candidates.size) {
+                        runOnUiThread {
+                            progress.progress = checked
+                            status.text = "Compared $checked of ${candidates.size} images…"
+                        }
                     }
                 }
-                report.append("\nFinished: $matched possible match(es). Qualcomm's published 74.18° threshold is a benchmark starting point, not proof of identity. Review every candidate manually.")
-                runOnUiThread { status.text = report.toString(); progress.visibility = ProgressBar.GONE; updateReady() }
+                val summary = buildString {
+                    append("Finished: checked $checked of ${candidates.size} images and found $matched possible match(es). ")
+                    append("The 0.4 cosine threshold was applied. Review possible matches manually.")
+                    if (localMatches.isNotEmpty()) append("\n\nPossible matches:\n" + localMatches.take(50).joinToString("\n"))
+                }
+                runOnUiThread { status.text = summary; progress.visibility = ProgressBar.GONE; updateReady() }
             } catch (e: Exception) {
                 runOnUiThread {
                     status.text = "Comparison could not run: ${e.localizedMessage ?: "unknown error"}"

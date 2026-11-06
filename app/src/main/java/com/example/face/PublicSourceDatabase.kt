@@ -11,13 +11,18 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 
-data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean)
+data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean, val lastScan: Long = 0L)
+data class CandidateUpdate(val id: Long, val status: String, val similarity: Float?)
 data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl: String)
 data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String)
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 7) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 8) {
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        db.enableWriteAheadLogging()
+    }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -56,6 +61,11 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
                 "MyHentaiGallery", "MultPorn", "PornComics", "XXXComics",
                 "Fenoxo Blog", "Audiochan", "Nutaku", "DLsite", "Newgrounds Adult"
             ))
+        }
+        if (oldVersion < 8) {
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_pending ON candidates(checked_at, discovered_at)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_matches ON candidates(scan_status, similarity, checked_at)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_sources_enabled_scan ON sources(enabled, last_scan)")
         }
     }
 
@@ -219,8 +229,8 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
 
     @Synchronized fun sources(): List<WebsiteSource> {
         val result = mutableListOf<WebsiteSource>()
-        readableDatabase.rawQuery("SELECT id,name,base_url,enabled FROM sources ORDER BY name COLLATE NOCASE", null).use { c ->
-            while (c.moveToNext()) result += WebsiteSource(c.getLong(0), c.getString(1), c.getString(2), c.getInt(3) == 1)
+        readableDatabase.rawQuery("SELECT id,name,base_url,enabled,last_scan FROM sources ORDER BY name COLLATE NOCASE", null).use { c ->
+            while (c.moveToNext()) result += WebsiteSource(c.getLong(0), c.getString(1), c.getString(2), c.getInt(3) == 1, c.getLong(4))
         }
         return result
     }
@@ -261,7 +271,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         readableDatabase.rawQuery(
             """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
                FROM candidates c JOIN sources s ON s.id=c.source_id
-               WHERE c.checked_at=0 OR c.scan_status='Unavailable'
+               WHERE c.checked_at=0
                ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
             arrayOf(limit.coerceIn(1, 5000).toString())
         ).use { c ->
@@ -277,6 +287,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         readableDatabase.rawQuery(
             """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
                FROM candidates c JOIN sources s ON s.id=c.source_id
+               WHERE c.checked_at=0
                ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
             arrayOf(limit.coerceIn(1, 5000).toString())
         ).use { c ->
@@ -292,6 +303,31 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         writableDatabase.update("candidates", values, "id=?", arrayOf(id.toString()))
     }
 
+    @Synchronized fun updateCandidateResults(updates: List<CandidateUpdate>) {
+        if (updates.isEmpty()) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val statement = db.compileStatement("UPDATE candidates SET scan_status=?, similarity=?, checked_at=? WHERE id=?")
+            val now = System.currentTimeMillis()
+            for (item in updates) {
+                statement.clearBindings()
+                statement.bindString(1, item.status.take(100))
+                if (item.similarity == null) statement.bindNull(2) else statement.bindDouble(2, item.similarity.toDouble())
+                statement.bindLong(3, now)
+                statement.bindLong(4, item.id)
+                statement.executeUpdateDelete()
+            }
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
+    @Synchronized fun latestMatchTimestamp(): Long {
+        readableDatabase.rawQuery("SELECT COALESCE(MAX(checked_at), 0) FROM candidates WHERE scan_status='Possible match' AND similarity >= 0.4", null).use {
+            return if (it.moveToFirst()) it.getLong(0) else 0L
+        }
+    }
+
     @Synchronized fun updateCandidateResult(id: Long, status: String, similarity: Float?) {
         val values = ContentValues().apply {
             put("scan_status", status.take(100))
@@ -301,14 +337,14 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         writableDatabase.update("candidates", values, "id=?", arrayOf(id.toString()))
     }
 
-    @Synchronized fun possibleMatches(limit: Int = 500, bestFirst: Boolean = false): List<MatchResult> {
+    @Synchronized fun possibleMatches(limit: Int = 50, bestFirst: Boolean = false): List<MatchResult> {
         val result = mutableListOf<MatchResult>()
         readableDatabase.rawQuery(
             """SELECT c.id,s.base_url,c.page_url,c.image_url,c.similarity,c.checked_at
                FROM candidates c JOIN sources s ON s.id=c.source_id
                WHERE c.scan_status='Possible match' AND c.similarity >= 0.4
                ORDER BY ${if (bestFirst) "c.similarity DESC, c.checked_at DESC" else "c.checked_at DESC"} LIMIT ?""".trimIndent(),
-            arrayOf(limit.coerceIn(1, 2000).toString())
+            arrayOf(limit.coerceIn(1, 50).toString())
         ).use { c ->
             while (c.moveToNext()) result += MatchResult(
                 c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getFloat(4), c.getLong(5)
@@ -351,8 +387,10 @@ object PublicSourceScanner {
 
     fun scan(source: WebsiteSource): List<DiscoveredImage> {
         val base = source.baseUrl
-        val robotsText = readText("$base/robots.txt")
-        val rules = parseRobots(robotsText.orEmpty())
+        // A timeout, server error, or forbidden robots.txt response means skip this host.
+        // A genuine 404 means the site has no robots file and can be crawled normally.
+        val robotsText = readRobots("$base/robots.txt") ?: return emptyList()
+        val rules = parseRobots(robotsText)
         val sitemapUrls = linkedSetOf<String>()
         robotsText.orEmpty().lineSequence().map { it.trim() }
             .filter { it.startsWith("Sitemap:", true) }
@@ -436,6 +474,30 @@ object PublicSourceScanner {
             }
         }
         return found.values.take(MAX_IMAGES)
+    }
+
+    private fun readRobots(address: String): String? {
+        var connection: HttpURLConnection? = null
+        return try {
+            connection = URL(address).openConnection() as? HttpURLConnection ?: return null
+            connection.connectTimeout = 7000
+            connection.readTimeout = 9000
+            connection.instanceFollowRedirects = false
+            connection.setRequestProperty("User-Agent", "FacePersonalScanner/1.1 (public page and sitemap reader)")
+            connection.setRequestProperty("Accept", "text/plain")
+            when (val code = connection.responseCode) {
+                404 -> ""
+                in 200..299 -> {
+                    val type = connection.contentType?.substringBefore(';')?.trim()?.lowercase(Locale.US).orEmpty()
+                    if (!type.contains("text/plain") && !type.contains("text")) return null
+                    if (connection.contentLengthLong > 256 * 1024) return null
+                    connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(256 * 1024) }
+                }
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        } finally { connection?.disconnect() }
     }
 
     private fun parseRobots(text: String): List<String> {

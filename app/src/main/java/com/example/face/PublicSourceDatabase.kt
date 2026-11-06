@@ -369,6 +369,17 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         return result
     }
 
+    /** Wipes every collected image link and result and marks all sources as never scanned, for a fresh search. */
+    @Synchronized fun clearSearch() {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("DELETE FROM candidates")
+            db.execSQL("UPDATE sources SET last_scan=0, last_status='Not scanned'")
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
     /** Possible matches first seen after [sinceMillis]; used by the scheduled re-scan. */
     @Synchronized fun newMatchCountSince(sinceMillis: Long): Int {
         readableDatabase.rawQuery(

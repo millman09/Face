@@ -136,6 +136,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         addButton(root, "Install face-matching model  ·  ~4 MB") { downloadOfficialModel() }
         addButton(root, "Choose a compatible face model") { modelPicker.launch(arrayOf("*/*")) }
         addButton(root, "Choose reference photos") { referencePicker.launch(arrayOf("image/*")) }
+        if (webScanMode) addButton(root, "Clear search and start over") { confirmClearSearch() }
         if (webScanMode) addButton(root, "Export saved matches (CSV)") { exportResultsPicker.launch("face-search-results.csv") }
         if (webScanMode) addButton(root, "Export report with images (PDF)") { exportReportPicker.launch("face-matches-report.pdf") }
         if (!webScanMode) addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
@@ -818,6 +819,33 @@ class IdentityMatchActivity : AppCompatActivity() {
                 runOnUiThread { Toast.makeText(this, "Report failed: ${e.localizedMessage ?: "unknown error"}", Toast.LENGTH_LONG).show() }
             }
         }
+    }
+
+    private fun confirmClearSearch() {
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Clear this search?")
+            .setMessage("This stops any running search and removes all results and collected image links, including ones marked \"That's me\". Your reference photos and settings stay. Your next search starts from scratch.")
+            .setPositiveButton("Clear") { _, _ ->
+                activeWebScan?.cancel(true)
+                status.text = "Clearing…"
+                executor.execute {
+                    try {
+                        val db = PublicSourceDatabase(this)
+                        try { db.clearSearch() } finally { db.close() }
+                        ImageCache.clear(this)
+                        runOnUiThread {
+                            resultsContainer.removeAllViews()
+                            hintView.visibility = android.view.View.GONE
+                            status.text = "Search cleared. Start a new deep search whenever you're ready."
+                            updateReady()
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread { status.text = "Could not clear the search: ${e.localizedMessage ?: "unknown error"}" }
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun copyText(label: String, text: String) {

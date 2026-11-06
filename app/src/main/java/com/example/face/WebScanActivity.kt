@@ -6,6 +6,8 @@ import android.os.Bundle
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
+import android.widget.ImageView
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -23,6 +25,9 @@ class WebScanActivity : AppCompatActivity() {
     private lateinit var queryInput: EditText
     private lateinit var searxInput: EditText
     private lateinit var status: TextView
+    private lateinit var referencePreview: LinearLayout
+    private lateinit var referenceCount: TextView
+    private lateinit var startSearchButton: MaterialButton
     private lateinit var sourceNameInput: EditText
     private lateinit var sourceUrlInput: EditText
     private lateinit var bulkSourcesInput: EditText
@@ -36,29 +41,91 @@ class WebScanActivity : AppCompatActivity() {
             referencePhotos.forEach { uri ->
                 try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
             }
-            status.text = "${referencePhotos.size} reference photo(s) selected. Start the automatic scan when ready."
+            renderReferencePhotos()
+            status.text = "${referencePhotos.size} reference photo(s) selected. Ready to search."
+            startSearchButton.isEnabled = true
         }
     }
     @Volatile private var scanning = false
+    @Volatile private var catalogueReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        database = PublicSourceDatabase(this)
+        database = PublicSourceDatabase(applicationContext)
 
         val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(16), dp(20), dp(24))
+            setPadding(dp(20), dp(18), dp(20), dp(28))
+            setBackgroundColor(android.graphics.Color.rgb(13, 16, 24))
         }
-        setToolPage("Image search", page)
+        setToolPage("Deep image search", page)
 
         page.addView(TextView(this).apply {
-            text = "Search providers open in your browser. The batch scanner below checks public sitemap and feed endpoints for image links. It does not bypass logins, CAPTCHAs, robots restrictions, or site protections."
+            text = "FACE SEARCH  /  PRIVATE WORKSPACE"
+            textSize = 11f
+            letterSpacing = 0.12f
+            setTextColor(android.graphics.Color.rgb(155, 139, 255))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(10))
+        })
+        page.addView(TextView(this).apply {
+            text = "Search the web\nfor your face."
+            textSize = 31f
+            setTextColor(android.graphics.Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setLineSpacing(dp(2).toFloat(), 1f)
+            setPadding(0, 0, 0, dp(12))
+        })
+        page.addView(TextView(this).apply {
+            text = "Select your reference photos and scan supported public image sources. Matches are compared on this device."
             textSize = 15f
-            setPadding(0, 0, 0, dp(16))
+            setTextColor(android.graphics.Color.rgb(190, 195, 210))
+            setLineSpacing(dp(3).toFloat(), 1.04f)
+            setPadding(0, 0, 0, dp(20))
+        })
+        val uploadCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(android.graphics.Color.rgb(25, 29, 43))
+                setStroke(dp(1), android.graphics.Color.rgb(91, 78, 153))
+                cornerRadius = dp(18).toFloat()
+            }
+        }
+        uploadCard.addView(TextView(this).apply {
+            text = "YOUR REFERENCE PHOTOS"
+            textSize = 11f
+            letterSpacing = 0.10f
+            setTextColor(android.graphics.Color.rgb(173, 160, 255))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        referenceCount = TextView(this).apply {
+            text = "No photos selected"
+            textSize = 17f
+            setTextColor(android.graphics.Color.WHITE)
+            setPadding(0, dp(8), 0, dp(10))
+        }
+        uploadCard.addView(referenceCount)
+        referencePreview = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val previewScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(referencePreview)
+        }
+        uploadCard.addView(previewScroll)
+        uploadCard.addView(button("＋  Add reference photos") {
+            referencePicker.launch(arrayOf("image/*"))
+        }.apply {
+            setBackgroundColor(android.graphics.Color.rgb(105, 83, 230))
+            setTextColor(android.graphics.Color.WHITE)
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(12)
+        })
+        page.addView(uploadCard, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(20)
         })
 
         queryInput = EditText(this).apply {
-            hint = "Search terms, usernames, or site names"
+            hint = "Optional search terms or usernames"
             minLines = 2
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
@@ -66,7 +133,7 @@ class WebScanActivity : AppCompatActivity() {
         page.addSpaced(queryInput, 12)
 
         page.addView(TextView(this).apply {
-            text = "SearXNG instance address"
+            text = "IMAGE SEARCH PROVIDER"
             textSize = 14f
             setPadding(0, dp(4), 0, dp(4))
         })
@@ -87,23 +154,73 @@ class WebScanActivity : AppCompatActivity() {
         page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
 
         page.addView(TextView(this).apply {
-            text = "The built-in public-source catalogue is searched automatically. You do not need to select individual websites. The scanner respects public access limits and does not bypass logins, CAPTCHAs, robots restrictions, or site protections."
+            text = "AUTOMATIC PUBLIC-SOURCE SCAN\nThe built-in source catalogue is checked in one run. Coverage depends on public sitemaps, feeds, and accessible image links. No logins, CAPTCHAs, paywalls, or site protections are bypassed."
             textSize = 14f
             setPadding(0, dp(16), 0, dp(12))
         })
 
-        page.addSpaced(button("Choose photo(s) to search for") { referencePicker.launch(arrayOf("image/*")) }, 8)
-        page.addSpaced(button("Start automatic scan and match my photos") { launchAutomaticScan() }, 8)
+        startSearchButton = button("Search for matches") { launchAutomaticScan() }.apply {
+            isEnabled = false
+            textSize = 16f
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setBackgroundColor(android.graphics.Color.rgb(105, 83, 230))
+            setTextColor(android.graphics.Color.WHITE)
+        }
+        page.addSpaced(startSearchButton, 8)
 
         status = TextView(this).apply {
-            text = "No scan has been run yet."
+            text = "Preparing the public-source catalogue…"
             textSize = 14f
             setPadding(0, dp(14), 0, dp(8))
         }
         page.addView(status)
-        status.text = "${database.sources().size} public sources are ready. All are included automatically."
+        renderReferencePhotos()
+        // The first SQLite open may create and seed the full catalogue. Do it off the UI thread.
+        scanExecutor.execute {
+            val count = database.sources().size
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) {
+                    catalogueReady = true
+                    status.text = "READY  ·  $count public sources available. All enabled, eligible sources are included automatically."
+                    startSearchButton.isEnabled = referencePhotos.isNotEmpty()
+                    refreshSources()
+                }
+            }
+        }
     }
 
+    private fun renderReferencePhotos() {
+        referencePreview.removeAllViews()
+        referenceCount.text = if (referencePhotos.isEmpty()) "No photos selected" else
+            "${referencePhotos.size} photo${if (referencePhotos.size == 1) "" else "s"} ready to scan"
+        referencePhotos.forEachIndexed { index, uri ->
+            val image = ImageView(this).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(88), dp(88)).apply { marginEnd = dp(8) }
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(android.graphics.Color.rgb(43, 47, 62))
+                    cornerRadius = dp(12).toFloat()
+                }
+                clipToOutline = true
+                try { setImageURI(uri) } catch (_: Exception) { setImageDrawable(null) }
+                contentDescription = "Reference photo ${index + 1}"
+                setOnClickListener {
+                    androidx.appcompat.app.AlertDialog.Builder(this@WebScanActivity)
+                        .setTitle("Reference photo ${index + 1}")
+                        .setMessage("Remove this photo from the current search?")
+                        .setNegativeButton("Keep", null)
+                        .setPositiveButton("Remove") { _, _ ->
+                            referencePhotos = referencePhotos.filterIndexed { i, _ -> i != index }
+                            renderReferencePhotos()
+                            startSearchButton.isEnabled = referencePhotos.isNotEmpty()
+                            status.text = if (referencePhotos.isEmpty()) "Choose at least one reference photo to begin." else
+                                "${referencePhotos.size} reference photo(s) ready."
+                        }.show()
+                }
+            }
+            referencePreview.addView(image)
+        }
+    }
     override fun onDestroy() {
         scanExecutor.shutdownNow()
         database.close()
@@ -186,6 +303,7 @@ class WebScanActivity : AppCompatActivity() {
     }
 
     private fun addSource() {
+        if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading.", Toast.LENGTH_SHORT).show(); return }
         val raw = sourceUrlInput.text.toString()
         val normalized = PublicSourceDatabase.normalizeBaseUrl(raw)
         if (normalized == null) {
@@ -205,6 +323,7 @@ class WebScanActivity : AppCompatActivity() {
 
 
     private fun importSources() {
+        if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading.", Toast.LENGTH_SHORT).show(); return }
         val lines = bulkSourcesInput.text.toString().lines().map { it.trim() }.filter { it.isNotBlank() }
         if (lines.isEmpty()) {
             Toast.makeText(this, "Paste one domain per line first.", Toast.LENGTH_SHORT).show()
@@ -224,6 +343,7 @@ class WebScanActivity : AppCompatActivity() {
     }
 
     private fun refreshSources() {
+        if (!catalogueReady) return
         sourceList.removeAllViews()
         val items = database.sources()
         if (items.isEmpty()) {
@@ -244,6 +364,7 @@ class WebScanActivity : AppCompatActivity() {
     }
 
     private fun browseCollectedLinks() {
+        if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading.", Toast.LENGTH_SHORT).show(); return }
         val candidates = database.allCandidates(100)
         if (candidates.isEmpty()) {
             Toast.makeText(this, "No image links have been collected yet. Run a batch scan first.", Toast.LENGTH_LONG).show()
@@ -269,6 +390,7 @@ class WebScanActivity : AppCompatActivity() {
 
     /** Opens the live results page immediately. Source discovery and face matching run there. */
     private fun launchAutomaticScan() {
+        if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading. Try again in a moment.", Toast.LENGTH_LONG).show(); return }
         if (referencePhotos.isEmpty()) {
             Toast.makeText(this, "Choose at least one reference photo first.", Toast.LENGTH_LONG).show()
             return

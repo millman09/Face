@@ -2,12 +2,14 @@ package com.example.face
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.ImageView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -61,6 +63,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var resultsContainer: LinearLayout
     private lateinit var resultsList: LinearLayout
     private lateinit var resultsSummary: TextView
+    private val resultsExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    @Volatile private var resultsRefreshInFlight = false
+    private var resultsLoaded = false
+    private var lastResultsRevision: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,23 +87,30 @@ class MainActivity : AppCompatActivity() {
         buildHelp(findViewById(R.id.helpContainer))
         buildChecklist(findViewById(R.id.checklistContainer))
         updateProgress()
-        startModelPrefetch()
+        // Keep first launch lightweight. Model download is deferred until a scan is requested.
 
         val panels = mapOf(
             R.id.nav_tools to findViewById<View>(R.id.panelTools),
             R.id.nav_search to findViewById<View>(R.id.panelSearch),
             R.id.nav_results to findViewById<View>(R.id.panelResults),
             R.id.nav_help to findViewById<View>(R.id.panelHelp),
-            R.id.nav_checklist to findViewById<View>(R.id.panelChecklist)
         )
         val nav = findViewById<BottomNavigationView>(R.id.bottomNav)
         nav.setOnItemSelectedListener { item ->
+            if (item.itemId == R.id.nav_accounts) {
+                startActivity(Intent(this, AccountAuditActivity::class.java))
+                return@setOnItemSelectedListener false
+            }
             panels.forEach { (id, panel) ->
                 panel.visibility = if (id == item.itemId) View.VISIBLE else View.GONE
             }
+            if (item.itemId == R.id.nav_results) refreshResults()
             true
         }
         // Match the visible panel to the selected tab, including after a rotation.
+        if (nav.selectedItemId == R.id.nav_tools) {
+            nav.selectedItemId = R.id.nav_search
+        }
         panels.forEach { (id, panel) ->
             panel.visibility = if (id == nav.selectedItemId) View.VISIBLE else View.GONE
         }
@@ -141,59 +154,229 @@ class MainActivity : AppCompatActivity() {
         addSection(container, getString(R.string.section_search))
         handyLinks.forEach { addLinkTile(container, it) }
         exposureLinks.forEach { addLinkTile(container, it) }
-    }
-
-    private fun buildSearchPanel(container: LinearLayout) {
-        addSection(container, getString(R.string.search_tab_title))
-        addText(container, getString(R.string.search_tab_body))
-        addTile(container, getString(R.string.search_tab_button), "Select your reference photos and begin the automatic scan.") {
-            startActivity(Intent(this, WebScanActivity::class.java))
+        addTile(container, "Privacy checklist", "Review the steps for checking and protecting your accounts.") {
+            val panels = listOf(R.id.panelTools, R.id.panelSearch, R.id.panelResults, R.id.panelHelp, R.id.panelChecklist)
+            panels.forEach { id -> findViewById<View>(id).visibility = if (id == R.id.panelChecklist) View.VISIBLE else View.GONE }
         }
     }
 
+    private fun buildSearchPanel(container: LinearLayout) {
+        val eyebrow = TextView(this).apply {
+            text = "PRIVATE FACE SEARCH"
+            textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            letterSpacing = 0.12f
+            setPadding(0, dp(12), 0, dp(8))
+        }
+        container.addView(eyebrow)
+
+        val headline = TextView(this).apply {
+            text = "Find where your face appears online"
+            textSize = 28f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setLineSpacing(dp(2).toFloat(), 1.0f)
+            setPadding(0, 0, 0, dp(10))
+        }
+        container.addView(headline)
+
+        val intro = TextView(this).apply {
+            text = "Search supported public image sources, compare possible matches, and review the pages where they appear."
+            textSize = 15f
+            setLineSpacing(dp(3).toFloat(), 1.05f)
+            setPadding(0, 0, 0, dp(18))
+        }
+        container.addView(intro)
+
+        addTile(
+            container,
+            "Start a deep search",
+            "Choose one or more reference photos, then scan every supported public source in one run."
+        ) {
+            startActivity(Intent(this, WebScanActivity::class.java))
+        }
+
+        addSection(container, "YOUR SEARCH WORKSPACE")
+        addTile(
+            container,
+            "View possible matches",
+            "Review saved results, similarity scores, and original source pages."
+        ) {
+            findViewById<BottomNavigationView>(R.id.bottomNav).selectedItemId = R.id.nav_results
+        }
+        addTile(
+            container,
+            "Private photo processing",
+            "Reference photos stay on this phone. Candidate images are compared temporarily and are not saved."
+        ) { }
+        addTile(
+            container,
+            "Public-source coverage",
+            "Search can only reach images exposed through supported public pages, feeds, and indexes. It cannot search every website on the internet."
+        ) { }
+    }
+
     private fun buildResultsPanel(container: LinearLayout) {
-        addSection(container, getString(R.string.results_title))
+        val eyebrow = TextView(this).apply {
+            text = "SEARCH HISTORY"
+            textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            letterSpacing = 0.12f
+            setPadding(0, dp(12), 0, dp(8))
+        }
+        container.addView(eyebrow)
+
+        val headline = TextView(this).apply {
+            text = "Possible matches"
+            textSize = 27f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, dp(8))
+        }
+        container.addView(headline)
+
         resultsSummary = TextView(this).apply {
             textSize = 14f
             setPadding(0, 0, 0, dp(12))
         }
         container.addView(resultsSummary)
-        addTile(container, getString(R.string.results_refresh), getString(R.string.results_refresh_body)) {
-            refreshResults()
+        addTile(container, "Refresh results", "Reload the saved possible matches from your previous scans.") {
+            refreshResults(force = true)
         }
         resultsContainer = container
         resultsList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         container.addView(resultsList)
-        refreshResults()
+        resultsSummary.text = getString(R.string.results_empty)
     }
 
-    private fun refreshResults() {
-        if (!::resultsContainer.isInitialized || !::resultsSummary.isInitialized) return
-        val db = PublicSourceDatabase(this)
-        val matches = try { db.possibleMatches() } finally { db.close() }
-        resultsList.removeAllViews()
-        resultsSummary.text = if (matches.isEmpty()) {
-            getString(R.string.results_empty)
-        } else {
-            getString(R.string.results_count, matches.size)
-        }
-        if (matches.isEmpty()) {
-            addText(resultsList, getString(R.string.results_empty_detail))
-            return
-        }
-        matches.forEach { match ->
-            val host = Uri.parse(match.imageUrl).host ?: Uri.parse(match.sourceBaseUrl).host ?: "Website"
-            val score = String.format(java.util.Locale.US, "%.3f", match.similarity)
-            addTile(resultsList, host, getString(R.string.results_match_score, score)) {
-                val target = match.pageUrl.ifBlank { match.imageUrl }
-                openUrl(target)
+    private fun refreshResults(force: Boolean = false) {
+        if (!::resultsContainer.isInitialized || !::resultsSummary.isInitialized || resultsRefreshInFlight) return
+        resultsRefreshInFlight = true
+        resultsSummary.text = "Checking saved matches…"
+        resultsExecutor.execute {
+            var revision = "0:0"
+            var matches: List<MatchResult> = emptyList()
+            var changed = false
+            var failure: String? = null
+            val db = PublicSourceDatabase(applicationContext)
+            try {
+                revision = db.matchRevision()
+                changed = force || !resultsLoaded || revision != lastResultsRevision
+                if (changed) matches = db.possibleMatches(50, bestFirst = true)
+            } catch (e: Exception) {
+                failure = e.localizedMessage ?: "Unable to read saved results."
+            } finally { db.close() }
+            runOnUiThread {
+                resultsRefreshInFlight = false
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (failure != null) { resultsSummary.text = failure; return@runOnUiThread }
+                if (!changed) return@runOnUiThread
+                lastResultsRevision = revision
+                resultsLoaded = true
+                resultsList.removeAllViews()
+                resultsSummary.text = if (matches.isEmpty()) getString(R.string.results_empty)
+                    else getString(R.string.results_count, matches.size)
+                if (matches.isEmpty()) {
+                    addText(resultsList, getString(R.string.results_empty_detail))
+                } else {
+                    matches.forEach { match -> addMatchCard(match) }
+                }
             }
         }
     }
 
+    private fun addMatchCard(match: MatchResult) {
+        val host = Uri.parse(match.imageUrl).host ?: Uri.parse(match.sourceBaseUrl).host ?: "Website"
+        val score = (match.similarity.coerceIn(-1f, 1f) * 100f).toInt().coerceAtLeast(0)
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(android.graphics.Color.rgb(25, 29, 43))
+                cornerRadius = dp(16).toFloat()
+            }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { openUrl(match.pageUrl.ifBlank { match.imageUrl }) }
+        }
+        val preview = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(112), dp(112))
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setBackgroundColor(android.graphics.Color.rgb(43, 47, 62))
+            contentDescription = "Possible matching image from $host"
+        }
+        card.addView(preview)
+        val details = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        details.addView(TextView(this).apply {
+            text = "Possible match"
+            textSize = 16f
+            setTextColor(android.graphics.Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        details.addView(TextView(this).apply {
+            text = host
+            textSize = 13f
+            setTextColor(android.graphics.Color.rgb(190, 195, 210))
+            setPadding(0, dp(4), 0, dp(3))
+        })
+        details.addView(TextView(this).apply {
+            text = "Similarity indicator: $score"
+            textSize = 13f
+            setTextColor(android.graphics.Color.rgb(173, 160, 255))
+        })
+        details.addView(com.google.android.material.button.MaterialButton(this).apply {
+            text = "Open source"
+            isAllCaps = false
+            setOnClickListener { openUrl(match.pageUrl.ifBlank { match.imageUrl }) }
+        })
+        card.addView(details)
+        resultsList.addView(card, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(12) })
+        Thread({
+            try {
+                val uri = Uri.parse(match.imageUrl)
+                if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null) return@Thread
+                val connection = (java.net.URL(match.imageUrl).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 5000
+                    readTimeout = 7000
+                    instanceFollowRedirects = false
+                    setRequestProperty("Accept", "image/*")
+                    setRequestProperty("User-Agent", "FacePersonalScanner/1.0")
+                }
+                val bitmap = try {
+                    if (connection.responseCode !in 200..299 || !connection.contentType.orEmpty().startsWith("image/") || connection.contentLengthLong > 2L * 1024L * 1024L) null
+                    else connection.inputStream.use { input ->
+                        val output = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        var total = 0
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            if (total > 2 * 1024 * 1024) throw IllegalArgumentException("Thumbnail exceeds temporary size limit")
+                            output.write(buffer, 0, count)
+                        }
+                        val bytes = output.toByteArray()
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    }
+                } finally { connection.disconnect() }
+                if (bitmap != null) runOnUiThread { if (!isFinishing && !isDestroyed) preview.setImageBitmap(bitmap) else bitmap.recycle() }
+            } catch (_: Exception) { }
+        }, "match-thumbnail").start()
+    }
     override fun onResume() {
         super.onResume()
-        if (::resultsContainer.isInitialized) refreshResults()
+        if (::resultsContainer.isInitialized && findViewById<View>(R.id.panelResults).visibility == View.VISIBLE) {
+            refreshResults()
+        }
+    }
+
+    override fun onDestroy() {
+        resultsExecutor.shutdownNow()
+        super.onDestroy()
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

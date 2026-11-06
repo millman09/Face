@@ -49,7 +49,9 @@ class IdentityMatchActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var progress: ProgressBar
     private lateinit var scanButton: MaterialButton
+    private lateinit var cancelButton: MaterialButton
     private lateinit var resultsContainer: LinearLayout
+    private var activeWebScan: java.util.concurrent.Future<*>? = null
     private var modelFile: File? = null
     private var referenceUri: Uri? = null
     private var referenceUris: List<Uri> = emptyList()
@@ -78,13 +80,33 @@ class IdentityMatchActivity : AppCompatActivity() {
         if (uris.isNotEmpty()) { addCandidateUris(uris); status.text = "${imageUris.size} candidate image(s) ready."; updateReady() }
     }
 
+    private val exportResultsPicker = registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri != null) exportSavedMatches(uri)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(16), dp(20), dp(24))
+            setPadding(dp(20), dp(18), dp(20), dp(28))
+            setBackgroundColor(android.graphics.Color.rgb(13, 16, 24))
         }
-        setToolPage("Face matching", root)
+        setToolPage("Deep search", root)
+        root.addView(TextView(this).apply {
+            text = "FACE SEARCH  /  LIVE SCAN"
+            textSize = 11f
+            letterSpacing = 0.12f
+            setTextColor(android.graphics.Color.rgb(155, 139, 255))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(8))
+        })
+        root.addView(TextView(this).apply {
+            text = "Searching for\nyour face."
+            textSize = 29f
+            setTextColor(android.graphics.Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, dp(14))
+        })
         webScanMode = intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false)
         autoStartScan = intent.getBooleanExtra(EXTRA_AUTO_START, false)
         @Suppress("DEPRECATION")
@@ -92,21 +114,24 @@ class IdentityMatchActivity : AppCompatActivity() {
         referenceUri = referenceUris.firstOrNull()
         root.addView(TextView(this).apply {
             text = if (webScanMode) {
-                "This page automatically checks every enabled source in the built-in public catalogue, discovers available public image links, and compares them with your selected photos. Candidate images are processed temporarily in memory on this phone and are not saved or uploaded."
+                "Your selected reference photos stay on this device. The scan checks supported public sources and compares accessible images locally. Coverage depends on what each source makes publicly available."
             } else {
-                "Downloads Qualcomm AI Hub MobileFaceNet from its public release (Apache 2.0 model weights). It runs locally on this phone. Select reference photo(s) and candidate images. Photos are aligned on-device; no images are uploaded."
+                "The face matcher runs on this phone. Select your reference photos and candidate images to compare them privately, without uploading your photos."
             }
             textSize = 14f
-            setPadding(0, 0, 0, 16)
+            setTextColor(android.graphics.Color.rgb(190, 195, 210))
+            setLineSpacing(dp(3).toFloat(), 1.04f)
+            setPadding(0, 0, 0, dp(16))
         })
         val existingModel = File(filesDir, modelTargetName)
         if (existingModel.exists()) modelFile = existingModel
-        addButton(root, "Download official MobileFaceNet model (~4 MB)") { downloadOfficialModel() }
-        addButton(root, "Choose compatible TFLite model") { modelPicker.launch(arrayOf("*/*")) }
-        addButton(root, "Choose reference photo(s)") { referencePicker.launch(arrayOf("image/*")) }
+        addButton(root, "Install face-matching model  ·  ~4 MB") { downloadOfficialModel() }
+        addButton(root, "Choose a compatible face model") { modelPicker.launch(arrayOf("*/*")) }
+        addButton(root, "Choose reference photos") { referencePicker.launch(arrayOf("image/*")) }
+        if (webScanMode) addButton(root, "Export saved matches (CSV)") { exportResultsPicker.launch("face-search-results.csv") }
         if (!webScanMode) addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
         scanButton = MaterialButton(this).apply {
-            text = if (webScanMode) "Scan all public websites and match my photos" else "Compare faces on this phone"
+            text = if (webScanMode) "Start deep search" else "Compare selected photos"
             isAllCaps = false
             isEnabled = false
             setOnClickListener { runComparison() }
@@ -114,18 +139,44 @@ class IdentityMatchActivity : AppCompatActivity() {
         root.addSpaced(scanButton)
         progress =ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { visibility = ProgressBar.GONE }
         root.addView(progress)
+        cancelButton = MaterialButton(this).apply {
+            text = "Cancel search"
+            isAllCaps = false
+            visibility = android.view.View.GONE
+            setOnClickListener {
+                activeWebScan?.cancel(true)
+                status.text = "Cancelling search…"
+            }
+        }
+        root.addView(cancelButton)
         status = TextView(this).apply {
             text = if (webScanMode) "Install the model and choose reference photo(s)." else "No model or images selected."
             textSize = 14f
             setPadding(0, 16, 0, 0)
         }
         root.addView(status)
-        val resultsScroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); isFillViewport = true }
         resultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val resultSortRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, dp(6))
+        }
+        resultSortRow.addView(MaterialButton(this).apply {
+            text = "Best matches"
+            isAllCaps = false
+            setOnClickListener { resultsContainer.removeAllViews(); restoreSavedMatches(bestFirst = true) }
+        }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(5) })
+        resultSortRow.addView(MaterialButton(this).apply {
+            text = "Most recent"
+            isAllCaps = false
+            setOnClickListener { resultsContainer.removeAllViews(); restoreSavedMatches(bestFirst = false) }
+        }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(5) })
+        if (webScanMode) root.addView(resultSortRow)
+        val resultsScroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); isFillViewport = true }
         resultsScroll.addView(resultsContainer)
         root.addView(resultsScroll)
         handleSharedImages(intent)
         updateReady()
+        if (webScanMode) restoreSavedMatches()
         if (autoStartScan && webScanMode) {
             if (modelFile?.exists() == true && referenceUris.isNotEmpty()) {
                 runComparison()
@@ -334,7 +385,8 @@ class IdentityMatchActivity : AppCompatActivity() {
             return
         }
         val model = modelFile ?: return
-        val ref = referenceUri ?: return
+        val refs = referenceUris.ifEmpty { listOfNotNull(referenceUri) }
+        if (refs.isEmpty()) return
         val candidates = imageUris.toList()
         scanButton.isEnabled = false
         progress.visibility = ProgressBar.VISIBLE
@@ -344,30 +396,37 @@ class IdentityMatchActivity : AppCompatActivity() {
         executor.execute {
             var interpreter: Interpreter? = null
             var faceDetector: FaceDetector? = null
-            var referenceAligned: Bitmap? = null
+            val alignedReferences = mutableListOf<Bitmap>()
             val resultsDatabase = PublicSourceDatabase(this)
             try {
                 validateMobileFaceNetModel(model)
                 interpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
                 val options = FaceDetectorOptions.Builder()
-                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
                     .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                     .build()
                 faceDetector = FaceDetection.getClient(options)
 
-                val referenceBitmap = decode(ref)
-                val referenceFaces = Tasks.await(faceDetector.process(InputImage.fromBitmap(referenceBitmap, 0)))
-                val referenceFace = referenceFaces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
-                    ?: throw IllegalArgumentException("No face was detected in the reference photo.")
-                referenceAligned = alignFace(referenceBitmap, referenceFace)
-                referenceBitmap.recycle()
-
-                val referenceNote = if (referenceFaces.size > 1) {
-                    "The reference photo has ${referenceFaces.size} faces, so the largest one was used.\n"
+                var totalReferenceFaces = 0
+                refs.forEachIndexed { refIndex, refUri ->
+                    val referenceBitmap = decode(refUri)
+                    try {
+                        val detected = Tasks.await(faceDetector.process(InputImage.fromBitmap(referenceBitmap, 0)))
+                        val referenceFace = detected.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                            ?: throw IllegalArgumentException("No face was detected in reference photo ${refIndex + 1}.")
+                        alignedReferences += alignFace(referenceBitmap, referenceFace)
+                        totalReferenceFaces += detected.size
+                    } finally {
+                        referenceBitmap.recycle()
+                    }
+                }
+                val referenceNote = if (totalReferenceFaces > refs.size) {
+                    "Some reference photos contained multiple faces; the largest face in each was used.\n"
                 } else {
                     ""
                 }
-                val report = StringBuilder("Reference face aligned for this scan session.\n$referenceNote")
+                val referenceEmbeddings = alignedReferences.map { embedFace(interpreter, it) }
+                val localMatches = mutableListOf<String>()
                 var checked = 0
                 var matched = 0
                 candidates.forEachIndexed { index, uri ->
@@ -381,7 +440,10 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 try {
                                     val aligned = alignFace(bitmap, face)
                                     try {
-                                        val score = comparePair(interpreter, referenceAligned!!, aligned)
+                                        val candidateEmbedding = embedFace(interpreter, aligned)
+                                        val score = combineReferenceScores(
+                                            referenceEmbeddings.map { reference -> cosineSimilarity(reference, candidateEmbedding) }
+                                        )
                                         if (best == null || score > best!!) best = score
                                     } finally {
                                         aligned.recycle()
@@ -396,27 +458,28 @@ class IdentityMatchActivity : AppCompatActivity() {
                             bitmap.recycle()
                         }
                         val similarity = best
-                        val angle = if (similarity != null) Math.toDegrees(acos(similarity.coerceIn(-1f, 1f).toDouble())) else null
-                        val possible = angle != null && angle <= 74.18
-                        if (possible) matched++
-                        report.append("${index + 1}. ${displayName(uri)}: ${faces.size} face(s)")
-                        if (skipped > 0) report.append(" ($skipped skipped, landmarks not clear)")
-                        if (similarity != null && angle != null) {
-                            report.append(", cosine ${"%.3f".format(java.util.Locale.US, similarity)}, angle ${"%.1f".format(java.util.Locale.US, angle)}° - ")
-                            report.append(if (possible) "POSSIBLE MATCH" else "lower similarity")
+                        val possible = similarity != null && similarity >= 0.4f
+                        if (possible) {
+                            matched++
+                            localMatches += "${displayName(uri)} · cosine ${"%.3f".format(java.util.Locale.US, similarity)}"
                         }
-                        report.append("\n")
-                    } catch (e: Exception) {
-                        report.append("${index + 1}. ${displayName(uri)}: error - ${e.localizedMessage ?: "unknown"}\n")
+                    } catch (_: Exception) {
+                        // Keep the result view focused on successful possible matches.
                     }
                     checked++
-                    runOnUiThread {
-                        progress.progress = checked
-                        status.text = "Compared $checked of ${candidates.size} images…"
+                    if (checked % 10 == 0 || checked == candidates.size) {
+                        runOnUiThread {
+                            progress.progress = checked
+                            status.text = "Compared $checked of ${candidates.size} images…"
+                        }
                     }
                 }
-                report.append("\nFinished: $matched possible match(es). Qualcomm's published 74.18° threshold is a benchmark starting point, not proof of identity. Review every candidate manually.")
-                runOnUiThread { status.text = report.toString(); progress.visibility = ProgressBar.GONE; updateReady() }
+                val summary = buildString {
+                    append("Finished: checked $checked of ${candidates.size} images and found $matched possible match(es). ")
+                    append("The 0.4 cosine threshold was applied. Review possible matches manually.")
+                    if (localMatches.isNotEmpty()) append("\n\nPossible matches:\n" + localMatches.take(50).joinToString("\n"))
+                }
+                runOnUiThread { status.text = summary; progress.visibility = ProgressBar.GONE; updateReady() }
             } catch (e: Exception) {
                 runOnUiThread {
                     status.text = "Comparison could not run: ${e.localizedMessage ?: "unknown error"}"
@@ -424,7 +487,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     updateReady()
                 }
             } finally {
-                referenceAligned?.recycle()
+                alignedReferences.forEach { it.recycle() }
                 faceDetector?.close()
                 interpreter?.close()
                 resultsDatabase.close()
@@ -444,63 +507,27 @@ class IdentityMatchActivity : AppCompatActivity() {
         scanButton.isEnabled = false
         progress.visibility = ProgressBar.VISIBLE
         progress.progress = 0
-        resultsContainer.removeAllViews()
-        status.text = "Preparing automatic public-source scan…"
-        executor.execute {
+        status.text = "Preparing on-device face matching…"
+        cancelButton.visibility = android.view.View.VISIBLE
+        activeWebScan = executor.submit {
             var interpreter: Interpreter? = null
             var detector: FaceDetector? = null
+            var downloadPool: java.util.concurrent.ExecutorService? = null
             val alignedReferences = mutableListOf<Bitmap>()
             val candidateDatabase = PublicSourceDatabase(this)
             try {
-                val sources = candidateDatabase.sources().filter { it.enabled }
-                require(sources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
-                runOnUiThread { progress.max = sources.size }
-                var addedTotal = 0
-                var completedSources = 0
-                for (source in sources) {
-                    if (Thread.currentThread().isInterrupted) break
-                    runOnUiThread {
-                        status.text = "Discovering public images: ${source.name} (${completedSources + 1}/${sources.size})…"
-                    }
-                    try {
-                        val discovered = PublicSourceScanner.scan(source)
-                        val added = candidateDatabase.saveCandidates(discovered)
-                        addedTotal += added
-                        candidateDatabase.updateSourceStatus(
-                            source.id, "Checked; ${discovered.size} public image link(s), ${added} new"
-                        )
-                    } catch (e: Exception) {
-                        candidateDatabase.updateSourceStatus(
-                            source.id, "Could not scan: ${e.localizedMessage ?: "network error"}"
-                        )
-                    }
-                    completedSources++
-                    val done = completedSources
-                    runOnUiThread {
-                        progress.max = sources.size
-                        progress.progress = done
-                        status.text = "Website discovery: checked $done of ${sources.size}; found $addedTotal new image link(s)…"
-                    }
-                    // Sequential requests with a short pause avoid flooding public hosts.
-                    try { Thread.sleep(1200) } catch (_: InterruptedException) { break }
-                }
-
-                val candidates = candidateDatabase.allCandidates(5000)
-                require(candidates.isNotEmpty()) {
-                    "The catalogue scan finished, but its public sitemap/feed endpoints exposed no image links. Many sites do not publish crawlable image sitemaps."
-                }
-                runOnUiThread {
-                    progress.max = completedSources + candidates.size
-                    progress.progress = completedSources
-                    status.text = "Discovered ${candidateDatabase.candidateCount()} stored image link(s). Preparing on-device face matching for ${candidates.size} candidates…"
-                }
+                val enabledSources = candidateDatabase.sources().filter { it.enabled }
+                require(enabledSources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
+                // Avoid re-crawling the same domains on every run. A source becomes eligible again after 24 hours.
+                val rescanBefore = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
+                val sources = enabledSources.filter { it.lastScan == 0L || it.lastScan < rescanBefore }
 
                 validateMobileFaceNetModel(model)
                 val activeInterpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
                 interpreter = activeInterpreter
                 val activeDetector = FaceDetection.getClient(
                     FaceDetectorOptions.Builder()
-                        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+                        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
                         .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                         .build()
                 )
@@ -517,86 +544,172 @@ class IdentityMatchActivity : AppCompatActivity() {
                     }
                 }
 
-                val report = StringBuilder(
-                    "Checked $completedSources of ${sources.size} public catalogue sources. " +
-                    "Found ${candidateDatabase.candidateCount()} stored image links; comparing up to ${candidates.size} candidates. " +
-                    "All selected reference photos are used. Image bytes stay in memory only.\n\n"
-                )
+                // Cache each reference embedding once. Each candidate face is embedded once,
+                // then compared in memory against all references.
+                val referenceEmbeddings = alignedReferences.map { embedFace(activeInterpreter, it) }
+
+                var completedSources = 0
                 var checked = 0
                 var possibleMatches = 0
-                candidates.forEachIndexed { index, candidate ->
-                    try {
-                        val bitmap = downloadPublicImageInMemory(candidate.imageUrl)
-                        try {
-                            val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
-                            var best: Float? = null
-                            var skipped = 0
-                            for (face in faces) {
-                                var aligned: Bitmap? = null
-                                try {
-                                    aligned = alignFace(bitmap, face)
-                                    for (reference in alignedReferences) {
-                                        val score = comparePair(activeInterpreter, reference, aligned)
-                                        if (best == null || score > best!!) best = score
-                                    }
-                                } catch (_: IllegalArgumentException) {
-                                    skipped++
-                                } finally {
-                                    aligned?.recycle()
-                                }
-                            }
-                            val similarity = best
-                            val angle = similarity?.let {
-                                Math.toDegrees(acos(it.coerceIn(-1f, 1f).toDouble()))
-                            }
-                            val possible = angle != null && angle <= 74.18
-                            if (possible) {
-                                possibleMatches++
-                                val preview = Bitmap.createScaledBitmap(
-                                    bitmap, 220,
-                                    (220f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), true
-                                )
-                                runOnUiThread { addWebMatchPreview(candidate.imageUrl, similarity ?: 0f, preview) }
-                            }
-                            report.append("${index + 1}. ${Uri.parse(candidate.imageUrl).host}: ${faces.size} face(s)")
-                            if (skipped > 0) report.append(" ($skipped could not be aligned)")
-                            if (similarity != null && angle != null) {
-                                report.append(", cosine ${"%.3f".format(java.util.Locale.US, similarity)}, angle ${"%.1f".format(java.util.Locale.US, angle)}° - ")
-                                report.append(if (possible) "POSSIBLE MATCH" else "lower similarity")
-                            }
-                            report.append("\n")
-                            candidateDatabase.updateCandidateResult(candidate.id, if (possible) "Possible match" else "Compared", similarity)
-                        } finally {
-                            bitmap.recycle()
-                        }
-                    } catch (e: Exception) {
-                        report.append("${index + 1}. ${Uri.parse(candidate.imageUrl).host ?: "website"}: skipped - ${e.localizedMessage ?: "image unavailable"}\n")
-                        candidateDatabase.updateCandidateStatus(candidate.id, "Unavailable")
-                    }
-                    checked++
-                    val current = checked
+                var addedTotal = 0
+                val processedIds = mutableSetOf<Long>()
+                val report = StringBuilder()
+                progress.max = 100
+                progress.progress = 0
+
+                // The bar and displayed percentage both represent the same metric:
+                // completed public sources divided by the total enabled sources.
+                // Image comparisons remain a separate count because the total number
+                // of images is not known until each source has been scanned.
+                fun updateSearchProgress(detail: String) {
+                    val percent = if (sources.isEmpty()) 100 else ((completedSources * 100f) / sources.size)
+                        .toInt().coerceIn(0, 100)
                     runOnUiThread {
-                        progress.max = completedSources + candidates.size
-                        progress.progress = completedSources + current
-                        status.text = "Matching photos: $current of ${candidates.size} images checked. $possibleMatches possible match(es) so far."
+                        progress.max = 100
+                        progress.progress = percent
+                        status.text = "Source scan: $percent% · $detail"
                     }
                 }
-                report.append(
-                    "\nFinished: $possibleMatches possible match(es). This only checks public image links exposed by the catalogue sources' sitemap/feed endpoints. " +
-                    "Some sites expose no links, and this is not a complete search of the internet. Review every candidate manually."
-                )
+
+                // Download up to six public images concurrently, but keep ML Kit detection and
+                // TFLite inference on this single scan worker to avoid concurrent model access.
+                val activeDownloadPool = Executors.newFixedThreadPool(6)
+                downloadPool = activeDownloadPool
+                fun comparePendingCandidates() {
+                    val batch = candidateDatabase.pendingCandidates(5000)
+                        .filter { processedIds.add(it.id) }
+                    if (batch.isEmpty()) return
+                    data class Downloaded(val candidate: StoredCandidate, val bitmap: Bitmap?, val error: String?)
+                    data class MatchPreview(val id: Long, val pageUrl: String, val imageUrl: String, val score: Float, val bitmap: Bitmap)
+                    val completion = java.util.concurrent.ExecutorCompletionService<Downloaded>(activeDownloadPool)
+                    for (chunk in batch.chunked(12)) {
+                        val futures = chunk.map { candidate ->
+                            completion.submit(java.util.concurrent.Callable {
+                                try { Downloaded(candidate, downloadPublicImageInMemory(candidate.imageUrl), null) }
+                                catch (e: Exception) { Downloaded(candidate, null, e.localizedMessage ?: "image unavailable") }
+                            })
+                        }
+                        val updates = mutableListOf<CandidateUpdate>()
+                        val previews = mutableListOf<MatchPreview>()
+                        repeat(futures.size) {
+                            val downloaded = completion.take().get()
+                            val candidate = downloaded.candidate
+                            val bitmap = downloaded.bitmap
+                            if (bitmap == null) {
+                                updates += CandidateUpdate(candidate.id, "Unavailable", null)
+                            } else {
+                                try {
+                                    val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
+                                    var best: Float? = null
+                                    for (face in faces) {
+                                        var aligned: Bitmap? = null
+                                        try {
+                                            aligned = alignFace(bitmap, face)
+                                            val candidateEmbedding = embedFace(activeInterpreter, aligned)
+                                            val faceScore = combineReferenceScores(referenceEmbeddings.map { reference -> cosineSimilarity(reference, candidateEmbedding) })
+                                            if (best == null || faceScore > best!!) best = faceScore
+                                        } catch (_: IllegalArgumentException) {
+                                            // Faces without the five required landmarks cannot be aligned.
+                                        } finally { aligned?.recycle() }
+                                    }
+                                    val similarity = best
+                                    val possible = similarity != null && similarity >= 0.4f
+                                    if (possible) {
+                                        possibleMatches++
+                                        previews += MatchPreview(candidate.id, candidate.pageUrl, candidate.imageUrl, similarity!!, makeResultPreview(bitmap))
+                                    }
+                                    updates += CandidateUpdate(candidate.id, if (possible) "Possible match" else "Compared", if (possible) similarity else null)
+                                } catch (_: Exception) {
+                                    updates += CandidateUpdate(candidate.id, "Unavailable", null)
+                                } finally { bitmap.recycle() }
+                            }
+                            checked++
+                        }
+                        // One transaction per chunk replaces one database write per image.
+                        candidateDatabase.updateCandidateResults(updates)
+                        if (previews.isNotEmpty()) runOnUiThread {
+                            previews.forEach { item -> addWebMatchPreview(item.id, item.pageUrl, item.imageUrl, item.score, item.bitmap) }
+                        }
+                        // Progress updates are deliberately batched instead of posted once per image.
+                        updateSearchProgress("$completedSources/${sources.size} sites checked, $checked images compared, $possibleMatches possible match(es)")
+                    }
+                }
+
+                val sourcePool = Executors.newFixedThreadPool(6)
+                try {
+                    val completion = java.util.concurrent.ExecutorCompletionService<Triple<WebsiteSource, Int, Int>>(sourcePool)
+                    val hostLocks = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.Semaphore>()
+                    sources.forEach { source ->
+                        completion.submit {
+                            val host = URL(source.baseUrl).host.lowercase(java.util.Locale.US)
+                            val hostLock = hostLocks.computeIfAbsent(host) { java.util.concurrent.Semaphore(1) }
+                            hostLock.acquire()
+                            try {
+                                val discovered = PublicSourceScanner.scan(source)
+                                val added = candidateDatabase.saveCandidates(discovered)
+                                candidateDatabase.updateSourceStatus(
+                                    source.id, "Checked; ${discovered.size} public image link(s), $added new"
+                                )
+                                Triple(source, discovered.size, added)
+                            } catch (e: Exception) {
+                                candidateDatabase.updateSourceStatus(
+                                    source.id, "Could not scan: ${e.localizedMessage ?: "network error"}"
+                                )
+                                Triple(source, -1, 0)
+                            } finally { hostLock.release() }
+                        }
+                    }
+                    repeat(sources.size) {
+                        if (Thread.currentThread().isInterrupted) throw InterruptedException("Search cancelled")
+                        val (source, discoveredCount, added) = completion.take().get()
+                        completedSources++
+                        addedTotal += added
+                        updateSearchProgress(
+                            if (discoveredCount >= 0) {
+                                "${source.name} returned $discoveredCount image link(s). $completedSources/${sources.size} sites checked; $checked images compared; $possibleMatches possible match(es)."
+                            } else {
+                                "${source.name} was unavailable. $completedSources/${sources.size} sites checked; $checked images compared."
+                            }
+                        )
+                        comparePendingCandidates()
+                    }
+                } finally {
+                    sourcePool.shutdownNow()
+                }
+
+                // Catch any final candidates saved just before the last completion signal.
+                comparePendingCandidates()
+                val totalIndexed = candidateDatabase.candidateCount()
+                val summary = if (sources.isEmpty()) {
+                    "All ${enabledSources.size} enabled public sources were scanned within the last 24 hours, so discovery was skipped. Checked $checked previously unprocessed images and found $possibleMatches possible match(es)."
+                } else if (totalIndexed == 0) {
+                    "No public image links were discovered. Supported sites may not expose crawlable public pages."
+                } else {
+                    "Search finished. Checked $completedSources/${sources.size} public sources, discovered $addedTotal new image link(s), compared $checked new or retryable image(s), and found $possibleMatches possible match(es). $totalIndexed image links remain indexed for future incremental searches. Public-source coverage is limited to pages made accessible by each website; this is not a complete index of the internet. Review matches manually."
+                }
                 runOnUiThread {
-                    status.text = report.toString()
+                    progress.max = 100
+                    progress.progress = 100
+                    status.text = "Source scan: 100% · $summary"
                     progress.visibility = ProgressBar.GONE
                     updateReady()
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    status.text = "Automatic scan or matching could not finish: ${e.localizedMessage ?: "unknown error"}"
+                    status.text = if (e is InterruptedException || Thread.currentThread().isInterrupted) {
+                        "Search cancelled. Previously saved matches are still available."
+                    } else {
+                        "Automatic scan or matching could not finish: ${e.localizedMessage ?: "unknown error"}"
+                    }
                     progress.visibility = ProgressBar.GONE
                     updateReady()
                 }
             } finally {
+                downloadPool?.shutdownNow()
+                runOnUiThread {
+                    cancelButton.visibility = android.view.View.GONE
+                    activeWebScan = null
+                }
                 alignedReferences.forEach { it.recycle() }
                 detector?.close()
                 interpreter?.close()
@@ -605,7 +718,71 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
-    private fun addWebMatchPreview(imageUrl: String, similarity: Float, preview: Bitmap) {
+    private fun exportSavedMatches(destination: Uri) {
+        executor.execute {
+            val db = PublicSourceDatabase(this)
+            val matches = try { db.possibleMatches(2000, bestFirst = true) } finally { db.close() }
+            try {
+                contentResolver.openOutputStream(destination)?.bufferedWriter(Charsets.UTF_8).use { writer ->
+                    requireNotNull(writer) { "Could not open the export destination." }
+                    writer.appendLine("similarity_cosine,checked_at,source_url,page_url,image_url")
+                    for (match in matches) {
+                        val values = listOf(
+                            match.similarity.toString(),
+                            match.checkedAt.toString(),
+                            match.sourceBaseUrl,
+                            match.pageUrl,
+                            match.imageUrl
+                        ).joinToString(",") { "\"" + it.replace("\"", "\"\"") + "\"" }
+                        writer.appendLine(values)
+                    }
+                }
+                runOnUiThread {
+                    Toast.makeText(this, "Exported ${matches.size} saved match(es).", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Export failed: ${e.localizedMessage ?: "unknown error"}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun makeResultPreview(bitmap: Bitmap): Bitmap {
+        val targetWidth = 220
+        val targetHeight = (targetWidth.toFloat() * bitmap.height / bitmap.width).toInt().coerceAtLeast(1)
+        val scaled = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+        return if (scaled === bitmap) bitmap.copy(Bitmap.Config.ARGB_8888, false) else scaled
+    }
+
+    /** Restore recent match cards from the local database; image bytes remain temporary. */
+    private fun restoreSavedMatches(bestFirst: Boolean = false) {
+        executor.execute {
+            val db = PublicSourceDatabase(this)
+            val matches = try { db.possibleMatches(30, bestFirst) } finally { db.close() }
+            var restored = 0
+            for (match in matches) {
+                try {
+                    val bitmap = downloadPublicImageInMemory(match.imageUrl)
+                    val preview = makeResultPreview(bitmap)
+                    bitmap.recycle()
+                    runOnUiThread {
+                        addWebMatchPreview(match.id, match.pageUrl, match.imageUrl, match.similarity, preview)
+                    }
+                    restored++
+                } catch (_: Exception) {
+                    // A previously public image may have been removed or become unavailable.
+                }
+            }
+            if (restored > 0) {
+                runOnUiThread {
+                    if (!isFinishing) status.text = "Restored $restored saved possible match(es). Start a new search to find newly discovered images."
+                }
+            }
+        }
+    }
+
+    private fun addWebMatchPreview(candidateId: Long, pageUrl: String, imageUrl: String, similarity: Float, preview: Bitmap) {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(10), dp(10), dp(10), dp(10))
@@ -614,10 +791,16 @@ class IdentityMatchActivity : AppCompatActivity() {
                 cornerRadius = dp(12).toFloat()
             }
         }
+        card.isClickable = true
+        card.isFocusable = true
+        card.setOnClickListener { openResultUrl(pageUrl.ifBlank { imageUrl }) }
         card.addView(ImageView(this).apply {
             setImageBitmap(preview)
             scaleType = ImageView.ScaleType.CENTER_CROP
             layoutParams = LinearLayout.LayoutParams(dp(104), dp(104))
+            contentDescription = "Possible match preview. Tap to open the source page."
+            isClickable = true
+            setOnClickListener { openResultUrl(imageUrl) }
         })
         val details = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -631,16 +814,44 @@ class IdentityMatchActivity : AppCompatActivity() {
         })
         details.addView(TextView(this).apply { text = Uri.parse(imageUrl).host ?: imageUrl; textSize = 12f })
         details.addView(MaterialButton(this).apply {
-            text = "Open source"
+            text = "Open source page"
+            isAllCaps = false
+            setOnClickListener { openResultUrl(pageUrl.ifBlank { imageUrl }) }
+        })
+        details.addView(MaterialButton(this).apply {
+            text = "View image"
+            isAllCaps = false
+            setOnClickListener { openResultUrl(imageUrl) }
+        })
+        details.addView(MaterialButton(this).apply {
+            text = "Not a match"
             isAllCaps = false
             setOnClickListener {
-                try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(imageUrl))) } catch (_: Exception) {}
+                executor.execute {
+                    val db = PublicSourceDatabase(this@IdentityMatchActivity)
+                    try { db.updateCandidateResult(candidateId, "Not a match", similarity) } finally { db.close() }
+                }
+                resultsContainer.removeView(card)
+                Toast.makeText(this@IdentityMatchActivity, "Removed from possible matches.", Toast.LENGTH_SHORT).show()
             }
         })
         card.addView(details)
         resultsContainer.addView(card, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { bottomMargin = dp(10) })
+    }
+
+    private fun openResultUrl(address: String) {
+        val uri = Uri.parse(address)
+        if (uri.scheme !in listOf("https", "http") || uri.host.isNullOrBlank() || uri.userInfo != null) {
+            Toast.makeText(this, "This result link is not a valid public web address.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
+        } catch (_: Exception) {
+            Toast.makeText(this, "No browser is available to open this result.", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** Fetches a public HTTPS image into a bounded byte array; never writes it to disk. */
@@ -686,7 +897,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
             require(bounds.outWidth > 0 && bounds.outHeight > 0) { "Image could not be decoded." }
             var sample = 1
-            while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > 2000) sample *= 2
+            while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > 1000) sample *= 2
             val options = BitmapFactory.Options().apply {
                 inSampleSize = sample
                 inPreferredConfig = Bitmap.Config.ARGB_8888
@@ -745,41 +956,57 @@ class IdentityMatchActivity : AppCompatActivity() {
         return aligned
     }
 
-    private fun comparePair(interpreter: Interpreter, first: Bitmap, second: Bitmap): Float {
+    private fun combineReferenceScores(scores: List<Float>): Float {
+        require(scores.isNotEmpty()) { "At least one reference embedding is required." }
+        if (scores.size == 1) return scores.first()
+        return scores.sortedDescending().take(2).average().toFloat()
+    }
+
+    /**
+     * MobileFaceNet is a two-input verification model. Its two output vectors are
+     * independently derived from the two input faces, so feeding the same face to
+     * both inputs lets us extract one reusable embedding. Reference embeddings are
+     * cached for the scan; each candidate face then needs only one model inference.
+     */
+    private fun embedFace(interpreter: Interpreter, bitmap: Bitmap): FloatArray {
         val inputShape0 = interpreter.getInputTensor(0).shape()
         val inputShape1 = interpreter.getInputTensor(1).shape()
-        val inputs = arrayOf(makeInput(first, inputShape0), makeInput(second, inputShape1))
+        val input0 = makeInput(bitmap, inputShape0)
+        val input1 = makeInput(bitmap, inputShape1)
         val outputShape = interpreter.getOutputTensor(0).shape()
         val output = ByteBuffer.allocateDirect(outputShape.fold(1) { acc, dim -> acc * dim } * 4)
             .order(ByteOrder.nativeOrder())
-        interpreter.runForMultipleInputsOutputs(inputs, mutableMapOf<Int, Any>(0 to output))
+        interpreter.runForMultipleInputsOutputs(arrayOf(input0, input1), mutableMapOf<Int, Any>(0 to output))
         output.rewind()
-        val firstEmbedding = FloatArray(128) { output.float }
-        val secondEmbedding = FloatArray(128) { output.float }
-        val a = normalize(firstEmbedding)
-        val b = normalize(secondEmbedding)
-        return a.indices.sumOf { (a[it] * b[it]).toDouble() }.toFloat().coerceIn(-1f, 1f)
+        return normalize(FloatArray(128) { output.float })
+    }
+
+    private fun cosineSimilarity(first: FloatArray, second: FloatArray): Float {
+        require(first.size == second.size) { "Embedding dimensions do not match." }
+        return first.indices.sumOf { (first[it] * second[it]).toDouble() }
+            .toFloat().coerceIn(-1f, 1f)
     }
 
     private fun makeInput(bitmap: Bitmap, shape: IntArray): ByteBuffer {
+        require(bitmap.width == 112 && bitmap.height == 112) { "Face input must be 112 by 112 pixels." }
         val nchw = shape.contentEquals(intArrayOf(1, 3, 112, 112))
+        val pixels = IntArray(112 * 112)
+        bitmap.getPixels(pixels, 0, 112, 0, 0, 112, 112)
         val buffer = ByteBuffer.allocateDirect(112 * 112 * 3 * 4).order(ByteOrder.nativeOrder())
         if (nchw) {
-            for (channel in 0..2) for (y in 0 until 112) for (x in 0 until 112) {
-                val pixel = bitmap.getPixel(x, y)
+            for (channel in 0..2) for (pixel in pixels) {
                 val value = when (channel) {
                     0 -> (pixel shr 16) and 255
                     1 -> (pixel shr 8) and 255
                     else -> pixel and 255
                 }
-                buffer.putFloat(value / 127.5f - 1f)
+                buffer.putFloat(value / 255f)
             }
         } else {
-            for (y in 0 until 112) for (x in 0 until 112) {
-                val pixel = bitmap.getPixel(x, y)
-                buffer.putFloat(((pixel shr 16) and 255) / 127.5f - 1f)
-                buffer.putFloat(((pixel shr 8) and 255) / 127.5f - 1f)
-                buffer.putFloat((pixel and 255) / 127.5f - 1f)
+            for (pixel in pixels) {
+                buffer.putFloat(((pixel shr 16) and 255) / 255f)
+                buffer.putFloat(((pixel shr 8) and 255) / 255f)
+                buffer.putFloat((pixel and 255) / 255f)
             }
         }
         buffer.rewind()
@@ -799,7 +1026,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
         return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val scale = minOf(1f, 2000f / maxOf(info.size.width, info.size.height))
+            val scale = minOf(1f, 1000f / maxOf(info.size.width, info.size.height))
             decoder.setTargetSize((info.size.width * scale).toInt().coerceAtLeast(1), (info.size.height * scale).toInt().coerceAtLeast(1))
         }
     }

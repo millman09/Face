@@ -9,16 +9,20 @@ import org.xmlpull.v1.XmlPullParser
 import java.io.BufferedInputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLConnection
 import java.util.Locale
 
-data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean)
+data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean, val lastScan: Long = 0L)
+data class CandidateUpdate(val id: Long, val status: String, val similarity: Float?)
 data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl: String)
 data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String)
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 5) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 8) {
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        if (!db.isReadOnly) db.enableWriteAheadLogging()
+    }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -32,6 +36,9 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             similarity REAL, checked_at INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY(source_id) REFERENCES sources(id)
         )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_pending ON candidates(checked_at, discovered_at)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_matches ON candidates(scan_status, similarity, checked_at)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_sources_enabled_scan ON sources(enabled, last_scan)")
         seedSources(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -39,6 +46,29 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         if (oldVersion < 5) {
             db.execSQL("ALTER TABLE candidates ADD COLUMN similarity REAL")
             db.execSQL("ALTER TABLE candidates ADD COLUMN checked_at INTEGER NOT NULL DEFAULT 0")
+        }
+        if (oldVersion < 6) {
+            // Remove male-focused and gay-specific entries from existing installations.
+            db.delete("sources", "name IN (?, ?, ?, ?, ?, ?)", arrayOf(
+                "FabGuys", "LPSG Forum", "JustUsBoys Forum", "GayHeaven Forum",
+                "GayXNow", "AnyShemale"
+            ))
+        }
+        if (oldVersion < 7) {
+            // Remove anime, cartoon, hentai-comic, booru and furry-art sources.
+            db.delete("sources", "name IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", arrayOf(
+                "Baraag", "Paheal", "e621", "Gelbooru", "Rule34", "Danbooru",
+                "Safebooru", "ExHentai", "E-Hentai", "Hitomi", "Fakku",
+                "HentaiFoundry", "8muses", "Luscious", "HentaiRox", "Hentai0Day",
+                "Newgrounds", "Inkbunny", "Fur Affinity", "Hentai2Read",
+                "MyHentaiGallery", "MultPorn", "PornComics", "XXXComics",
+                "Fenoxo Blog", "Audiochan", "Nutaku", "DLsite", "Newgrounds Adult"
+            ))
+        }
+        if (oldVersion < 8) {
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_pending ON candidates(checked_at, discovered_at)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_matches ON candidates(scan_status, similarity, checked_at)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_sources_enabled_scan ON sources(enabled, last_scan)")
         }
     }
 
@@ -75,21 +105,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "Nudy.pics" to "https://nudy.pics",
             "Siss.pics" to "https://siss.pics",
             "Fapello" to "https://fapello.com",
-            "Baraag" to "https://baraag.net",
-            "Paheal" to "https://paheal.net",
-            "e621" to "https://e621.net",
-            "Gelbooru" to "https://gelbooru.com",
-            "Rule34" to "https://rule34.xxx",
-            "Danbooru" to "https://danbooru.donmai.us",
-            "Safebooru" to "https://safebooru.org",
-            "ExHentai" to "https://exhentai.org",
-            "E-Hentai" to "https://e-hentai.org",
-            "Hitomi" to "https://hitomi.la",
-            "Fakku" to "https://www.fakku.net",
-            "HentaiFoundry" to "https://www.hentai-foundry.com",
-            "8muses" to "https://www.8muses.com",
-            "Luscious" to "https://www.luscious.net",
-            "HentaiRox" to "https://hentairox.com",
             // Creator and community platforms
             "OnlyFans" to "https://onlyfans.com",
             "Fansly" to "https://fansly.com",
@@ -133,9 +148,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "JavLibrary" to "https://www.javlibrary.com",
             "JavBus" to "https://www.javbus.com",
             "JavDatabase" to "https://javdatabase.com",
-            "Hentai0Day" to "https://hentai0day.com",
             "CoedCherry" to "https://coedcherry.com",
-            "FabGuys" to "https://www.fabguys.com",
             "Sex.com" to "https://www.sex.com",
             "SavePorn" to "https://saveporn.net",
             "91Porn" to "https://91porn.com",
@@ -145,7 +158,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "SkipTheGames" to "https://skipthegames.com",
             // Additional public adult forums and communities
             "PlanetSuzy Forum" to "https://www.planetsuzy.org",
-            "LPSG Forum" to "https://www.lpsg.com",
             "ViperGirls Forum" to "https://vipergirls.to",
             "Forumophilia" to "https://forumophilia.com",
             "Climax Connection Forum" to "https://climaxconnection.com",
@@ -155,9 +167,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "VAmateur Forum" to "https://www.vamateur.com",
             "LoversLab Forum" to "https://www.loverslab.com",
             "LewdCorner Forum" to "https://lewdcorner.com",
-            "JustUsBoys Forum" to "https://www.justusboys.com",
             "Fenoxo Forums" to "https://forum.fenoxo.com",
-            "GayHeaven Forum" to "https://www.gayheaven.org",
             "Serious Bondage Forum" to "https://www.seriousbondage.com",
             "The Cage Forum" to "https://thecage.co",
             "Extreme Board" to "https://www.extreme-board.com",
@@ -185,20 +195,8 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "JPG Fish" to "https://jpg.fish",
             "Flickr" to "https://www.flickr.com",
             "Tumblr" to "https://www.tumblr.com",
-            "Newgrounds" to "https://www.newgrounds.com",
-            "Inkbunny" to "https://inkbunny.net",
-            "Fur Affinity" to "https://www.furaffinity.net",
-            "Hentai2Read" to "https://hentai2read.com",
-            "MyHentaiGallery" to "https://myhentaigallery.com",
-            "MultPorn" to "https://multporn.net",
-            "PornComics" to "https://porncomics.com",
-            "XXXComics" to "https://xxxcomics.org",
-            "Fenoxo Blog" to "https://www.fenoxo.com",
             "Marriage Heat" to "https://marriageheat.com",
-            "Audiochan" to "https://audiochan.com",
             "ChatZoZo" to "https://chatzozo.com",
-            "AnyShemale" to "https://anyshemale.com",
-            "GayXNow" to "https://gayxnow.com",
             "European Girls Adult Film Database" to "https://www.egafd.com",
             "FapHouse" to "https://faphouse.com",
             "Eporner" to "https://www.eporner.com",
@@ -209,10 +207,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "BongaCams" to "https://bongacams.com",
             "MyFreeCams" to "https://www.myfreecams.com",
             "LiveJasmin" to "https://www.livejasmin.com",
-            "Nutaku" to "https://www.nutaku.net",
-            "DLsite" to "https://www.dlsite.com",
-            "Itch.io" to "https://itch.io",
-            "Newgrounds Adult" to "https://www.newgrounds.com"
         )
         for ((name, address) in starterDomains) {
             val values = ContentValues().apply {
@@ -238,8 +232,8 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
 
     @Synchronized fun sources(): List<WebsiteSource> {
         val result = mutableListOf<WebsiteSource>()
-        readableDatabase.rawQuery("SELECT id,name,base_url,enabled FROM sources ORDER BY name COLLATE NOCASE", null).use { c ->
-            while (c.moveToNext()) result += WebsiteSource(c.getLong(0), c.getString(1), c.getString(2), c.getInt(3) == 1)
+        readableDatabase.rawQuery("SELECT id,name,base_url,enabled,last_scan FROM sources ORDER BY name COLLATE NOCASE", null).use { c ->
+            while (c.moveToNext()) result += WebsiteSource(c.getLong(0), c.getString(1), c.getString(2), c.getInt(3) == 1, c.getLong(4))
         }
         return result
     }
@@ -248,7 +242,11 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         writableDatabase.execSQL("UPDATE sources SET enabled=? WHERE id=?", arrayOf(if (enabled) 1 else 0, id))
     }
 
-    @Synchronized fun saveCandidates(items: List<DiscoveredImage>): Int {
+        @Synchronized fun clearCandidatesForNewScan() {
+        writableDatabase.delete("candidates", null, null)
+    }
+
+@Synchronized fun saveCandidates(items: List<DiscoveredImage>): Int {
         var inserted = 0
         val db = writableDatabase
         db.beginTransaction()
@@ -270,11 +268,29 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         writableDatabase.update("sources", values, "id=?", arrayOf(id.toString()))
     }
 
+    /** Candidates not yet compared in a previous run; unavailable URLs may be retried. */
+    @Synchronized fun pendingCandidates(limit: Int = 5000): List<StoredCandidate> {
+        val result = mutableListOf<StoredCandidate>()
+        readableDatabase.rawQuery(
+            """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
+               FROM candidates c JOIN sources s ON s.id=c.source_id
+               WHERE c.checked_at=0
+               ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
+            arrayOf(limit.coerceIn(1, 5000).toString())
+        ).use { c ->
+            while (c.moveToNext()) result += StoredCandidate(
+                c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4)
+            )
+        }
+        return result
+    }
+
     @Synchronized fun allCandidates(limit: Int = 100): List<StoredCandidate> {
         val result = mutableListOf<StoredCandidate>()
         readableDatabase.rawQuery(
             """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
                FROM candidates c JOIN sources s ON s.id=c.source_id
+               WHERE c.checked_at=0
                ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
             arrayOf(limit.coerceIn(1, 5000).toString())
         ).use { c ->
@@ -290,6 +306,31 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         writableDatabase.update("candidates", values, "id=?", arrayOf(id.toString()))
     }
 
+    @Synchronized fun updateCandidateResults(updates: List<CandidateUpdate>) {
+        if (updates.isEmpty()) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val statement = db.compileStatement("UPDATE candidates SET scan_status=?, similarity=?, checked_at=? WHERE id=?")
+            val now = System.currentTimeMillis()
+            for (item in updates) {
+                statement.clearBindings()
+                statement.bindString(1, item.status.take(100))
+                if (item.similarity == null) statement.bindNull(2) else statement.bindDouble(2, item.similarity.toDouble())
+                statement.bindLong(3, now)
+                statement.bindLong(4, item.id)
+                statement.executeUpdateDelete()
+            }
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
+    @Synchronized fun matchRevision(): String {
+        readableDatabase.rawQuery("SELECT COALESCE(MAX(checked_at), 0), COUNT(*) FROM candidates WHERE scan_status='Possible match' AND similarity >= 0.4", null).use {
+            return if (it.moveToFirst()) "${it.getLong(0)}:${it.getLong(1)}" else "0:0"
+        }
+    }
+
     @Synchronized fun updateCandidateResult(id: Long, status: String, similarity: Float?) {
         val values = ContentValues().apply {
             put("scan_status", status.take(100))
@@ -299,13 +340,13 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         writableDatabase.update("candidates", values, "id=?", arrayOf(id.toString()))
     }
 
-    @Synchronized fun possibleMatches(limit: Int = 500): List<MatchResult> {
+    @Synchronized fun possibleMatches(limit: Int = 50, bestFirst: Boolean = false): List<MatchResult> {
         val result = mutableListOf<MatchResult>()
         readableDatabase.rawQuery(
             """SELECT c.id,s.base_url,c.page_url,c.image_url,c.similarity,c.checked_at
                FROM candidates c JOIN sources s ON s.id=c.source_id
-               WHERE c.scan_status='Possible match' AND c.similarity IS NOT NULL
-               ORDER BY c.checked_at DESC LIMIT ?""".trimIndent(),
+               WHERE c.scan_status='Possible match' AND c.similarity >= 0.4
+               ORDER BY ${if (bestFirst) "c.similarity DESC, c.checked_at DESC" else "c.checked_at DESC"} LIMIT ?""".trimIndent(),
             arrayOf(limit.coerceIn(1, 2000).toString())
         ).use { c ->
             while (c.moveToNext()) result += MatchResult(
@@ -339,37 +380,139 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
  * arbitrary result pages or image binaries. Disallowed sitemap paths are skipped.
  */
 object PublicSourceScanner {
-    private const val MAX_BYTES = 2 * 1024 * 1024
-    private const val MAX_SITEMAPS = 12
-    private const val MAX_IMAGES = 500
+    // Deep but bounded per-domain crawl limits to protect phone performance.
+    private const val MAX_BYTES = 4 * 1024 * 1024
+    private const val MAX_SITEMAPS = 40
+    private const val MAX_IMAGES = 5000
+    private const val MAX_SITEMAP_PAGES = 250
+    private const val MAX_LINKED_PAGES = 700
+    private const val MAX_PAGE_BYTES = 1024 * 1024
 
     fun scan(source: WebsiteSource): List<DiscoveredImage> {
         val base = source.baseUrl
-        val robotsText = readText("$base/robots.txt")
-        val rules = parseRobots(robotsText.orEmpty())
+        // A timeout, server error, or forbidden robots.txt response means skip this host.
+        // A genuine 404 means the site has no robots file and can be crawled normally.
+        val robotsText = readRobots("$base/robots.txt") ?: return emptyList()
+        val rules = parseRobots(robotsText)
         val sitemapUrls = linkedSetOf<String>()
         robotsText.orEmpty().lineSequence().map { it.trim() }
             .filter { it.startsWith("Sitemap:", true) }
             .map { it.substringAfter(':').trim() }
             .filter { it.startsWith("https://") || it.startsWith("http://") }
             .forEach { sitemapUrls += it }
-        sitemapUrls += "$base/sitemap.xml"
-        sitemapUrls += "$base/sitemap_index.xml"
-        sitemapUrls += "$base/feed"
-        sitemapUrls += "$base/feed.xml"
-        sitemapUrls += "$base/rss.xml"
+        sitemapUrls += listOf(
+            "$base/sitemap.xml",
+            "$base/sitemap_index.xml",
+            "$base/sitemap-index.xml",
+            "$base/wp-sitemap.xml",
+            "$base/image-sitemap.xml",
+            "$base/images-sitemap.xml",
+            "$base/sitemap-images.xml",
+            "$base/sitemap1.xml",
+            "$base/sitemap-1.xml",
+            "$base/feed",
+            "$base/feed.xml",
+            "$base/rss.xml",
+            "$base/atom.xml"
+        )
 
         val found = linkedMapOf<String, DiscoveredImage>()
         val pending = sitemapUrls.toMutableList()
         val visited = mutableSetOf<String>()
+        val publicPages = linkedSetOf<String>()
         while (pending.isNotEmpty() && visited.size < MAX_SITEMAPS && found.size < MAX_IMAGES) {
             val endpoint = pending.removeAt(0)
             if (!visited.add(endpoint)) continue
             if (!sameHost(base, endpoint) || isDisallowed(endpoint, rules)) continue
             val xml = readText(endpoint) ?: continue
-            parseXml(endpoint, xml, source.id, pending, found, base, rules)
+            parseXml(endpoint, xml, source.id, pending, found, publicPages, base, rules)
+        }
+
+        // Sitemap entries are often public gallery/article pages, not direct images.
+        // Inspect a bounded sample, then follow a small number of same-host public
+        // links from those pages. This reaches gallery/detail pages omitted from
+        // image sitemaps without turning the phone into an unbounded crawler.
+        val pageQueue = ArrayDeque<String>()
+        publicPages.take(MAX_SITEMAP_PAGES).forEach { pageQueue.addLast(it) }
+
+        // Forum software often exposes its useful public content from index,
+        // category, latest-topic and gallery routes rather than sitemaps.
+        // Each route is still checked against robots.txt before it is fetched.
+        val forumLike = source.name.contains("forum", true) ||
+            source.name.contains("community", true) ||
+            source.name.contains("board", true)
+        if (forumLike) {
+            val forumRoutes = listOf(
+                "/forums", "/forum", "/community", "/boards", "/board",
+                "/latest", "/recent", "/activity", "/whats-new/",
+                "/whats-new/posts/",
+                "/categories", "/threads", "/topics", "/discussions",
+                "/forum/index.php", "/forumdisplay.php", "/showthread.php",
+                "/viewthread.php", "/viewtopic.php", "/viewforum.php", "/gallery", "/media",
+                "/albums", "/members"
+            )
+            for (route in forumRoutes) {
+                val address = base.trimEnd('/') + route
+                if (!isDisallowed(address, rules) && address !in publicPages) {
+                    pageQueue.addLast(address)
+                }
+            }
+        }
+        val visitedPages = linkedSetOf<String>()
+        var linkedPagesQueued = 0
+        while (pageQueue.isNotEmpty() &&
+            visitedPages.size < MAX_SITEMAP_PAGES + MAX_LINKED_PAGES &&
+            found.size < MAX_IMAGES) {
+            val page = pageQueue.removeFirst()
+            if (!visitedPages.add(page) || !sameHost(base, page) || isDisallowed(page, rules)) continue
+            val html = readPage(page) ?: continue
+            val links = extractPageImages(page, html, source.id, found)
+            for (link in links) {
+                if (linkedPagesQueued >= MAX_LINKED_PAGES) break
+                if (link !in visitedPages && pageQueue.none { it == link } &&
+                    sameHost(base, link) && !isDisallowed(link, rules) && isLikelyHtmlPage(link)) {
+                    pageQueue.addLast(link)
+                    linkedPagesQueued++
+                }
+            }
         }
         return found.values.take(MAX_IMAGES)
+    }
+
+    private fun readRobots(address: String): String? {
+        var connection: HttpURLConnection? = null
+        return try {
+            connection = URL(address).openConnection() as? HttpURLConnection ?: return null
+            connection.connectTimeout = 7000
+            connection.readTimeout = 9000
+            connection.instanceFollowRedirects = false
+            connection.setRequestProperty("User-Agent", "FacePersonalScanner/1.1 (public page and sitemap reader)")
+            connection.setRequestProperty("Accept", "text/plain")
+            when (val code = connection.responseCode) {
+                404 -> ""
+                in 200..299 -> {
+                    val type = connection.contentType?.substringBefore(';')?.trim()?.lowercase(Locale.US).orEmpty()
+                    if (!type.contains("text/plain") && !type.contains("text")) return null
+                    if (connection.contentLengthLong > 256 * 1024) return null
+                    val output = java.io.ByteArrayOutputStream()
+                    connection.inputStream.use { input ->
+                        val buffer = ByteArray(8192)
+                        var total = 0
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            if (total > 256 * 1024) return null
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                    output.toString(Charsets.UTF_8.name())
+                }
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        } finally { connection?.disconnect() }
     }
 
     private fun parseRobots(text: String): List<String> {
@@ -400,7 +543,7 @@ object PublicSourceScanner {
 
     private fun parseXml(
         endpoint: String, xml: String, sourceId: Long, pending: MutableList<String>,
-        found: MutableMap<String, DiscoveredImage>, base: String, rules: List<String>
+        found: MutableMap<String, DiscoveredImage>, publicPages: MutableSet<String>, base: String, rules: List<String>
     ) {
         try {
             val parser = Xml.newPullParser()
@@ -449,7 +592,12 @@ object PublicSourceScanner {
                         when (parser.name.substringAfter(':').lowercase(Locale.US)) {
                             "sitemap" -> inSitemapEntry = false
                             "sitemapindex" -> inSitemapIndex = false
-                            "url" -> inUrl = false
+                            "url" -> {
+                                inUrl = false
+                                if ((pageUrl.startsWith("https://") || pageUrl.startsWith("http://")) &&
+                                    sameHost(base, pageUrl) && !isDisallowed(pageUrl, rules) &&
+                                    publicPages.size < MAX_SITEMAP_PAGES * 4) publicPages += pageUrl
+                            }
                             "item", "entry" -> inFeedEntry = false
                         }
                     }
@@ -461,6 +609,213 @@ object PublicSourceScanner {
         }
     }
 
+
+    private fun extractPageImages(
+        pageUrl: String,
+        html: String,
+        sourceId: Long,
+        found: MutableMap<String, DiscoveredImage>
+    ): Set<String> {
+        val candidates = linkedSetOf<String>()
+        val pageLinks = linkedSetOf<String>()
+        val metaTag = Regex("(?is)<meta\\b[^>]*>")
+        val attribute = Regex("(?is)([a-z_:][-a-z0-9_:.]*)\\s*=\\s*(['\"])(.*?)\\2")
+        for (tag in metaTag.findAll(html)) {
+            val attrs = attribute.findAll(tag.value).associate {
+                it.groupValues[1].lowercase(Locale.US) to it.groupValues[3]
+            }
+            val key = (attrs["property"] ?: attrs["name"] ?: "").lowercase(Locale.US)
+            if (key in setOf("og:image", "og:image:url", "twitter:image", "twitter:image:src")) {
+                attrs["content"]?.let { candidates += it }
+            }
+        }
+        val anchorTag = Regex("(?is)<a\\b[^>]*>")
+        for (tag in anchorTag.findAll(html)) {
+            val attrs = attribute.findAll(tag.value).associate {
+                it.groupValues[1].lowercase(Locale.US) to it.groupValues[3]
+            }
+            attrs["href"]?.let { raw ->
+                val value = raw.trim().replace("&amp;", "&")
+                if (value.isNotBlank() && !value.startsWith("javascript:", true) &&
+                    !value.startsWith("mailto:", true) && !value.startsWith("#")) {
+                    try {
+                        val resolved = URL(URL(pageUrl), value)
+                        if (resolved.protocol in listOf("https", "http") && resolved.userInfo == null) {
+                            val normalized = URL(resolved.protocol, resolved.host, resolved.port, resolved.file).toString()
+                            if (isImageUrl(normalized)) candidates += normalized
+                            else if (normalized != pageUrl) pageLinks += normalized
+                        }
+                    } catch (_: Exception) { }
+                }
+            }
+            if (pageLinks.size >= MAX_LINKED_PAGES) break
+        }
+        // Include standard images, responsive <source> entries, video posters,
+        // and common lazy-loading attributes used by public gallery pages.
+        val mediaTag = Regex("(?is)<(?:img|source|video|link)\\b[^>]*>")
+        for (tag in mediaTag.findAll(html)) {
+            val attrs = attribute.findAll(tag.value).associate {
+                it.groupValues[1].lowercase(Locale.US) to it.groupValues[3]
+            }
+            listOf(
+                "src", "data-src", "data-original", "data-original-src",
+                "data-lazy-src", "data-flickity-lazyload", "data-echo",
+                "data-image", "poster"
+            ).forEach { key -> attrs[key]?.let { candidates += it } }
+            listOf("srcset", "data-srcset", "data-lazy-srcset").forEach { key ->
+                attrs[key]?.split(',')?.forEach { entry ->
+                    entry.trim().substringBefore(' ').takeIf { it.isNotBlank() }?.let { candidates += it }
+                }
+            }
+            if (tag.value.contains("image_src", ignoreCase = true)) {
+                attrs["href"]?.let { candidates += it }
+            }
+            if (candidates.size >= MAX_IMAGES) break
+        }
+        for (raw in candidates) {
+            if (found.size >= MAX_IMAGES) break
+            val value = raw.trim().replace("&amp;", "&")
+            if (value.isBlank() || value.startsWith("data:", true) ||
+                value.startsWith("javascript:", true)) continue
+            val resolved = try { URL(URL(pageUrl), value) } catch (_: Exception) { continue }
+            if (resolved.protocol !in listOf("https", "http") || resolved.userInfo != null) continue
+            val imageUrl = resolved.toString()
+            found.putIfAbsent(imageUrl, DiscoveredImage(sourceId, pageUrl, imageUrl))
+        }
+        return pageLinks.sortedByDescending { isPriorityContentPage(it) }
+            .toCollection(linkedSetOf())
+    }
+
+    private fun isPriorityContentPage(address: String): Boolean {
+        val path = try { URL(address).path.lowercase(Locale.US) } catch (_: Exception) { return false }
+        val full = address.lowercase(Locale.US)
+        val markers = listOf(
+            "gallery", "photo", "image", "album", "media", "post", "profile",
+            "model", "thread", "topic", "forum", "discussion", "viewforum",
+            "showthread", "viewthread", "viewtopic", "forumdisplay",
+            "whats-new", "recent", "activity", "page=", "start=", "offset=", "p="
+        )
+        return markers.any { marker -> full.contains(marker) || path.contains(marker) }
+    }
+
+    private fun isLikelyHtmlPage(address: String): Boolean {
+        val path = try { URL(address).path.lowercase(Locale.US) } catch (_: Exception) { return false }
+        val blocked = listOf(
+            ".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".mp4", ".webm",
+            ".mov", ".mp3", ".pdf", ".zip", ".rar", ".7z", ".css", ".js",
+            ".woff", ".woff2", ".ttf", ".ico", ".xml", ".json"
+        )
+        return path.isNotBlank() && blocked.none { path.endsWith(it) }
+    }
+
+    private fun readPage(address: String): String? =
+        readPublicText(
+            address,
+            "text/html,application/xhtml+xml",
+            MAX_PAGE_BYTES,
+            setOf("text/html", "application/xhtml+xml")
+        )
+
+    /**
+     * Reads an openly accessible public endpoint. Temporary server/network
+     * failures get one bounded retry. 429 responses honor Retry-After; this
+     * is resilience, not an attempt to evade rate limits or access controls.
+     */
+    private fun readText(address: String): String? =
+        readPublicText(
+            address,
+            "application/xml,text/xml,application/rss+xml,application/atom+xml,text/plain",
+            MAX_BYTES,
+            null
+        )
+
+    private fun readPublicText(
+        address: String,
+        accept: String,
+        maxBytes: Int,
+        allowedTypes: Set<String>?
+    ): String? {
+        var attempt = 0
+        while (attempt < 2) {
+            var connection: HttpURLConnection? = null
+            try {
+                connection = URL(address).openConnection() as? HttpURLConnection ?: return null
+                connection.connectTimeout = 7000
+                connection.readTimeout = 9000
+                connection.instanceFollowRedirects = false
+                connection.setRequestProperty(
+                    "User-Agent",
+                    "FacePersonalScanner/1.1 (public page and sitemap reader)"
+                )
+                connection.setRequestProperty("Accept", accept)
+
+                val code = connection.responseCode
+                if (code in 300..399) {
+                    // Do not follow redirects automatically. The destination may
+                    // be another host or a path disallowed by that site's robots.txt.
+                    return null
+                }
+                if (code !in 200..299) {
+                    val retryable = code == 408 || code == 425 || code == 429 ||
+                        code == 500 || code == 502 || code == 503 || code == 504
+                    if (attempt == 0 && retryable) {
+                        val retryAfter = connection.getHeaderField("Retry-After")
+                            ?.trim()?.toLongOrNull()
+                        val delayMs = if (code == 429 && retryAfter != null) {
+                            retryAfter.coerceIn(1L, 30L) * 1000L
+                        } else {
+                            1200L
+                        }
+                        connection.disconnect()
+                        connection = null
+                        Thread.sleep(delayMs)
+                        attempt++
+                        continue
+                    }
+                    return null
+                }
+
+                val type = connection.contentType?.substringBefore(';')
+                    ?.trim()?.lowercase(Locale.US) ?: return null
+                if (allowedTypes != null && allowedTypes.none { type.contains(it) }) return null
+                if (connection.contentLengthLong > maxBytes) return null
+
+                val bytes = BufferedInputStream(connection.inputStream).use { input ->
+                    val output = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    var total = 0
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        if (total > maxBytes) return null
+                        output.write(buffer, 0, count)
+                    }
+                    output.toByteArray()
+                }
+                return bytes.toString(Charsets.UTF_8)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return null
+            } catch (_: Exception) {
+                if (attempt == 0) {
+                    attempt++
+                    try {
+                        Thread.sleep(500L)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return null
+                    }
+                } else {
+                    return null
+                }
+            } finally {
+                connection?.disconnect()
+            }
+        }
+        return null
+    }
+
     private fun sameHost(base: String, candidate: String): Boolean = try {
         URL(base).host.equals(URL(candidate).host, true)
     } catch (_: Exception) { false }
@@ -470,34 +825,4 @@ object PublicSourceScanner {
         return listOf(".jpg", ".jpeg", ".png", ".webp", ".gif").any { path.endsWith(it) }
     }
 
-    private fun readText(address: String): String? {
-        var connection: URLConnection? = null
-        return try {
-            connection = URL(address).openConnection()
-            connection.connectTimeout = 7000
-            connection.readTimeout = 9000
-            connection.setRequestProperty("User-Agent", "FacePersonalScanner/1.0 (public sitemap/feed reader)")
-            connection.setRequestProperty("Accept", "application/xml,text/xml,application/rss+xml,application/atom+xml,text/plain")
-            if (connection is HttpURLConnection) {
-                connection.instanceFollowRedirects = false
-                if (connection.responseCode !in 200..299) return null
-            }
-            if (connection.contentLengthLong > MAX_BYTES) return null
-            val bytes = BufferedInputStream(connection.getInputStream()).use { input ->
-                val output = java.io.ByteArrayOutputStream()
-                val buffer = ByteArray(8192)
-                var total = 0
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    total += count
-                    if (total > MAX_BYTES) return null
-                    output.write(buffer, 0, count)
-                }
-                output.toByteArray()
-            }
-            bytes.toString(Charsets.UTF_8)
-        } catch (_: Exception) { null }
-        finally { (connection as? HttpURLConnection)?.disconnect() }
-    }
 }

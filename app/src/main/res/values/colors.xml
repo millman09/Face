@@ -1,18 +1,15 @@
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-
-    <color name="brand_primary">#FF3F51B5</color>
-    <color name="brand_container">#FFE0E4FF</color>
-    <color name="brand_on_container">#FF0B1B5E</color>
-    <color name="brand_secondary">#FF00796B</color>
-    <color name="brand_surface">#FFFAF9FD</color>
-
-    <color name="brand_primary_dark">#FFBAC3FF</color>
-    <color name="brand_on_primary_dark">#FF0B1B5E</color>
-    <color name="brand_container_dark">#FF2A3A8C</color>
-    <color name="brand_on_container_dark">#FFE0E4FF</color>
-    <color name="brand_secondary_dark">#FF80CBC4</color>
-    <color name="brand_surface_dark">#FF121316</color>
+    <color name="brand_primary">#FF806BFF</color>
+    <color name="brand_container">#FF30265C</color>
+    <color name="brand_on_container">#FFF0ECFF</color>
+    <color name="brand_secondary">#FF52D6C7</color>
+    <color name="brand_surface">#FF0D1018</color>
+    <color name="brand_primary_dark">#FF9B8BFF</color>
+    <color name="brand_on_primary_dark">#FF171126</color>
+    <color name="brand_container_dark">#FF30265C</color>
+    <color name="brand_on_container_dark">#FFF0ECFF</color>
+    <color name="brand_secondary_dark">#FF72E4D6</color>
+    <color name="brand_surface_dark">#FF0D1018</color>
 </resources>

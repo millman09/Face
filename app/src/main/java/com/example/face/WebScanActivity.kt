@@ -28,10 +28,6 @@ class WebScanActivity : AppCompatActivity() {
     private lateinit var referencePreview: LinearLayout
     private lateinit var referenceCount: TextView
     private lateinit var startSearchButton: MaterialButton
-    private lateinit var sourceNameInput: EditText
-    private lateinit var sourceUrlInput: EditText
-    private lateinit var bulkSourcesInput: EditText
-    private lateinit var sourceList: LinearLayout
     private lateinit var database: PublicSourceDatabase
     private val scanExecutor = Executors.newSingleThreadExecutor()
     private var referencePhotos: List<Uri> = emptyList()
@@ -183,7 +179,6 @@ class WebScanActivity : AppCompatActivity() {
                     catalogueReady = true
                     status.text = "READY  ·  $count public sources available. All enabled, eligible sources are included automatically."
                     startSearchButton.isEnabled = referencePhotos.isNotEmpty()
-                    refreshSources()
                 }
             }
         }
@@ -291,76 +286,6 @@ class WebScanActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (pendingSearches.isNotEmpty()) openNextSearch()
-    }
-
-    private fun openLink(link: String) {
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
-            status.text = "Search page opened in your browser."
-        } catch (_: Exception) {
-            Toast.makeText(this, "Unable to open this search page.", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun addSource() {
-        if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading.", Toast.LENGTH_SHORT).show(); return }
-        val raw = sourceUrlInput.text.toString()
-        val normalized = PublicSourceDatabase.normalizeBaseUrl(raw)
-        if (normalized == null) {
-            Toast.makeText(this, "Enter a valid public website domain or HTTP(S) address.", Toast.LENGTH_LONG).show()
-            return
-        }
-        val added = database.addSource(sourceNameInput.text.toString(), normalized)
-        if (!added) {
-            Toast.makeText(this, "That website is already in the database.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        sourceNameInput.text.clear()
-        sourceUrlInput.text.clear()
-        status.text = "Website added. It will be checked during the next batch scan."
-        refreshSources()
-    }
-
-
-    private fun importSources() {
-        if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading.", Toast.LENGTH_SHORT).show(); return }
-        val lines = bulkSourcesInput.text.toString().lines().map { it.trim() }.filter { it.isNotBlank() }
-        if (lines.isEmpty()) {
-            Toast.makeText(this, "Paste one domain per line first.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        var added = 0
-        var skipped = 0
-        for (line in lines) {
-            val parts = line.split("|", limit = 2)
-            val name = if (parts.size == 2) parts[0].trim() else ""
-            val address = if (parts.size == 2) parts[1].trim() else parts[0].trim()
-            if (PublicSourceDatabase.normalizeBaseUrl(address) != null && database.addSource(name, address)) added++ else skipped++
-        }
-        bulkSourcesInput.text.clear()
-        status.text = "Bulk import finished: $added added, $skipped invalid or already in the database."
-        refreshSources()
-    }
-
-    private fun refreshSources() {
-        if (!catalogueReady) return
-        sourceList.removeAllViews()
-        val items = database.sources()
-        if (items.isEmpty()) {
-            sourceList.addView(TextView(this).apply {
-                text = "No websites added yet. Add the public domains you want scanned."
-                textSize = 14f
-                setPadding(0, dp(8), 0, dp(8))
-            })
-        }
-        for (source in items) {
-            sourceList.addView(TextView(this).apply {
-                text = "${source.name}  •  ${source.baseUrl}"
-                textSize = 13f
-                setPadding(dp(4), dp(7), dp(4), dp(7))
-            })
-        }
-        status.text = "${items.size} website(s) in database • ${database.candidateCount()} unique image link(s) collected."
     }
 
     private fun browseCollectedLinks() {

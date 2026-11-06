@@ -20,8 +20,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // R8 is off: the minified build installed fine but was never tapped through, and the
+            // app closed on every tap. Turn it back on only after testing a minified build.
+            isMinifyEnabled = false
+            isShrinkResources = false
             // Use the debug key for this personal test build so it can update the existing debug APK.
             signingConfig = signingConfigs.getByName("debug")
             proguardFiles(

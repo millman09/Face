@@ -2,7 +2,7 @@ name: Android build
 
 on:
   push:
-    branches: [main, pimeyes-style-redesign]
+    branches: [main, pimeyes-style-redesign, combined]
   workflow_dispatch:
   pull_request:
     branches: [main]
@@ -46,15 +46,15 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Build minified release APK with R8
+      - name: Build release APK
         run: ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Verify R8 APK signature
+      - name: Verify release APK signature
         run: $ANDROID_HOME/build-tools/37.0.0/apksigner verify --verbose app/build/outputs/apk/release/app-release.apk
 
-      - name: Upload R8 release APK
+      - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: face-r8-release-apk
+          name: face-release-apk
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error

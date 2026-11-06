@@ -66,7 +66,7 @@ class MainActivity : AppCompatActivity() {
     private val resultsExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     @Volatile private var resultsRefreshInFlight = false
     private var resultsLoaded = false
-    private var lastResultsTimestamp = -1L
+    private var lastResultsRevision: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -252,19 +252,24 @@ class MainActivity : AppCompatActivity() {
         resultsRefreshInFlight = true
         resultsSummary.text = "Checking saved matches…"
         resultsExecutor.execute {
-            var latest = 0L
+            var revision = "0:0"
             var matches: List<MatchResult> = emptyList()
             var changed = false
+            var failure: String? = null
             val db = PublicSourceDatabase(applicationContext)
             try {
-                latest = db.latestMatchTimestamp()
-                changed = force || !resultsLoaded || latest != lastResultsTimestamp
+                revision = db.matchRevision()
+                changed = force || !resultsLoaded || revision != lastResultsRevision
                 if (changed) matches = db.possibleMatches(50, bestFirst = true)
+            } catch (e: Exception) {
+                failure = e.localizedMessage ?: "Unable to read saved results."
             } finally { db.close() }
             runOnUiThread {
                 resultsRefreshInFlight = false
-                if (isFinishing || isDestroyed || !changed) return@runOnUiThread
-                lastResultsTimestamp = latest
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (failure != null) { resultsSummary.text = failure; return@runOnUiThread }
+                if (!changed) return@runOnUiThread
+                lastResultsRevision = revision
                 resultsLoaded = true
                 resultsList.removeAllViews()
                 resultsSummary.text = if (matches.isEmpty()) getString(R.string.results_empty)

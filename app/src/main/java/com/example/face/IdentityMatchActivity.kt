@@ -561,7 +561,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 // Image comparisons remain a separate count because the total number
                 // of images is not known until each source has been scanned.
                 fun updateSearchProgress(detail: String) {
-                    val percent = ((completedSources * 100f) / sources.size)
+                    val percent = if (sources.isEmpty()) 100 else ((completedSources * 100f) / sources.size)
                         .toInt().coerceIn(0, 100)
                     runOnUiThread {
                         progress.max = 100
@@ -572,13 +572,15 @@ class IdentityMatchActivity : AppCompatActivity() {
 
                 // Download up to six public images concurrently, but keep ML Kit detection and
                 // TFLite inference on this single scan worker to avoid concurrent model access.
-                downloadPool = Executors.newFixedThreadPool(6)
+                val activeDownloadPool = Executors.newFixedThreadPool(6)
+                downloadPool = activeDownloadPool
                 fun comparePendingCandidates() {
                     val batch = candidateDatabase.pendingCandidates(5000)
                         .filter { processedIds.add(it.id) }
                     if (batch.isEmpty()) return
                     data class Downloaded(val candidate: StoredCandidate, val bitmap: Bitmap?, val error: String?)
-                    val completion = java.util.concurrent.ExecutorCompletionService<Downloaded>(downloadPool)
+                    data class MatchPreview(val id: Long, val pageUrl: String, val imageUrl: String, val score: Float, val bitmap: Bitmap)
+                    val completion = java.util.concurrent.ExecutorCompletionService<Downloaded>(activeDownloadPool)
                     for (chunk in batch.chunked(24)) {
                         val futures = chunk.map { candidate ->
                             completion.submit<Downloaded> {
@@ -587,7 +589,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                             }
                         }
                         val updates = mutableListOf<CandidateUpdate>()
-                        val previews = mutableListOf<Triple<String, Float, Bitmap>>()
+                        val previews = mutableListOf<MatchPreview>()
                         repeat(futures.size) {
                             val downloaded = completion.take().get()
                             val candidate = downloaded.candidate
@@ -613,7 +615,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                     val possible = similarity != null && similarity >= 0.4f
                                     if (possible) {
                                         possibleMatches++
-                                        previews += Triple(candidate.imageUrl, similarity!!, makeResultPreview(bitmap))
+                                        previews += MatchPreview(candidate.id, candidate.pageUrl, candidate.imageUrl, similarity!!, makeResultPreview(bitmap))
                                     }
                                     updates += CandidateUpdate(candidate.id, if (possible) "Possible match" else "Compared", if (possible) similarity else null)
                                 } catch (_: Exception) {
@@ -625,7 +627,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         // One transaction per chunk replaces one database write per image.
                         candidateDatabase.updateCandidateResults(updates)
                         if (previews.isNotEmpty()) runOnUiThread {
-                            previews.forEach { (imageUrl, score, preview) -> addWebMatchPreview(0L, imageUrl, imageUrl, score, preview) }
+                            previews.forEach { item -> addWebMatchPreview(item.id, item.pageUrl, item.imageUrl, item.score, item.bitmap) }
                         }
                         // Progress updates are deliberately batched instead of posted once per image.
                         updateSearchProgress("$completedSources/${sources.size} sites checked, $checked images compared, $possibleMatches possible match(es)")

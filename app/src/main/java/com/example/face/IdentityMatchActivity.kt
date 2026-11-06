@@ -144,7 +144,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             text = if (webScanMode) "Start deep search" else "Compare selected photos"
             isAllCaps = false
             isEnabled = false
-            setOnClickListener { runComparison() }
+            setOnClickListener { if (webScanMode) startDeepSearchChoosing() else runComparison() }
         }
         root.addSpaced(scanButton)
         progress =ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { visibility = ProgressBar.GONE }
@@ -819,6 +819,34 @@ class IdentityMatchActivity : AppCompatActivity() {
                 runOnUiThread { Toast.makeText(this, "Report failed: ${e.localizedMessage ?: "unknown error"}", Toast.LENGTH_LONG).show() }
             }
         }
+    }
+
+    /** If an earlier search left results behind, lets the user continue it or clear it and start a new one. */
+    private fun startDeepSearchChoosing() {
+        val hasPrevious = try {
+            val db = PublicSourceDatabase(this)
+            try { db.candidateCount() > 0 } finally { db.close() }
+        } catch (_: Exception) { false }
+        if (!hasPrevious) { runComparison(); return }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Start a deep search")
+            .setMessage("You have results from a previous search.")
+            .setPositiveButton("Clear it and start new") { _, _ ->
+                resultsContainer.removeAllViews()
+                hintView.visibility = android.view.View.GONE
+                // The scan below is queued behind this on the same thread, so it begins after the clear.
+                executor.execute {
+                    try {
+                        val db = PublicSourceDatabase(this)
+                        try { db.clearSearch() } finally { db.close() }
+                        ImageCache.clear(this)
+                    } catch (_: Exception) {}
+                }
+                runComparison()
+            }
+            .setNeutralButton("Continue last search") { _, _ -> runComparison() }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun confirmClearSearch() {

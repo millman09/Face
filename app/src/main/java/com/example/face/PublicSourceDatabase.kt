@@ -21,7 +21,7 @@ data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: Str
 class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 8) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
-        db.enableWriteAheadLogging()
+        if (!db.isReadOnly) db.enableWriteAheadLogging()
     }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
@@ -36,6 +36,9 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             similarity REAL, checked_at INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY(source_id) REFERENCES sources(id)
         )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_pending ON candidates(checked_at, discovered_at)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_matches ON candidates(scan_status, similarity, checked_at)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_sources_enabled_scan ON sources(enabled, last_scan)")
         seedSources(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -322,9 +325,9 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         } finally { db.endTransaction() }
     }
 
-    @Synchronized fun latestMatchTimestamp(): Long {
-        readableDatabase.rawQuery("SELECT COALESCE(MAX(checked_at), 0) FROM candidates WHERE scan_status='Possible match' AND similarity >= 0.4", null).use {
-            return if (it.moveToFirst()) it.getLong(0) else 0L
+    @Synchronized fun matchRevision(): String {
+        readableDatabase.rawQuery("SELECT COALESCE(MAX(checked_at), 0), COUNT(*) FROM candidates WHERE scan_status='Possible match' AND similarity >= 0.4", null).use {
+            return if (it.moveToFirst()) "${it.getLong(0)}:${it.getLong(1)}" else "0:0"
         }
     }
 
@@ -344,7 +347,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
                FROM candidates c JOIN sources s ON s.id=c.source_id
                WHERE c.scan_status='Possible match' AND c.similarity >= 0.4
                ORDER BY ${if (bestFirst) "c.similarity DESC, c.checked_at DESC" else "c.checked_at DESC"} LIMIT ?""".trimIndent(),
-            arrayOf(limit.coerceIn(1, 50).toString())
+            arrayOf(limit.coerceIn(1, 2000).toString())
         ).use { c ->
             while (c.moveToNext()) result += MatchResult(
                 c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getFloat(4), c.getLong(5)

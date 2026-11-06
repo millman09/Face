@@ -47,10 +47,11 @@ class WebScanActivity : AppCompatActivity() {
         }
     }
     @Volatile private var scanning = false
+    @Volatile private var catalogueReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        database = PublicSourceDatabase(this)
+        database = PublicSourceDatabase(applicationContext)
 
         val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -168,13 +169,24 @@ class WebScanActivity : AppCompatActivity() {
         page.addSpaced(startSearchButton, 8)
 
         status = TextView(this).apply {
-            text = "READY  ·  ${database.sources().size} public sources available"
+            text = "Preparing the public-source catalogue…"
             textSize = 14f
             setPadding(0, dp(14), 0, dp(8))
         }
         page.addView(status)
-        status.text = "READY  ·  ${database.sources().size} public sources available. All enabled sources are included automatically."
         renderReferencePhotos()
+        // The first SQLite open may create and seed the full catalogue. Do it off the UI thread.
+        scanExecutor.execute {
+            val count = database.sources().size
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) {
+                    catalogueReady = true
+                    status.text = "READY  ·  $count public sources available. All enabled, eligible sources are included automatically."
+                    startSearchButton.isEnabled = referencePhotos.isNotEmpty()
+                    refreshSources()
+                }
+            }
+        }
     }
 
     private fun renderReferencePhotos() {
@@ -291,6 +303,7 @@ class WebScanActivity : AppCompatActivity() {
     }
 
     private fun addSource() {
+        if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading.", Toast.LENGTH_SHORT).show(); return }
         val raw = sourceUrlInput.text.toString()
         val normalized = PublicSourceDatabase.normalizeBaseUrl(raw)
         if (normalized == null) {
@@ -310,6 +323,7 @@ class WebScanActivity : AppCompatActivity() {
 
 
     private fun importSources() {
+        if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading.", Toast.LENGTH_SHORT).show(); return }
         val lines = bulkSourcesInput.text.toString().lines().map { it.trim() }.filter { it.isNotBlank() }
         if (lines.isEmpty()) {
             Toast.makeText(this, "Paste one domain per line first.", Toast.LENGTH_SHORT).show()
@@ -329,6 +343,7 @@ class WebScanActivity : AppCompatActivity() {
     }
 
     private fun refreshSources() {
+        if (!catalogueReady) return
         sourceList.removeAllViews()
         val items = database.sources()
         if (items.isEmpty()) {
@@ -349,6 +364,7 @@ class WebScanActivity : AppCompatActivity() {
     }
 
     private fun browseCollectedLinks() {
+        if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading.", Toast.LENGTH_SHORT).show(); return }
         val candidates = database.allCandidates(100)
         if (candidates.isEmpty()) {
             Toast.makeText(this, "No image links have been collected yet. Run a batch scan first.", Toast.LENGTH_LONG).show()
@@ -374,6 +390,7 @@ class WebScanActivity : AppCompatActivity() {
 
     /** Opens the live results page immediately. Source discovery and face matching run there. */
     private fun launchAutomaticScan() {
+        if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading. Try again in a moment.", Toast.LENGTH_LONG).show(); return }
         if (referencePhotos.isEmpty()) {
             Toast.makeText(this, "Choose at least one reference photo first.", Toast.LENGTH_LONG).show()
             return

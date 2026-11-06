@@ -164,13 +164,25 @@ class MainActivity : AppCompatActivity() {
         resultsContainer = container
         resultsList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         container.addView(resultsList)
-        refreshResults()
     }
 
+    /** Loads saved matches on a background thread so opening the app and switching back stay smooth. */
     private fun refreshResults() {
         if (!::resultsContainer.isInitialized || !::resultsSummary.isInitialized) return
-        val db = PublicSourceDatabase(this)
-        val matches = try { db.possibleMatches() } finally { db.close() }
+        Thread({
+            val matches = try {
+                val db = PublicSourceDatabase(applicationContext)
+                try { db.possibleMatches(200) } finally { db.close() }
+            } catch (_: Exception) {
+                emptyList()
+            }
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) showResults(matches)
+            }
+        }, "load-results").start()
+    }
+
+    private fun showResults(matches: List<MatchResult>) {
         resultsList.removeAllViews()
         resultsSummary.text = if (matches.isEmpty()) {
             getString(R.string.results_empty)

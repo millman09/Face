@@ -12,13 +12,18 @@ import java.net.URL
 import java.net.URLConnection
 import java.util.Locale
 
-data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean)
+data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean, val lastScan: Long = 0L)
 data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl: String)
 data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String)
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 5) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 6) {
+    init {
+        // Write-ahead logging makes the many small result updates during a scan much faster.
+        setWriteAheadLoggingEnabled(true)
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -32,6 +37,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             similarity REAL, checked_at INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY(source_id) REFERENCES sources(id)
         )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(scan_status, checked_at)")
         seedSources(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -39,6 +45,9 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         if (oldVersion < 5) {
             db.execSQL("ALTER TABLE candidates ADD COLUMN similarity REAL")
             db.execSQL("ALTER TABLE candidates ADD COLUMN checked_at INTEGER NOT NULL DEFAULT 0")
+        }
+        if (oldVersion < 6) {
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(scan_status, checked_at)")
         }
     }
 
@@ -238,8 +247,8 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
 
     @Synchronized fun sources(): List<WebsiteSource> {
         val result = mutableListOf<WebsiteSource>()
-        readableDatabase.rawQuery("SELECT id,name,base_url,enabled FROM sources ORDER BY name COLLATE NOCASE", null).use { c ->
-            while (c.moveToNext()) result += WebsiteSource(c.getLong(0), c.getString(1), c.getString(2), c.getInt(3) == 1)
+        readableDatabase.rawQuery("SELECT id,name,base_url,enabled,last_scan FROM sources ORDER BY name COLLATE NOCASE", null).use { c ->
+            while (c.moveToNext()) result += WebsiteSource(c.getLong(0), c.getString(1), c.getString(2), c.getInt(3) == 1, c.getLong(4))
         }
         return result
     }
@@ -265,8 +274,12 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         return inserted
     }
 
-    @Synchronized fun updateSourceStatus(id: Long, status: String) {
-        val values = ContentValues().apply { put("last_scan", System.currentTimeMillis()); put("last_status", status.take(300)) }
+    /** [scanned] is false when the site could not be reached, so it is tried again on the next scan. */
+    @Synchronized fun updateSourceStatus(id: Long, status: String, scanned: Boolean = true) {
+        val values = ContentValues().apply {
+            if (scanned) put("last_scan", System.currentTimeMillis())
+            put("last_status", status.take(300))
+        }
         writableDatabase.update("sources", values, "id=?", arrayOf(id.toString()))
     }
 
@@ -283,6 +296,32 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             )
         }
         return result
+    }
+
+    /**
+     * Image links that still need a face comparison: new ones, plus ones that were
+     * unavailable more than three days ago. Already-compared images are not repeated.
+     */
+    @Synchronized fun uncheckedCandidates(limit: Int = 5000): List<StoredCandidate> {
+        val result = mutableListOf<StoredCandidate>()
+        val retryBefore = System.currentTimeMillis() - 3L * 24 * 60 * 60 * 1000
+        readableDatabase.rawQuery(
+            """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
+               FROM candidates c JOIN sources s ON s.id=c.source_id
+               WHERE c.scan_status='Discovered' OR (c.scan_status='Unavailable' AND c.checked_at < ?)
+               ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
+            arrayOf(retryBefore.toString(), limit.coerceIn(1, 5000).toString())
+        ).use { c ->
+            while (c.moveToNext()) result += StoredCandidate(
+                c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4)
+            )
+        }
+        return result
+    }
+
+    /** Forget earlier comparisons, for when the reference photos change. */
+    @Synchronized fun resetResults() {
+        writableDatabase.execSQL("UPDATE candidates SET scan_status='Discovered', similarity=NULL, checked_at=0")
     }
 
     @Synchronized fun updateCandidateStatus(id: Long, status: String) {
@@ -338,6 +377,8 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
  * Reads only public robots.txt, sitemap and feed endpoints. It does not fetch
  * arbitrary result pages or image binaries. Disallowed sitemap paths are skipped.
  */
+class SourceUnreachableException(message: String) : Exception(message)
+
 object PublicSourceScanner {
     private const val MAX_BYTES = 2 * 1024 * 1024
     private const val MAX_SITEMAPS = 12
@@ -345,7 +386,7 @@ object PublicSourceScanner {
 
     fun scan(source: WebsiteSource): List<DiscoveredImage> {
         val base = source.baseUrl
-        val robotsText = readText("$base/robots.txt")
+        val robotsText = readText("$base/robots.txt", failFast = true)
         val rules = parseRobots(robotsText.orEmpty())
         val sitemapUrls = linkedSetOf<String>()
         robotsText.orEmpty().lineSequence().map { it.trim() }
@@ -470,12 +511,13 @@ object PublicSourceScanner {
         return listOf(".jpg", ".jpeg", ".png", ".webp", ".gif").any { path.endsWith(it) }
     }
 
-    private fun readText(address: String): String? {
+    /** With [failFast], a site that does not answer at all throws instead of returning null. */
+    private fun readText(address: String, failFast: Boolean = false): String? {
         var connection: URLConnection? = null
         return try {
             connection = URL(address).openConnection()
-            connection.connectTimeout = 7000
-            connection.readTimeout = 9000
+            connection.connectTimeout = 4000
+            connection.readTimeout = 6000
             connection.setRequestProperty("User-Agent", "FacePersonalScanner/1.0 (public sitemap/feed reader)")
             connection.setRequestProperty("Accept", "application/xml,text/xml,application/rss+xml,application/atom+xml,text/plain")
             if (connection is HttpURLConnection) {
@@ -497,6 +539,8 @@ object PublicSourceScanner {
                 output.toByteArray()
             }
             bytes.toString(Charsets.UTF_8)
+        } catch (e: java.io.IOException) {
+            if (failFast) throw SourceUnreachableException("the site did not respond") else null
         } catch (_: Exception) { null }
         finally { (connection as? HttpURLConnection)?.disconnect() }
     }

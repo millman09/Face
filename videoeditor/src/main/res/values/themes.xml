@@ -1,0 +1,15 @@
+<resources>
+    <!-- Video editors read best on a dark canvas, so the app is always dark. -->
+    <style name="Theme.Clarity" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/clarity_primary</item>
+        <item name="colorOnPrimary">@color/clarity_on_primary</item>
+        <item name="colorPrimaryContainer">@color/clarity_container</item>
+        <item name="colorOnPrimaryContainer">@color/clarity_on_container</item>
+        <item name="colorSecondary">@color/clarity_secondary</item>
+        <item name="colorSurface">@color/clarity_surface</item>
+        <item name="android:windowBackground">@color/clarity_surface</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

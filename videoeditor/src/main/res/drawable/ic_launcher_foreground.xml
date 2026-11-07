@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A film frame with a sparkle: "make this video clearer". -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="@color/icon_fg"
+        android:fillType="evenOdd"
+        android:pathData="M34,38h32a4,4 0,0 1,4 4v24a4,4 0,0 1,-4 4h-32a4,4 0,0 1,-4 -4v-24a4,4 0,0 1,4 -4zM44,46v16l13,-8z" />
+    <path
+        android:fillColor="@color/icon_accent"
+        android:pathData="M76,30l2.5,6.5l6.5,2.5l-6.5,2.5l-2.5,6.5l-2.5,-6.5l-6.5,-2.5l6.5,-2.5z" />
+</vector>

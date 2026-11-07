@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="clarity_primary">#FF7FD3FF</color>
+    <color name="clarity_on_primary">#FF00344A</color>
+    <color name="clarity_container">#FF0F4C69</color>
+    <color name="clarity_on_container">#FFC6E9FF</color>
+    <color name="clarity_secondary">#FFFFB870</color>
+    <color name="clarity_surface">#FF101418</color>
+    <color name="clarity_surface_high">#FF1C2228</color>
+    <color name="clarity_on_surface_muted">#FF9AA6B2</color>
+    <color name="icon_bg">#FF0F4C69</color>
+    <color name="icon_fg">#FFFFFFFF</color>
+    <color name="icon_accent">#FFFFB870</color>
+</resources>

@@ -36,11 +36,18 @@ jobs:
       - name: Build debug APK
         run: |
           chmod +x ./gradlew
-          ./gradlew :app:assembleDebug --stacktrace
+          ./gradlew :app:assembleDebug :videoeditor:assembleDebug :videoeditor:testDebugUnitTest --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: face-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload Clarity video editor APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: clarity-video-editor-debug-apk
+          path: videoeditor/build/outputs/apk/debug/videoeditor-debug.apk
           if-no-files-found: error

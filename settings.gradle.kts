@@ -24,4 +24,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Face"
 include(":app")
+include(":videoeditor")
  

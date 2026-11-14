@@ -26,11 +26,17 @@ object IdentityGuesser {
             out += first + last
             out += first + "." + last
             out += first + "_" + last
+            out += first + "-" + last
             out += first.take(1) + last
             out += first + last.take(1)
             out += last + first
+            out += last + "." + first
+            out += last.take(1) + first
+            // A couple of digits are an extremely common suffix when the bare name was already taken.
+            out += first + last + "1"
+            out += first + last + "123"
         }
-        return out.filter { UsernameChecker.clean(it) != null }.take(8)
+        return out.filter { UsernameChecker.clean(it) != null }.take(12)
     }
 
     private val emailProviders = listOf("gmail.com", "outlook.com", "yahoo.com", "icloud.com", "protonmail.com", "hotmail.com")

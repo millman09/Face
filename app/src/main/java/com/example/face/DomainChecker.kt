@@ -132,6 +132,8 @@ object DomainChecker {
             report(Finding(Level.INFO, "Website responded", "HTTP $code from https://$finalHost/"))
             headerChecks(connection, report)
             cookieChecks(connection, report)
+            cspQualityCheck(connection, report)
+            mixedContentCheck(connection, report, finalHost)
         } catch (e: javax.net.ssl.SSLException) {
             report(Finding(Level.BAD, "HTTPS certificate problem", e.localizedMessage ?: "The TLS handshake failed."))
         } catch (e: Exception) {
@@ -142,6 +144,88 @@ object DomainChecker {
         }
         httpRedirectCheck(domain, report)
         securityTxtCheck(domain, report)
+        robotsTxtCheck(domain, report)
+        exposedFileCheck(domain, report)
+    }
+
+    /** Looks for the common ways a Content-Security-Policy is undone: unsafe-inline/eval and a wide-open default. */
+    private fun cspQualityCheck(c: HttpsURLConnection, report: (Finding) -> Unit) {
+        val csp = c.getHeaderField("Content-Security-Policy") ?: return
+        val weaknesses = mutableListOf<String>()
+        if (csp.contains("unsafe-inline", ignoreCase = true)) weaknesses += "allows 'unsafe-inline' scripts/styles"
+        if (csp.contains("unsafe-eval", ignoreCase = true)) weaknesses += "allows 'unsafe-eval'"
+        if (Regex("default-src[^;]*\*").containsMatchIn(csp) || Regex("script-src[^;]*\*").containsMatchIn(csp)) {
+            weaknesses += "allows scripts/content from any host (*)"
+        }
+        report(
+            if (weaknesses.isEmpty()) Finding(Level.GOOD, "Content-Security-Policy looks reasonably strict", csp)
+            else Finding(Level.WARN, "Content-Security-Policy has weaknesses", weaknesses.joinToString("; ") + "
+$csp")
+        )
+    }
+
+    /** A page served over HTTPS that still loads plain-HTTP resources undermines the encryption. */
+    private fun mixedContentCheck(c: HttpsURLConnection, report: (Finding) -> Unit, host: String) {
+        val type = c.contentType ?: return
+        if (!type.contains("text/html", ignoreCase = true)) return
+        try {
+            val html = c.inputStream.bufferedReader().use { it.readText().take(400_000) }
+            val insecure = Regex("""(?:src|href)\s*=\s*["']http://[^"']+""", RegexOption.IGNORE_CASE)
+                .findAll(html).map { it.value }.distinct().take(5).toList()
+            if (insecure.isNotEmpty()) {
+                report(Finding(Level.WARN, "Mixed content: some resources load over plain HTTP", insecure.joinToString("
+")))
+            }
+        } catch (_: Exception) {
+            // The connection's stream may already be consumed by an earlier check; mixed content is a nice-to-have, not critical.
+        }
+    }
+
+    /** robots.txt is public by definition, but it sometimes names paths worth not drawing attention to. */
+    private fun robotsTxtCheck(domain: String, report: (Finding) -> Unit) {
+        var c: HttpURLConnection? = null
+        try {
+            c = (URL("https://$domain/robots.txt").openConnection() as HttpURLConnection).apply {
+                connectTimeout = 6000; readTimeout = 8000
+            }
+            if (c.responseCode != 200) return
+            val lines = c.inputStream.bufferedReader().readText().take(50_000).lines()
+            val sensitive = lines.filter {
+                it.trim().startsWith("Disallow", ignoreCase = true) &&
+                    Regex("admin|wp-admin|backup|\.git|config|private|internal|staging|\.env", RegexOption.IGNORE_CASE).containsMatchIn(it)
+            }
+            if (sensitive.isNotEmpty()) {
+                report(Finding(Level.WARN, "robots.txt names sensitive-looking paths", sensitive.joinToString("
+").take(400) +
+                    "
+Disallow only keeps well-behaved crawlers out; it does not restrict access. If these paths aren't meant to be public, protect them with authentication instead."))
+            }
+        } catch (_: Exception) {
+        } finally { c?.disconnect() }
+    }
+
+    /** One plain GET per path for the handful of accidentally-published files that cause real damage. */
+    private fun exposedFileCheck(domain: String, report: (Finding) -> Unit) {
+        val paths = listOf(".env", ".git/config", ".git/HEAD", "wp-config.php.bak", "backup.sql", ".DS_Store")
+        val found = mutableListOf<String>()
+        for (path in paths) {
+            var c: HttpURLConnection? = null
+            try {
+                c = (URL("https://$domain/$path").openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 5000; readTimeout = 6000; instanceFollowRedirects = false
+                }
+                val code = c.responseCode
+                val length = c.contentLength
+                // A real hit answers 200 with actual content; a redirect to a generic error/home page is the common false positive.
+                if (code == 200 && length != 0) found += path
+            } catch (_: Exception) {
+            } finally { c?.disconnect() }
+        }
+        report(
+            if (found.isEmpty()) Finding(Level.GOOD, "No exposed config/backup files found", "Checked: ${paths.joinToString(", ")}")
+            else Finding(Level.BAD, "Exposed file(s) found", found.joinToString(", ") + "
+These can leak credentials or source code. Remove them from the public web root or block access to them.")
+        )
     }
 
     private fun headerChecks(c: HttpsURLConnection, report: (Finding) -> Unit) {

@@ -154,13 +154,12 @@ object DomainChecker {
         val weaknesses = mutableListOf<String>()
         if (csp.contains("unsafe-inline", ignoreCase = true)) weaknesses += "allows 'unsafe-inline' scripts/styles"
         if (csp.contains("unsafe-eval", ignoreCase = true)) weaknesses += "allows 'unsafe-eval'"
-        if (Regex("default-src[^;]*\*").containsMatchIn(csp) || Regex("script-src[^;]*\*").containsMatchIn(csp)) {
+        if (Regex("""default-src[^;]*\*""").containsMatchIn(csp) || Regex("""script-src[^;]*\*""").containsMatchIn(csp)) {
             weaknesses += "allows scripts/content from any host (*)"
         }
         report(
             if (weaknesses.isEmpty()) Finding(Level.GOOD, "Content-Security-Policy looks reasonably strict", csp)
-            else Finding(Level.WARN, "Content-Security-Policy has weaknesses", weaknesses.joinToString("; ") + "
-$csp")
+            else Finding(Level.WARN, "Content-Security-Policy has weaknesses", weaknesses.joinToString("; ") + "\n$csp")
         )
     }
 
@@ -173,8 +172,7 @@ $csp")
             val insecure = Regex("""(?:src|href)\s*=\s*["']http://[^"']+""", RegexOption.IGNORE_CASE)
                 .findAll(html).map { it.value }.distinct().take(5).toList()
             if (insecure.isNotEmpty()) {
-                report(Finding(Level.WARN, "Mixed content: some resources load over plain HTTP", insecure.joinToString("
-")))
+                report(Finding(Level.WARN, "Mixed content: some resources load over plain HTTP", insecure.joinToString("\n")))
             }
         } catch (_: Exception) {
             // The connection's stream may already be consumed by an earlier check; mixed content is a nice-to-have, not critical.
@@ -192,13 +190,11 @@ $csp")
             val lines = c.inputStream.bufferedReader().readText().take(50_000).lines()
             val sensitive = lines.filter {
                 it.trim().startsWith("Disallow", ignoreCase = true) &&
-                    Regex("admin|wp-admin|backup|\.git|config|private|internal|staging|\.env", RegexOption.IGNORE_CASE).containsMatchIn(it)
+                    Regex("""admin|wp-admin|backup|\.git|config|private|internal|staging|\.env""", RegexOption.IGNORE_CASE).containsMatchIn(it)
             }
             if (sensitive.isNotEmpty()) {
-                report(Finding(Level.WARN, "robots.txt names sensitive-looking paths", sensitive.joinToString("
-").take(400) +
-                    "
-Disallow only keeps well-behaved crawlers out; it does not restrict access. If these paths aren't meant to be public, protect them with authentication instead."))
+                report(Finding(Level.WARN, "robots.txt names sensitive-looking paths", sensitive.joinToString("\n").take(400) +
+                    "\nDisallow only keeps well-behaved crawlers out; it does not restrict access. If these paths aren't meant to be public, protect them with authentication instead."))
             }
         } catch (_: Exception) {
         } finally { c?.disconnect() }
@@ -223,8 +219,7 @@ Disallow only keeps well-behaved crawlers out; it does not restrict access. If t
         }
         report(
             if (found.isEmpty()) Finding(Level.GOOD, "No exposed config/backup files found", "Checked: ${paths.joinToString(", ")}")
-            else Finding(Level.BAD, "Exposed file(s) found", found.joinToString(", ") + "
-These can leak credentials or source code. Remove them from the public web root or block access to them.")
+            else Finding(Level.BAD, "Exposed file(s) found", found.joinToString(", ") + "\nThese can leak credentials or source code. Remove them from the public web root or block access to them.")
         )
     }
 

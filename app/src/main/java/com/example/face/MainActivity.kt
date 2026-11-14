@@ -100,7 +100,7 @@ class MainActivity : AppCompatActivity() {
         val nav = findViewById<BottomNavigationView>(R.id.bottomNav)
         nav.setOnItemSelectedListener { item ->
             if (item.itemId == R.id.nav_accounts) {
-                startActivity(Intent(this, AccountAuditActivity::class.java))
+                startActivity(Intent(this, ExposureCheckActivity::class.java))
                 return@setOnItemSelectedListener false
             }
             panels.forEach { (id, panel) ->

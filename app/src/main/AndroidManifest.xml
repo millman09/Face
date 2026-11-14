@@ -40,6 +40,11 @@
             android:exported="false" />
 
         <activity
+            android:name=".ExposureCheckActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Face" />
+
+        <activity
             android:name=".LockActivity"
             android:exported="false"
             android:excludeFromRecents="true"

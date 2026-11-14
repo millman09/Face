@@ -27,6 +27,7 @@ class ScreenSmokeTest {
 
     @Test fun mainScreenOpens() = open(MainActivity::class.java)
     @Test fun deepSearchOpens() = open(WebScanActivity::class.java)
+    @Test fun exposureCheckOpens() = open(ExposureCheckActivity::class.java)
     @Test fun accountAuditOpens() = open(AccountAuditActivity::class.java)
     @Test fun removalGuideOpens() = open(RemovalGuideActivity::class.java)
     @Test fun removalLogOpens() = open(RemovalLogActivity::class.java)

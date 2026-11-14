@@ -17,6 +17,14 @@ object BreachChecker {
         data class Error(val message: String) : Result()
     }
 
+    private val adultKeywords = listOf(
+        "adult", "porn", "xxx", "sex", "brazzers", "ashley", "friendfinder", "fling", "onlyfans", "chaturbate",
+        "xhamster", "xvideos", "redtube", "stripchat", "camsoda", "fetlife", "livejasmin", "nsfw", "erotic"
+    )
+
+    /** True when a breach name looks like an adult site, so those can be pointed out separately. */
+    fun isAdult(breachName: String): Boolean = adultKeywords.any { breachName.contains(it, ignoreCase = true) }
+
     fun check(email: String): Result {
         var c: HttpURLConnection? = null
         return try {

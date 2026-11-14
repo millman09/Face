@@ -55,7 +55,7 @@ class ExposureCheckActivity : AppCompatActivity() {
 
         // 1. Email breaches
         page.addView(heading("1. Email breaches"))
-        page.addView(body("Your email address is sent to the free XposedOrNot service, which reports the known breaches that include it. Use your own address only."))
+        page.addView(body("Your email address is sent to the free XposedOrNot service, which reports the known breaches that include it, adult sites included. A site's own member list can't be searched without signing up or resetting passwords there, which this app never does, so breach records are how exposure shows up. Use your own address only."))
         emailInput = input("Your email address", InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
         page.addSpaced(emailInput, 8)
         page.addSpaced(button("Check this email for breaches") { checkEmail() }, 8)
@@ -123,9 +123,14 @@ class ExposureCheckActivity : AppCompatActivity() {
                     is BreachChecker.Result.None -> addFinding(emailResults, DomainChecker.Level.GOOD, "No known breaches", "This address wasn't found in the breaches the service tracks. That doesn't guarantee it is safe.")
                     is BreachChecker.Result.Error -> addFinding(emailResults, DomainChecker.Level.INFO, "Couldn't check", result.message)
                     is BreachChecker.Result.Found -> {
+                        val adult = result.breaches.filter { BreachChecker.isAdult(it) }
                         addFinding(
                             emailResults, DomainChecker.Level.BAD, "Found in ${result.breaches.size} breach(es)",
                             result.breaches.joinToString(", ") + "\nChange the password on each of these sites (and anywhere you reused it), and turn on two-step login."
+                        )
+                        if (adult.isNotEmpty()) addFinding(
+                            emailResults, DomainChecker.Level.BAD, "Adult-site breaches: ${adult.size}",
+                            adult.joinToString(", ") + "\nThese lists can link your email to adult accounts. Remove or close those accounts if you can, and don't reuse that password or email for anything else."
                         )
                     }
                 }
@@ -169,7 +174,7 @@ class ExposureCheckActivity : AppCompatActivity() {
     private fun addProfileRow(site: UsernameChecker.Site, username: String) {
         val url = UsernameChecker.profileUrl(site, username)
         usernameResults.addView(TextView(this).apply {
-            text = "${site.name}\n$url"
+            text = "${site.name}${if (site.adult) "  ·  adult site" else ""}\n$url"
             textSize = 14f
             setPadding(dp(4), dp(10), dp(4), dp(10))
             setTextColor(Color.rgb(155, 139, 255))

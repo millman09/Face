@@ -12,7 +12,7 @@ object UsernameChecker {
     enum class Outcome { FOUND, NOT_FOUND, UNSURE }
 
     /** [url] contains {u} where the username goes. [missingText] is shown by sites that answer 200 for unknown users. */
-    data class Site(val name: String, val url: String, val missingText: String? = null)
+    data class Site(val name: String, val url: String, val missingText: String? = null, val adult: Boolean = false)
 
     val sites: List<Site> = listOf(
         Site("GitHub", "https://github.com/{u}"),
@@ -49,6 +49,17 @@ object UsernameChecker {
         Site("Wattpad", "https://www.wattpad.com/user/{u}"),
         Site("Etsy", "https://www.etsy.com/people/{u}"),
         Site("About.me", "https://about.me/{u}"),
+        // Adult sites: profile pages only, so you can find accounts or impersonation under your own name.
+        Site("Pornhub", "https://www.pornhub.com/users/{u}", adult = true),
+        Site("XVideos", "https://www.xvideos.com/profiles/{u}", adult = true),
+        Site("xHamster", "https://xhamster.com/users/{u}", adult = true),
+        Site("SpankBang", "https://spankbang.com/profile/{u}", adult = true),
+        Site("RedGIFs", "https://www.redgifs.com/users/{u}", adult = true),
+        Site("Chaturbate", "https://chaturbate.com/{u}/", adult = true),
+        Site("Stripchat", "https://stripchat.com/{u}", adult = true),
+        Site("CamSoda", "https://www.camsoda.com/{u}", adult = true),
+        Site("OnlyFans", "https://onlyfans.com/{u}", adult = true),
+        Site("Fansly", "https://fansly.com/{u}", adult = true),
     )
 
     /** Returns the cleaned username, or null if it has characters that could change the address. */

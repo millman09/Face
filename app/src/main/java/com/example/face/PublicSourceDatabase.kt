@@ -19,7 +19,7 @@ data class SearchInfo(val id: Long, val savedAt: Long, val matchCount: Int)
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long, val faceBox: String? = null, val confirmed: Boolean = false)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 10) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 11) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -87,6 +87,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             db.execSQL("ALTER TABLE candidates ADD COLUMN face_box TEXT")
         }
         if (oldVersion < 10) createArchiveTables(db)
+        if (oldVersion < 11) seedSources(db)
     }
 
     private fun seedSources(db: SQLiteDatabase) {
@@ -224,6 +225,24 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "BongaCams" to "https://bongacams.com",
             "MyFreeCams" to "https://www.myfreecams.com",
             "LiveJasmin" to "https://www.livejasmin.com",
+            // Dating and swinger platforms with public profile pages
+            "AdultFriendFinder" to "https://adultfriendfinder.com",
+            "Fabswingers" to "https://www.fabswingers.com",
+            "SwingLifeStyle" to "https://www.sls.com",
+            "FetLife" to "https://fetlife.com",
+            "Seeking" to "https://www.seeking.com",
+            "WhatsYourPrice" to "https://www.whatsyourprice.com",
+            "Ashley Madison" to "https://www.ashleymadison.com",
+            // Additional cam and clip platforms
+            "Cherry.tv" to "https://cherry.tv",
+            "Flirt4Free" to "https://www.flirt4free.com",
+            "ImLive" to "https://www.imlive.com",
+            "Streamate" to "https://streamate.com",
+            "CamModelDirectory" to "https://www.cammodeldirectory.com",
+            // Additional image-first boards
+            "Reddit (NSFW search, old.reddit.com)" to "https://old.reddit.com",
+            "Coomer" to "https://coomer.su",
+            "Kemono" to "https://kemono.su",
         )
         for ((name, address) in starterDomains) {
             val values = ContentValues().apply {

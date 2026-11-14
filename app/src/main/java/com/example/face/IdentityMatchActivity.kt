@@ -431,7 +431,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 validateMobileFaceNetModel(model)
                 interpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
                 val options = FaceDetectorOptions.Builder()
-                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
                     .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                     .build()
                 faceDetector = FaceDetection.getClient(options)
@@ -565,7 +565,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 interpreter = activeInterpreter
                 val activeDetector = FaceDetection.getClient(
                     FaceDetectorOptions.Builder()
-                        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
                         .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                         .build()
                 )
@@ -1256,7 +1256,9 @@ class IdentityMatchActivity : AppCompatActivity() {
     private fun combineReferenceScores(scores: List<Float>): Float {
         require(scores.isNotEmpty()) { "At least one reference embedding is required." }
         if (scores.size == 1) return scores.first()
-        return scores.sortedDescending().take(2).average().toFloat()
+        // Averaging the best few references (rather than just the single best) steadies the score
+        // against one unusually flattering or unflattering reference photo.
+        return scores.sortedDescending().take(minOf(3, scores.size)).average().toFloat()
     }
 
     /**

@@ -29,6 +29,8 @@ class ExposureCheckActivity : AppCompatActivity() {
     private lateinit var usernameInput: EditText
     private lateinit var usernameStatus: TextView
     private lateinit var usernameResults: LinearLayout
+    private lateinit var passwordInput: EditText
+    private lateinit var passwordResult: TextView
     private lateinit var domainInput: EditText
     private lateinit var domainResults: LinearLayout
     private lateinit var domainButton: MaterialButton
@@ -67,6 +69,17 @@ class ExposureCheckActivity : AppCompatActivity() {
         page.addView(emailResults)
 
         // 2. Username
+        // Password check
+        page.addView(heading("1b. Check a password"))
+        page.addView(body("Checks a password against Have I Been Pwned's Pwned Passwords list of billions of passwords seen in breach dumps. Only the first 5 characters of its hash are sent, never the password itself or its full hash, so it can't be reconstructed from what leaves your phone."))
+        passwordInput = input("Password to check", InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS).apply {
+            transformationMethod = android.text.method.PasswordTransformationMethod.getInstance()
+        }
+        page.addSpaced(passwordInput, 8)
+        page.addSpaced(button("Check this password") { checkPassword() }, 8)
+        passwordResult = body("")
+        page.addView(passwordResult)
+
         page.addView(heading("2. Username profiles"))
         page.addView(body("Looks for a public profile page with your username on about 650 sites, adult sites included. It takes a minute or two. Sites that block automated checks show as \"couldn't check\", and you can open those yourself."))
         usernameInput = input("Your username", InputType.TYPE_CLASS_TEXT)
@@ -136,7 +149,55 @@ class ExposureCheckActivity : AppCompatActivity() {
                             emailResults, DomainChecker.Level.BAD, "Adult-site breaches: ${adult.size}",
                             adult.joinToString(", ") + "\nThese lists can link your email to adult accounts. Remove or close those accounts if you can, and don't reuse that password or email for anything else."
                         )
+                        emailResults.addView(button("What was exposed in each breach?") { showBreachDetail(email) })
                     }
+                }
+            }
+        }
+    }
+
+    /** A second, separate lookup: per breach, which kinds of data it exposed (not just its name). */
+    private fun showBreachDetail(email: String) {
+        emailResults.addView(body("Looking up details…").also { it.tag = "detail-status" })
+        pool.execute {
+            val details = BreachChecker.analyticsDetail(email)
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                emailResults.findViewWithTag<TextView>("detail-status")?.let { emailResults.removeView(it) }
+                if (details.isEmpty()) {
+                    addFinding(emailResults, DomainChecker.Level.INFO, "No further detail available", "The breach-detail lookup didn't return anything right now.")
+                    return@runOnUiThread
+                }
+                for (d in details) {
+                    val label = if (d.year.isNotBlank()) "${d.name} (${d.year})" else d.name
+                    val adultTag = if (BreachChecker.isAdult(d.name)) "  ·  adult site" else ""
+                    addFinding(
+                        emailResults, DomainChecker.Level.BAD, "$label$adultTag",
+                        if (d.exposedData.isEmpty()) "Exposed data types not listed." else "Exposed: ${d.exposedData.joinToString(", ")}"
+                    )
+                }
+            }
+        }
+    }
+
+    // ---- password ----
+
+    private fun checkPassword() {
+        val password = passwordInput.text.toString()
+        if (password.isEmpty()) {
+            Toast.makeText(this, "Enter a password to check.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        passwordResult.setTextColor(Color.GRAY)
+        passwordResult.text = "Checking…"
+        pool.execute {
+            val count = BreachChecker.checkPassword(password)
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                when {
+                    count < 0 -> { passwordResult.setTextColor(Color.GRAY); passwordResult.text = "Could not reach the password-check service." }
+                    count == 0 -> { passwordResult.setTextColor(Color.rgb(120, 200, 140)); passwordResult.text = "✓ Not found in known breach dumps." }
+                    else -> { passwordResult.setTextColor(Color.rgb(255, 120, 120)); passwordResult.text = "✗ Seen ${"%,d".format(count)} time(s) in breach dumps. Stop using this password and change it anywhere you have." }
                 }
             }
         }

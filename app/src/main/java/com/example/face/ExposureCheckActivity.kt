@@ -84,7 +84,7 @@ class ExposureCheckActivity : AppCompatActivity() {
 
         page.addView(heading("2. Username profiles"))
         page.addView(body("Looks for a public profile page with your username on about 650 sites, adult sites included. It takes a minute or two. Sites that block automated checks show as \"couldn't check\", and you can open those yourself."))
-        usernameInput = input("Your username", InputType.TYPE_CLASS_TEXT)
+        usernameInput = input("Your username or email address", InputType.TYPE_CLASS_TEXT)
         page.addSpaced(usernameInput, 8)
         adultSwitch = MaterialSwitch(this).apply { text = "Include adult sites"; isChecked = true; setPadding(dp(8), dp(8), dp(8), dp(8)) }
         page.addSpaced(adultSwitch, 4)

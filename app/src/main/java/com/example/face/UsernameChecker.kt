@@ -61,9 +61,13 @@ object UsernameChecker {
         return sites
     }
 
-    /** Returns the cleaned username, or null if it has characters that could change the address. */
+    /**
+     * Returns the cleaned username, or null if it has characters that could change the address.
+     * An email address is accepted too: the part before the @ is used as the username.
+     */
     fun clean(raw: String): String? {
-        val name = raw.trim().removePrefix("@")
+        val trimmed = raw.trim().removePrefix("@")
+        val name = if (trimmed.contains('@')) trimmed.substringBefore('@') else trimmed
         return if (Regex("[A-Za-z0-9._-]{2,40}").matches(name)) name else null
     }
 

@@ -249,11 +249,17 @@ class ExposureCheckActivity : AppCompatActivity() {
     // ---- username ----
 
     private fun checkUsername() {
-        val username = UsernameChecker.clean(usernameInput.text.toString())
+        val raw = usernameInput.text.toString()
+        val username = UsernameChecker.clean(raw)
         if (username == null) {
-            Toast.makeText(this, "Enter a username of 2–40 letters, numbers, dots, dashes or underscores.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Enter a username of 2–40 letters, numbers, dots, dashes or underscores, or an email address.", Toast.LENGTH_LONG).show()
             return
         }
+        // When an email was entered, also try it literally as a username (some sites' profile pages use the
+        // full address) in addition to the part before the @, which was already checked as a plain username.
+        val email = UsernameChecker.cleanEmail(raw)
+        val candidates = if (email != null && email != username) listOf(username, email) else listOf(username)
+
         val includeAdult = adultSwitch.isChecked
         val run = ++usernameRun
         usernamePool?.shutdownNow()
@@ -268,27 +274,30 @@ class ExposureCheckActivity : AppCompatActivity() {
                 runOnUiThread { usernameStatus.text = "Could not load the site list: ${e.localizedMessage ?: "unknown error"}" }
                 return@execute
             }
+            val total = sites.size * candidates.size
             var done = 0
             var found = 0
-            val unsure = mutableListOf<UsernameChecker.Site>()
-            runOnUiThread { if (run == usernameRun) usernameStatus.text = "Checking 0 of ${sites.size}…" }
-            for (site in sites) {
-                checkPool.execute {
-                    val outcome = UsernameChecker.check(site, username)
-                    runOnUiThread {
-                        if (isFinishing || isDestroyed || run != usernameRun) return@runOnUiThread
-                        done++
-                        when (outcome) {
-                            UsernameChecker.Outcome.FOUND -> { found++; addProfileRow(site, username) }
-                            UsernameChecker.Outcome.UNSURE -> unsure += site
-                            UsernameChecker.Outcome.NOT_FOUND -> {}
-                        }
-                        usernameStatus.text = if (done < sites.size) "Checking $done of ${sites.size}… $found found"
-                        else "Done: $found profile(s) found on ${sites.size} sites. ${unsure.size} couldn't be checked."
-                        if (done == sites.size && unsure.isNotEmpty()) {
-                            usernameResults.addView(button("Show the ${unsure.size} sites that couldn't be checked") {
-                                showUncheckable(unsure, username)
-                            })
+            val unsure = mutableListOf<Pair<UsernameChecker.Site, String>>()
+            runOnUiThread { if (run == usernameRun) usernameStatus.text = "Checking 0 of $total…" }
+            for (candidate in candidates) {
+                for (site in sites) {
+                    checkPool.execute {
+                        val outcome = UsernameChecker.check(site, candidate)
+                        runOnUiThread {
+                            if (isFinishing || isDestroyed || run != usernameRun) return@runOnUiThread
+                            done++
+                            when (outcome) {
+                                UsernameChecker.Outcome.FOUND -> { found++; addProfileRow(site, candidate, candidates.size > 1) }
+                                UsernameChecker.Outcome.UNSURE -> unsure += site to candidate
+                                UsernameChecker.Outcome.NOT_FOUND -> {}
+                            }
+                            usernameStatus.text = if (done < total) "Checking $done of $total… $found found"
+                            else "Done: $found profile(s) found. ${unsure.size} couldn't be checked."
+                            if (done == total && unsure.isNotEmpty()) {
+                                usernameResults.addView(button("Show the ${unsure.size} sites that couldn't be checked") {
+                                    showUncheckable(unsure)
+                                })
+                            }
                         }
                     }
                 }
@@ -296,21 +305,22 @@ class ExposureCheckActivity : AppCompatActivity() {
         }
     }
 
-    private fun showUncheckable(sites: List<UsernameChecker.Site>, username: String) {
-        val sorted = sites.sortedBy { it.name.lowercase() }
-        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+    private fun showUncheckable(entries: List<Pair<UsernameChecker.Site, String>>) {
+        val sorted = entries.sortedBy { it.first.name.lowercase() }
+        MaterialAlertDialogBuilder(this)
             .setTitle("Check these yourself")
-            .setItems(sorted.map { it.name + if (it.adult) "  ·  adult site" else "" }.toTypedArray()) { _, which ->
-                open(UsernameChecker.profileUrl(sorted[which], username))
+            .setItems(sorted.map { (site, candidate) -> site.name + (if (site.adult) "  ·  adult site" else "") + "  (as $candidate)" }.toTypedArray()) { _, which ->
+                val (site, candidate) = sorted[which]
+                open(UsernameChecker.profileUrl(site, candidate))
             }
             .setNegativeButton("Close", null)
             .show()
     }
 
-    private fun addProfileRow(site: UsernameChecker.Site, username: String) {
-        val url = UsernameChecker.profileUrl(site, username)
+    private fun addProfileRow(site: UsernameChecker.Site, candidate: String, showWhichForm: Boolean) {
+        val url = UsernameChecker.profileUrl(site, candidate)
         usernameResults.addView(TextView(this).apply {
-            text = "${site.name}${if (site.adult) "  ·  adult site" else ""}\n$url"
+            text = "${site.name}${if (site.adult) "  ·  adult site" else ""}${if (showWhichForm) "  (as $candidate)" else ""}\n$url"
             textSize = 14f
             setPadding(dp(4), dp(10), dp(4), dp(10))
             setTextColor(Color.rgb(155, 139, 255))

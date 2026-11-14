@@ -71,21 +71,31 @@ object UsernameChecker {
         return if (Regex("[A-Za-z0-9._-]{2,40}").matches(name)) name else null
     }
 
+    /** If [raw] is an email address, returns it as-is (lowercased) so it can also be tried as a literal username. */
+    fun cleanEmail(raw: String): String? {
+        val trimmed = raw.trim().lowercase()
+        return if (android.util.Patterns.EMAIL_ADDRESS.matcher(trimmed).matches()) trimmed else null
+    }
+
     private fun accountFor(site: Site, username: String): String {
         val strip = site.stripChars ?: return username
         return username.filterNot { it in strip }
     }
 
+    /** URL-encoded so an "@" or other reserved character (from an email tried as a username) doesn't break the address. */
+    private fun encodedAccountFor(site: Site, username: String): String =
+        java.net.URLEncoder.encode(accountFor(site, username), "UTF-8").replace("+", "%20")
+
     /** The address to show and open for a profile: the site's friendly address when it has one. */
     fun profileUrl(site: Site, username: String): String =
-        (site.prettyUrl ?: site.url).replace("{account}", accountFor(site, username))
+        (site.prettyUrl ?: site.url).replace("{account}", encodedAccountFor(site, username))
 
     private val skippedHeaders = setOf("host", "te", "connection", "content-length", "origin")
 
     fun check(site: Site, username: String): Outcome {
         var connection: HttpURLConnection? = null
         return try {
-            connection = (URL(site.url.replace("{account}", accountFor(site, username))).openConnection() as HttpURLConnection).apply {
+            connection = (URL(site.url.replace("{account}", encodedAccountFor(site, username))).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 6000
                 readTimeout = 8000
                 // A "not found" answer that is itself a redirect must be read as a redirect.

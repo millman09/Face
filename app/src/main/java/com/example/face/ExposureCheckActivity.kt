@@ -64,6 +64,7 @@ class ExposureCheckActivity : AppCompatActivity() {
         emailInput = input("Your email address", InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
         page.addSpaced(emailInput, 8)
         page.addSpaced(button("Check this email for breaches") { checkEmail() }, 8)
+        page.addSpaced(button("Guess usernames from this email") { showGuessedUsernames() }, 8)
         page.addSpaced(button("Second opinion: Have I Been Pwned") { open("https://haveibeenpwned.com/") }, 8)
         emailResults = column()
         page.addView(emailResults)
@@ -87,6 +88,7 @@ class ExposureCheckActivity : AppCompatActivity() {
         adultSwitch = MaterialSwitch(this).apply { text = "Include adult sites"; isChecked = true; setPadding(dp(8), dp(8), dp(8), dp(8)) }
         page.addSpaced(adultSwitch, 4)
         page.addSpaced(button("Check this username") { checkUsername() }, 8)
+        page.addSpaced(button("Guess emails from this username") { showGuessedEmails() }, 8)
         usernameStatus = body("")
         page.addView(usernameStatus)
         usernameResults = column()
@@ -178,6 +180,46 @@ class ExposureCheckActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    // ---- guessed usernames / emails ----
+
+    /** Not a lookup: shows likely usernames derived from the email, each tappable to check it. */
+    private fun showGuessedUsernames() {
+        val email = emailInput.text.toString().trim()
+        val guesses = IdentityGuesser.usernamesFromEmail(email)
+        if (guesses.isEmpty()) {
+            Toast.makeText(this, "Enter an email address first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Guessed usernames")
+            .setMessage("These are common patterns people derive from an email address, not a confirmed link. Nothing is checked until you pick one.")
+            .setItems(guesses.toTypedArray()) { _, which ->
+                usernameInput.setText(guesses[which])
+                checkUsername()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    /** Not a lookup: shows likely email addresses derived from the username, each tappable to run the breach check. */
+    private fun showGuessedEmails() {
+        val username = usernameInput.text.toString().trim()
+        val guesses = IdentityGuesser.emailsFromUsername(username)
+        if (guesses.isEmpty()) {
+            Toast.makeText(this, "Enter a username first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Guessed email addresses")
+            .setMessage("These are common patterns at major providers, not confirmed to exist. This app never checks whether an email account exists; picking one here only runs the breach check against it.")
+            .setItems(guesses.toTypedArray()) { _, which ->
+                emailInput.setText(guesses[which])
+                checkEmail()
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     // ---- password ----

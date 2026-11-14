@@ -14,6 +14,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.checkbox.MaterialCheckBox
+import com.google.android.material.materialswitch.MaterialSwitch
 import java.util.concurrent.Executors
 
 /**
@@ -32,6 +33,8 @@ class ExposureCheckActivity : AppCompatActivity() {
     private lateinit var domainResults: LinearLayout
     private lateinit var domainButton: MaterialButton
     @Volatile private var usernameRun = 0
+    private lateinit var adultSwitch: MaterialSwitch
+    private var usernamePool: java.util.concurrent.ExecutorService? = null
 
     private val brokers = listOf(
         "Spokeo" to "https://www.spokeo.com/optout",
@@ -65,14 +68,17 @@ class ExposureCheckActivity : AppCompatActivity() {
 
         // 2. Username
         page.addView(heading("2. Username profiles"))
-        page.addView(body("Looks for public profile pages with your username on ${UsernameChecker.sites.size} well-known sites. Sites that block automated checks show as \"couldn't check\"."))
+        page.addView(body("Looks for a public profile page with your username on about 650 sites, adult sites included. It takes a minute or two. Sites that block automated checks show as \"couldn't check\", and you can open those yourself."))
         usernameInput = input("Your username", InputType.TYPE_CLASS_TEXT)
         page.addSpaced(usernameInput, 8)
+        adultSwitch = MaterialSwitch(this).apply { text = "Include adult sites"; isChecked = true; setPadding(dp(8), dp(8), dp(8), dp(8)) }
+        page.addSpaced(adultSwitch, 4)
         page.addSpaced(button("Check this username") { checkUsername() }, 8)
         usernameStatus = body("")
         page.addView(usernameStatus)
         usernameResults = column()
         page.addView(usernameResults)
+        page.addView(body("Site list and detection rules: WhatsMyName project by Micah Hoffman (github.com/WebBreacher/WhatsMyName), CC BY-SA 4.0."))
 
         // 3. Domain
         page.addView(heading("3. Domain security"))
@@ -97,6 +103,7 @@ class ExposureCheckActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        usernamePool?.shutdownNow()
         pool.shutdownNow()
         super.onDestroy()
     }
@@ -143,29 +150,57 @@ class ExposureCheckActivity : AppCompatActivity() {
             Toast.makeText(this, "Enter a username of 2–40 letters, numbers, dots, dashes or underscores.", Toast.LENGTH_LONG).show()
             return
         }
+        val includeAdult = adultSwitch.isChecked
         val run = ++usernameRun
+        usernamePool?.shutdownNow()
+        val checkPool = Executors.newFixedThreadPool(16)
+        usernamePool = checkPool
         usernameResults.removeAllViews()
-        val sites = UsernameChecker.sites
-        var done = 0
-        var found = 0
-        var unsure = 0
-        usernameStatus.text = "Checking 0 of ${sites.size}…"
-        for (site in sites) {
-            pool.execute {
-                val outcome = UsernameChecker.check(site, username)
-                runOnUiThread {
-                    if (isFinishing || isDestroyed || run != usernameRun) return@runOnUiThread
-                    done++
-                    when (outcome) {
-                        UsernameChecker.Outcome.FOUND -> { found++; addProfileRow(site, username) }
-                        UsernameChecker.Outcome.UNSURE -> unsure++
-                        UsernameChecker.Outcome.NOT_FOUND -> {}
+        usernameStatus.text = "Loading the site list…"
+        pool.execute {
+            val sites = try {
+                UsernameChecker.load(this).filter { includeAdult || !it.adult }
+            } catch (e: Exception) {
+                runOnUiThread { usernameStatus.text = "Could not load the site list: ${e.localizedMessage ?: "unknown error"}" }
+                return@execute
+            }
+            var done = 0
+            var found = 0
+            val unsure = mutableListOf<UsernameChecker.Site>()
+            runOnUiThread { if (run == usernameRun) usernameStatus.text = "Checking 0 of ${sites.size}…" }
+            for (site in sites) {
+                checkPool.execute {
+                    val outcome = UsernameChecker.check(site, username)
+                    runOnUiThread {
+                        if (isFinishing || isDestroyed || run != usernameRun) return@runOnUiThread
+                        done++
+                        when (outcome) {
+                            UsernameChecker.Outcome.FOUND -> { found++; addProfileRow(site, username) }
+                            UsernameChecker.Outcome.UNSURE -> unsure += site
+                            UsernameChecker.Outcome.NOT_FOUND -> {}
+                        }
+                        usernameStatus.text = if (done < sites.size) "Checking $done of ${sites.size}… $found found"
+                        else "Done: $found profile(s) found on ${sites.size} sites. ${unsure.size} couldn't be checked."
+                        if (done == sites.size && unsure.isNotEmpty()) {
+                            usernameResults.addView(button("Show the ${unsure.size} sites that couldn't be checked") {
+                                showUncheckable(unsure, username)
+                            })
+                        }
                     }
-                    usernameStatus.text = if (done < sites.size) "Checking $done of ${sites.size}… $found found"
-                    else "Done: $found profile(s) found on ${sites.size} sites. $unsure couldn't be checked."
                 }
             }
         }
+    }
+
+    private fun showUncheckable(sites: List<UsernameChecker.Site>, username: String) {
+        val sorted = sites.sortedBy { it.name.lowercase() }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Check these yourself")
+            .setItems(sorted.map { it.name + if (it.adult) "  ·  adult site" else "" }.toTypedArray()) { _, which ->
+                open(UsernameChecker.profileUrl(sorted[which], username))
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     private fun addProfileRow(site: UsernameChecker.Site, username: String) {

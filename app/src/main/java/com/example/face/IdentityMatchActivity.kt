@@ -957,7 +957,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private fun showMatchActions(pageUrl: String, imageUrl: String) {
         val labels = arrayOf(
             "Copy image link", "Copy page link",
-            "Report to Google (remove from search)", "StopNCII.org (hash-based blocking)", "Removal guide in this app"
+            "Report to Google (remove from search)", "StopNCII.org (hash-based blocking)"
         )
         MaterialAlertDialogBuilder(this)
             .setTitle("Get this removed")
@@ -966,8 +966,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     0 -> copyText("Image link", imageUrl)
                     1 -> copyText("Page link", pageUrl.ifBlank { imageUrl })
                     2 -> openResultUrl("https://support.google.com/websearch/answer/13650142")
-                    3 -> openResultUrl("https://stopncii.org")
-                    else -> startActivity(Intent(this, RemovalGuideActivity::class.java))
+                    else -> openResultUrl("https://stopncii.org")
                 }
             }
             .setNegativeButton("Close", null)

@@ -73,9 +73,6 @@ class ExposureCheckActivity : AppCompatActivity() {
         page.addView(usernameStatus)
         usernameResults = column()
         page.addView(usernameResults)
-        page.addSpaced(button("Search my accounts in the browser instead") {
-            startActivity(Intent(this, AccountAuditActivity::class.java))
-        }, 8)
 
         // 3. Domain
         page.addView(heading("3. Domain security"))

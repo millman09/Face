@@ -43,10 +43,6 @@ class WebScanActivity : AppCompatActivity() {
         }
     }
     @Volatile private var scanning = false
-    private var usernamePool: java.util.concurrent.ExecutorService? = null
-    private lateinit var usernameInput: EditText
-    private lateinit var usernameResults: LinearLayout
-    private lateinit var usernameStatus: TextView
     @Volatile private var catalogueReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -154,29 +150,6 @@ class WebScanActivity : AppCompatActivity() {
         page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
 
         page.addView(TextView(this).apply {
-            text = "Check a username"
-            textSize = 16f
-            setPadding(0, dp(20), 0, dp(4))
-        })
-        page.addView(TextView(this).apply {
-            text = "Checks about ${UsernameChecker.sites.size} well-known sites for a public profile with this name. Use it for your own usernames, to find accounts to review or report. Sites that block automated checks show as \"couldn't check\"."
-            textSize = 13f
-            setPadding(0, 0, 0, dp(8))
-        })
-        usernameInput = EditText(this).apply {
-            hint = "Username (letters, numbers, . _ -)"
-            setSingleLine(true)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
-        }
-        page.addSpaced(usernameInput, 8)
-        page.addSpaced(button("Check this username on all sites") { checkUsername() }, 8)
-        usernameStatus = TextView(this).apply { textSize = 13f; setPadding(0, dp(4), 0, dp(4)) }
-        page.addView(usernameStatus)
-        usernameResults = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        page.addView(usernameResults)
-
-        page.addView(TextView(this).apply {
             text = "AUTOMATIC PUBLIC-SOURCE SCAN\nThe built-in source catalogue is checked in one run. Coverage depends on public sitemaps, feeds, and accessible image links. No logins, CAPTCHAs, paywalls, or site protections are bypassed."
             textSize = 14f
             setPadding(0, dp(16), 0, dp(12))
@@ -243,56 +216,7 @@ class WebScanActivity : AppCompatActivity() {
             referencePreview.addView(image)
         }
     }
-    /** Checks every site in parallel and lists the profiles found as they come in. */
-    private fun checkUsername() {
-        val username = UsernameChecker.clean(usernameInput.text.toString())
-        if (username == null) {
-            Toast.makeText(this, "Enter a username of 2–40 letters, numbers, dots, dashes or underscores.", Toast.LENGTH_LONG).show()
-            return
-        }
-        usernamePool?.shutdownNow()
-        val pool = Executors.newFixedThreadPool(8)
-        usernamePool = pool
-        usernameResults.removeAllViews()
-        val sites = UsernameChecker.sites
-        var done = 0
-        var found = 0
-        var unsure = 0
-        usernameStatus.text = "Checking 0 of ${sites.size}…"
-        for (site in sites) {
-            pool.execute {
-                val outcome = UsernameChecker.check(site, username)
-                runOnUiThread {
-                    if (isFinishing || isDestroyed || usernamePool !== pool) return@runOnUiThread
-                    done++
-                    when (outcome) {
-                        UsernameChecker.Outcome.FOUND -> { found++; addUsernameRow(site, username, true) }
-                        UsernameChecker.Outcome.UNSURE -> unsure++
-                        UsernameChecker.Outcome.NOT_FOUND -> {}
-                    }
-                    usernameStatus.text = if (done < sites.size) "Checking $done of ${sites.size}… $found found"
-                    else "Done: $found profile(s) found on ${sites.size} sites. $unsure site(s) couldn't be checked."
-                }
-            }
-        }
-    }
-
-    private fun addUsernameRow(site: UsernameChecker.Site, username: String, found: Boolean) {
-        val url = UsernameChecker.profileUrl(site, username)
-        usernameResults.addView(TextView(this).apply {
-            text = "${site.name}\n$url"
-            textSize = 14f
-            setPadding(dp(4), dp(10), dp(4), dp(10))
-            setTextColor(if (found) android.graphics.Color.rgb(155, 139, 255) else android.graphics.Color.GRAY)
-            setOnClickListener {
-                try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-                catch (_: Exception) { Toast.makeText(this@WebScanActivity, "No browser could open this page.", Toast.LENGTH_SHORT).show() }
-            }
-        })
-    }
-
     override fun onDestroy() {
-        usernamePool?.shutdownNow()
         scanExecutor.shutdownNow()
         database.close()
         super.onDestroy()

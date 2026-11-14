@@ -31,10 +31,6 @@
         </activity>
 
         <activity
-            android:name=".AccountAuditActivity"
-            android:exported="false" />
-
-        <activity
             android:name=".WebScanActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:exported="false" />
@@ -49,14 +45,6 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.Face" />
-
-        <activity
-            android:name=".RemovalGuideActivity"
-            android:exported="false" />
-
-        <activity
-            android:name=".RemovalLogActivity"
-            android:exported="false" />
 
         <activity
             android:name=".MainActivity"

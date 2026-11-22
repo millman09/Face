@@ -407,18 +407,26 @@ class WebScanActivity : AppCompatActivity() {
                 }
             }
             val found = linkedMapOf<String, KeywordLink>()
+            val providerOutcomes = linkedMapOf<String, Int>()
             searches.forEachIndexed { index, search ->
-                try {
-                    fetchKeywordLinks(search).forEach { found.putIfAbsent(it.url, it) }
-                } catch (_: Exception) { }
+                val result = fetchKeywordLinks(search)
+                result.links.forEach { found.putIfAbsent(it.url, it) }
+                result.status.split(" · ").forEach { outcome ->
+                    val provider = outcome.substringBefore(":")
+                    providerOutcomes[provider] = (providerOutcomes[provider] ?: 0) + 1
+                }
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
-                        status.text = "Checking public indexes… ${index + 1} of ${searches.size} searches · ${found.size} links found"
+                        status.text = "Checking public indexes… ${index + 1} of ${searches.size} searches · ${found.size} links found · " +
+                            providerOutcomes.entries.joinToString(", ") { "${it.key}: ${it.value} checks" }
                     }
                 }
             }
             runOnUiThread {
-                if (!isFinishing && !isDestroyed) renderKeywordLinks(found.values.toList(), queryLabel)
+                if (!isFinishing && !isDestroyed) {
+                    renderKeywordLinks(found.values.toList(), queryLabel)
+                    if (found.isEmpty()) status.text = "No indexed links were extracted. Provider checks: ${providerOutcomes.entries.joinToString(", ") { "${it.key}: ${it.value} checks" }}. Try the browser-search button to compare live results."
+                }
             }
         }
     }
@@ -482,43 +490,87 @@ class WebScanActivity : AppCompatActivity() {
         return variants.toList()
     }
 
-    /** Reads ordinary HTML search results and only keeps links on the targeted public hosts. */
-    private fun fetchKeywordLinks(searchQuery: String): List<KeywordLink> {
+    private data class ProviderSearchResult(
+        val links: List<KeywordLink>,
+        val status: String
+    )
+
+    /**
+     * Query two ordinary public web-search result pages. This does not crawl
+     * protected pages or evade provider challenges; it reports those outcomes.
+     */
+    private fun fetchKeywordLinks(searchQuery: String): ProviderSearchResult {
+        val links = linkedMapOf<String, KeywordLink>()
+        val outcomes = mutableListOf<String>()
         val encoded = java.net.URLEncoder.encode(searchQuery, "UTF-8")
-        val connection = (java.net.URL("https://html.duckduckgo.com/html/?q=${encoded}").openConnection() as java.net.HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 10000
-            readTimeout = 10000
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36")
-            setRequestProperty("Accept", "text/html")
-        }
-        try {
-            val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val anchorRegex = Regex("""<a(?=[^>]*class=["'][^"']*result__a)[^>]*>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            val results = mutableListOf<KeywordLink>()
-            anchorRegex.findAll(html).forEach { match ->
-                val tagStart = html.lastIndexOf("<a", match.range.first)
-                val tagEnd = html.indexOf('>', tagStart).takeIf { it >= 0 } ?: return@forEach
-                val attributes = html.substring(tagStart, tagEnd + 1)
-                val rawHref = Regex("""href=["']([^"']+)""", RegexOption.IGNORE_CASE).find(attributes)?.groupValues?.get(1) ?: return@forEach
-                val href = try {
-                    val parsed = Uri.parse(rawHref)
-                    parsed.getQueryParameter("uddg") ?: rawHref
-                } catch (_: Exception) { rawHref }
-                val uri = try { Uri.parse(href) } catch (_: Exception) { return@forEach }
-                val host = uri.host?.lowercase()?.removePrefix("www.") ?: return@forEach
-                val allowed = listOf("4plebs.org", "warosu.org", "anonibx.com", "motherless.com", "4chan.org", "4channel.org")
-                if (allowed.none { host == it || host.endsWith(".$it") }) return@forEach
-                if (uri.scheme != "https" && uri.scheme != "http") return@forEach
-                val title = android.text.Html.fromHtml(match.groupValues[1], android.text.Html.FROM_HTML_MODE_LEGACY)
-                    .toString().replace(Regex("""\s+"""), " ").trim().ifBlank { host }
-                results += KeywordLink(title, uri.toString(), host)
+
+        fun request(provider: String, url: String, parse: (String) -> List<KeywordLink>) {
+            var connection: java.net.HttpURLConnection? = null
+            try {
+                connection = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    instanceFollowRedirects = true
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36")
+                    setRequestProperty("Accept", "text/html,application/xhtml+xml")
+                    setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+                }
+                val code = connection.responseCode
+                if (code !in 200..299) {
+                    outcomes += "$provider: HTTP $code"
+                    return
+                }
+                val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val lower = html.lowercase()
+                if (listOf("captcha", "unusual traffic", "verify you are human", "automated requests").any { lower.contains(it) }) {
+                    outcomes += "$provider: challenge/block page"
+                    return
+                }
+                val parsed = parse(html)
+                parsed.forEach { links.putIfAbsent(it.url, it) }
+                outcomes += if (parsed.isEmpty()) "$provider: no indexed links" else "$provider: ${parsed.size} links"
+            } catch (e: java.net.SocketTimeoutException) {
+                outcomes += "$provider: timed out"
+            } catch (e: Exception) {
+                outcomes += "$provider: unavailable (${e.javaClass.simpleName})"
+            } finally {
+                connection?.disconnect()
             }
-            return results
-        } finally {
-            connection.disconnect()
         }
+
+        fun allowedLink(raw: String, title: String): KeywordLink? {
+            val uri = try { Uri.parse(raw) } catch (_: Exception) { return null }
+            val host = uri.host?.lowercase()?.removePrefix("www.") ?: return null
+            val allowed = listOf("4plebs.org", "warosu.org", "anonibx.com", "motherless.com", "4chan.org", "4channel.org")
+            if (allowed.none { host == it || host.endsWith(".$it") }) return null
+            if (uri.scheme != "https" && uri.scheme != "http") return null
+            val cleanTitle = android.text.Html.fromHtml(title, android.text.Html.FROM_HTML_MODE_LEGACY)
+                .toString().replace(Regex("""\\s+"""), " ").trim().ifBlank { host }
+            return KeywordLink(cleanTitle, uri.toString(), host)
+        }
+
+        request("DuckDuckGo", "https://html.duckduckgo.com/html/?q=$encoded") { html ->
+            val regex = Regex("""<a(?=[^>]*class=["'][^"']*result__a)[^>]*>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            regex.findAll(html).mapNotNull { match ->
+                val tagStart = html.lastIndexOf("<a", match.range.first)
+                val tagEnd = html.indexOf('>', tagStart).takeIf { it >= 0 } ?: return@mapNotNull null
+                val attrs = html.substring(tagStart, tagEnd + 1)
+                val href = Regex("""href=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(attrs)?.groupValues?.get(1) ?: return@mapNotNull null
+                val decoded = try { Uri.parse(href).getQueryParameter("uddg") ?: href } catch (_: Exception) { href }
+                allowedLink(decoded, match.groupValues[1])
+            }.toList()
+        }
+
+        request("Bing", "https://www.bing.com/search?q=$encoded") { html ->
+            val regex = Regex("""<li[^>]*class=["'][^"']*b_algo[^"']*["'][^>]*>.*?<h2[^>]*>\\s*<a[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            regex.findAll(html).mapNotNull { match ->
+                val title = match.groupValues[2].replace(Regex("""<[^>]+>"""), "")
+                allowedLink(match.groupValues[1], title)
+            }.toList()
+        }
+
+        return ProviderSearchResult(links.values.toList(), outcomes.joinToString(" · "))
     }
 
     private fun renderKeywordLinks(links: List<KeywordLink>, query: String) {

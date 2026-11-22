@@ -28,6 +28,7 @@ class WebScanActivity : AppCompatActivity() {
     private lateinit var referencePreview: LinearLayout
     private lateinit var referenceCount: TextView
     private lateinit var startSearchButton: MaterialButton
+    private lateinit var continueSearchButton: MaterialButton
     private lateinit var database: PublicSourceDatabase
     private val scanExecutor = Executors.newSingleThreadExecutor()
     private var referencePhotos: List<Uri> = emptyList()
@@ -162,6 +163,14 @@ class WebScanActivity : AppCompatActivity() {
             setBackgroundColor(android.graphics.Color.rgb(105, 83, 230))
             setTextColor(android.graphics.Color.WHITE)
         }
+        continueSearchButton = button("Continue current search") { openRunningScan() }.apply {
+            textSize = 16f
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setBackgroundColor(android.graphics.Color.rgb(105, 83, 230))
+            setTextColor(android.graphics.Color.WHITE)
+            visibility = android.view.View.GONE
+        }
+        page.addSpaced(continueSearchButton, 8)
         page.addSpaced(startSearchButton, 8)
 
         status = TextView(this).apply {
@@ -179,6 +188,7 @@ class WebScanActivity : AppCompatActivity() {
                     catalogueReady = true
                     status.text = "READY  ·  $count public sources available. All enabled, eligible sources are included automatically."
                     startSearchButton.isEnabled = referencePhotos.isNotEmpty()
+                    refreshRunningScanButtons()
                 }
             }
         }
@@ -286,10 +296,47 @@ class WebScanActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (pendingSearches.isNotEmpty()) openNextSearch()
+        refreshRunningScanButtons()
+    }
+
+    /** While a search is running in the background, offer to go back to it instead of only starting over. */
+    private fun refreshRunningScanButtons() {
+        if (!::startSearchButton.isInitialized) return
+        val running = IdentityMatchActivity.isScanRunning()
+        continueSearchButton.visibility = if (running) android.view.View.VISIBLE else android.view.View.GONE
+        startSearchButton.text = if (running) "Start new search" else "Search for matches"
+        if (running) status.text = "A deep search is still running. Continue it, or start a new one (this stops the current search)."
+    }
+
+    /** Opens the running search's live screen without restarting it. */
+    private fun openRunningScan() {
+        if (!IdentityMatchActivity.isScanRunning()) {
+            refreshRunningScanButtons()
+            Toast.makeText(this, "That search already finished.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startActivity(Intent(this, IdentityMatchActivity::class.java).apply {
+            putParcelableArrayListExtra(IdentityMatchActivity.EXTRA_REFERENCE_URIS, ArrayList(referencePhotos))
+            putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true)
+        })
     }
 
     /** Opens the live results page immediately. Source discovery and face matching run there. */
     private fun launchAutomaticScan() {
+        if (IdentityMatchActivity.isScanRunning()) {
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle("Start a new search?")
+                .setMessage("A deep search is already running. Starting a new one stops it. Saved matches are kept.")
+                .setPositiveButton("Start new search") { _, _ -> startNewScan() }
+                .setNeutralButton("Continue current") { _, _ -> openRunningScan() }
+                .setNegativeButton("Cancel", null)
+                .show()
+            return
+        }
+        startNewScan()
+    }
+
+    private fun startNewScan() {
         if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading. Try again in a moment.", Toast.LENGTH_LONG).show(); return }
         if (referencePhotos.isEmpty()) {
             Toast.makeText(this, "Choose at least one reference photo first.", Toast.LENGTH_LONG).show()

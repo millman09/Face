@@ -241,7 +241,11 @@ class IdentityMatchActivity : AppCompatActivity() {
         handleSharedImages(intent)
         updateReady()
         if (webScanMode) restoreSavedMatches()
-        if (autoStartScan && webScanMode) {
+        if (webScanMode && scanRunning) {
+            // Reopened while a search is already running: show its live progress instead of starting over.
+            liveUi = java.lang.ref.WeakReference(this)
+            applyLiveState()
+        } else if (autoStartScan && webScanMode) {
             if (modelFile?.exists() == true && referenceUris.isNotEmpty()) {
                 runComparison()
             } else {
@@ -662,9 +666,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         scanRunning = true
         updateReady()
         DeepSearchKeepAliveService.start(this)
-        progress.visibility = ProgressBar.VISIBLE
-        progress.progress = 0
-        status.text = "Preparing on-device face matching…"
+        liveUi = java.lang.ref.WeakReference(this)
+        publishProgress("Preparing on-device face matching…", 0, true)
         activeWebScan = executor.submit {
             var interpreter: Interpreter? = null
             var detector: FaceDetector? = null
@@ -722,7 +725,7 @@ class IdentityMatchActivity : AppCompatActivity() {
 
                 if (references.size == 1) photoHints += "Add 2–3 more photos of you (different angle or lighting) for better matching."
                 if (reusedCount > 0) photoHints += "Reused $reusedCount previously-computed reference face(s) to start faster."
-                runOnUiThread {
+                onLiveUi {
                     hintView.text = photoHints.joinToString("\n")
                     hintView.visibility = if (photoHints.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
                 }
@@ -734,8 +737,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 var addedTotal = 0
                 val processedIds = mutableSetOf<Long>()
                 val report = StringBuilder()
-                progress.max = 100
-                progress.progress = 0
+                publishProgress(null, 0, true)
 
                 // The bar and displayed percentage both represent the same metric:
                 // completed public sources divided by the total enabled sources.
@@ -744,11 +746,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 fun updateSearchProgress(detail: String) {
                     val percent = if (sources.isEmpty()) 100 else ((completedSources * 100f) / sources.size)
                         .toInt().coerceIn(0, 100)
-                    runOnUiThread {
-                        progress.max = 100
-                        progress.progress = percent
-                        status.text = "Source scan: $percent% · $detail"
-                    }
+                    publishProgress("Source scan: $percent% · $detail", percent, true)
                 }
 
                 // Download up to six public images concurrently, but keep ML Kit detection and
@@ -814,7 +812,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         }
                         // One transaction per chunk replaces one database write per image.
                         candidateDatabase.updateCandidateResults(updates)
-                        if (previews.isNotEmpty()) runOnUiThread {
+                        if (previews.isNotEmpty()) onLiveUi {
                             previews.forEach { item -> addWebMatchPreview(item.id, item.pageUrl, item.imageUrl, item.score, item.bitmap, item.faceCrop, item.faceBox, false) }
                         }
                         // Progress updates are deliberately batched instead of posted once per image.
@@ -877,30 +875,23 @@ class IdentityMatchActivity : AppCompatActivity() {
                 } else {
                     "Search finished. Checked $completedSources/${sources.size} public sources, discovered $addedTotal new image link(s), compared $checked new or retryable image(s), and found $possibleMatches possible match(es). $totalIndexed image links remain indexed for future incremental searches. Public-source coverage is limited to pages made accessible by each website; this is not a complete index of the internet. Review matches manually."
                 }
-                runOnUiThread {
-                    progress.max = 100
-                    progress.progress = 100
-                    status.text = "Source scan: 100% · $summary"
-                    progress.visibility = ProgressBar.GONE
-                    updateReady()
-                }
+                publishProgress("Source scan: 100% · $summary", 100, false)
             } catch (e: Exception) {
-                runOnUiThread {
-                    status.text = if (e is InterruptedException || Thread.currentThread().isInterrupted) {
+                publishProgress(
+                    if (e is InterruptedException || Thread.currentThread().isInterrupted) {
                         "Search cancelled. Previously saved matches are still available."
                     } else {
                         "Automatic scan or matching could not finish: ${e.localizedMessage ?: "unknown error"}"
-                    }
-                    progress.visibility = ProgressBar.GONE
-                    updateReady()
-                }
+                    },
+                    null, false
+                )
             } finally {
                 downloadPool?.shutdownNow()
                 scanRunning = false
                 paused = false
                 activeWebScan = null
-                DeepSearchKeepAliveService.stop(this)
-                runOnUiThread {
+                DeepSearchKeepAliveService.stop(applicationContext)
+                onLiveUi {
                     pauseButton.text = "Pause"
                     updateReady()
                 }
@@ -918,12 +909,12 @@ class IdentityMatchActivity : AppCompatActivity() {
         while (true) {
             val reason = if (paused) "Paused. Tap Resume to continue." else AppSettings.scanBlockedReason(this)
             if (reason == null) {
-                if (shown != null) runOnUiThread { if (!isFinishing) status.text = "Resuming…" }
+                if (shown != null) publishProgress("Resuming…", null, null)
                 return
             }
             if (reason != shown) {
                 shown = reason
-                runOnUiThread { if (!isFinishing) status.text = reason }
+                publishProgress(reason, null, null)
             }
             Thread.sleep(1000)
         }
@@ -1147,8 +1138,30 @@ class IdentityMatchActivity : AppCompatActivity() {
     }
 
     /** Restore recent match cards from the local database; image bytes remain temporary. */
+    /** Runs [block] on the screen currently showing the scan, if one is open. */
+    private fun onLiveUi(block: IdentityMatchActivity.() -> Unit) {
+        val ui = liveUi?.get() ?: return
+        ui.runOnUiThread { if (!ui.isFinishing && !ui.isDestroyed) ui.block() }
+    }
+
+    /** Records the scan's latest status (so a reopened screen can show it) and shows it on the open screen. */
+    private fun publishProgress(text: String?, percent: Int?, visible: Boolean?) {
+        text?.let { liveStatus = it }
+        percent?.let { livePercent = it }
+        visible?.let { liveProgressVisible = it }
+        onLiveUi { applyLiveState() }
+    }
+
+    private fun applyLiveState() {
+        liveStatus?.let { status.text = it }
+        progress.max = 100
+        progress.progress = livePercent
+        progress.visibility = if (liveProgressVisible) ProgressBar.VISIBLE else ProgressBar.GONE
+        updateReady()
+    }
+
     private fun restoreSavedMatches(bestFirst: Boolean = false) {
-        executor.execute {
+        restoreExecutor.execute {
             val db = PublicSourceDatabase(this)
             val matches = try { db.possibleMatches(30, bestFirst) } finally { db.close() }
             var restored = 0
@@ -1483,7 +1496,13 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
-    // No onDestroy() override: the scan, its executor and Future live in the companion object
+    override fun onDestroy() {
+        // Only detach this screen from the live scan; the scan itself keeps running.
+        if (liveUi?.get() === this) liveUi = null
+        super.onDestroy()
+    }
+
+    // The scan, its executor and Future live in the companion object
     // (shared across activity instances) specifically so that leaving this screen never stops it.
     // See the companion object below.
 
@@ -1504,5 +1523,16 @@ class IdentityMatchActivity : AppCompatActivity() {
         @Volatile private var activeWebScan: java.util.concurrent.Future<*>? = null
         @Volatile private var paused = false
         @Volatile private var scanRunning = false
+        // Loading saved matches runs separately so it isn't stuck in line behind a running scan.
+        private val restoreExecutor = Executors.newSingleThreadExecutor()
+        // The screen currently showing the running scan. The scan reports to whichever screen this points
+        // at, so reopening the screen ("Continue current search") picks up the live progress again.
+        @Volatile private var liveUi: java.lang.ref.WeakReference<IdentityMatchActivity>? = null
+        @Volatile private var liveStatus: String? = null
+        @Volatile private var livePercent = 0
+        @Volatile private var liveProgressVisible = false
+
+        /** True while a deep search is running in the background, whether or not its screen is open. */
+        fun isScanRunning() = scanRunning
     }
 }

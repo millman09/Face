@@ -56,6 +56,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var webScanMode = false
     private var autoStartScan = false
     private var webcamOnlyMode = false
+    private var imageboardsOnlyMode = false
     private var imageUris: List<Uri> = emptyList()
     private val executor = Executors.newSingleThreadExecutor()
     private val modelUrl = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobile_facenet/releases/v0.65.0/mobile_facenet-tflite-float.zip"
@@ -82,18 +83,27 @@ class IdentityMatchActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         webcamOnlyMode = intent.getBooleanExtra(EXTRA_WEBCAM_ONLY, false)
+        imageboardsOnlyMode = intent.getBooleanExtra(EXTRA_IMAGEBOARDS_ONLY, false)
         webScanMode = intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false)
         autoStartScan = intent.getBooleanExtra(EXTRA_AUTO_START, false)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(16), dp(20), dp(24))
         }
-        setToolPage(if (webcamOnlyMode) "Webcam profile photo search" else "Face matching", root)
+        setToolPage(
+            when {
+                imageboardsOnlyMode -> "Imageboard photo search"
+                webcamOnlyMode -> "Webcam profile photo search"
+                else -> "Face matching"
+            }, root
+        )
         @Suppress("DEPRECATION")
         referenceUris = intent.getParcelableArrayListExtra<Uri>(EXTRA_REFERENCE_URIS)?.distinct().orEmpty()
         referenceUri = referenceUris.firstOrNull()
         root.addView(TextView(this).apply {
-            text = if (webScanMode && webcamOnlyMode) {
+            text = if (webScanMode && imageboardsOnlyMode) {
+                "This scan checks only public sitemap/feed image links from imageboards and image galleries in the catalogue, including Anonibx, 4chan, 8kun, e621, Gelbooru, Rule34, Danbooru, Safebooru, and Paheal. Locked/member-only pages are not accessed."
+            } else if (webScanMode && webcamOnlyMode) {
                 "This scan checks only the public sitemap/feed image links from Chaturbate, Cam4, CamSoda, Stripchat, BongaCams, MyFreeCams, and LiveJasmin, then compares those images with your selected reference photos on this phone. Private/member-only images are not accessed."
             } else if (webScanMode) {
                 "This page automatically checks every enabled source in the built-in public catalogue, discovers available public image links, and compares them with your selected photos. Candidate images are processed temporarily in memory on this phone and are not saved or uploaded."
@@ -110,7 +120,12 @@ class IdentityMatchActivity : AppCompatActivity() {
         addButton(root, "Choose reference photo(s)") { referencePicker.launch(arrayOf("image/*")) }
         if (!webScanMode) addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
         scanButton = MaterialButton(this).apply {
-            text = if (webScanMode && webcamOnlyMode) "Scan public webcam profile images" else if (webScanMode) "Scan all public websites and match my photos" else "Compare faces on this phone"
+            text = when {
+                webScanMode && imageboardsOnlyMode -> "Scan public imageboard images"
+                webScanMode && webcamOnlyMode -> "Scan public webcam profile images"
+                webScanMode -> "Scan all public websites and match my photos"
+                else -> "Compare faces on this phone"
+            }
             isAllCaps = false
             isEnabled = false
             setOnClickListener { runComparison() }
@@ -456,7 +471,9 @@ class IdentityMatchActivity : AppCompatActivity() {
             val alignedReferences = mutableListOf<Bitmap>()
             val candidateDatabase = PublicSourceDatabase(this)
             try {
-                val sources = candidateDatabase.sources().filter { it.enabled && (!webcamOnlyMode || isWebcamSource(it)) }
+                val sources = candidateDatabase.sources().filter { it.enabled &&
+                    (!webcamOnlyMode || isWebcamSource(it)) &&
+                    (!imageboardsOnlyMode || isImageboardSource(it)) }
                 require(sources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
                 runOnUiThread { progress.max = sources.size }
                 var addedTotal = 0
@@ -489,7 +506,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     try { Thread.sleep(1200) } catch (_: InterruptedException) { break }
                 }
 
-                val candidates = if (webcamOnlyMode) {
+                val candidates = if (webcamOnlyMode || imageboardsOnlyMode) {
                     candidateDatabase.allCandidatesForSources(sources.map { it.id }, 5000)
                 } else {
                     candidateDatabase.allCandidates(5000)
@@ -526,7 +543,11 @@ class IdentityMatchActivity : AppCompatActivity() {
                 }
 
                 val report = StringBuilder(
-                    "Checked $completedSources of ${sources.size} ${if (webcamOnlyMode) "webcam" else "public catalogue"} sources. " +
+                    "Checked $completedSources of ${sources.size} ${when {
+                        imageboardsOnlyMode -> "imageboard"
+                        webcamOnlyMode -> "webcam"
+                        else -> "public catalogue"
+                    }} sources. " +
                     "Found ${candidateDatabase.candidateCount()} stored image links; comparing up to ${candidates.size} candidates. " +
                     "All selected reference photos are used. Image bytes stay in memory only.\n\n"
                 )
@@ -611,6 +632,19 @@ class IdentityMatchActivity : AppCompatActivity() {
                 candidateDatabase.close()
             }
         }
+    }
+
+    private fun isImageboardSource(source: WebsiteSource): Boolean {
+        val host = Uri.parse(source.baseUrl).host?.lowercase().orEmpty()
+        val allowed = listOf(
+            "anonibx.com", "4chan.org", "8kun.top", "e621.net",
+            "gelbooru.com", "rule34.xxx", "danbooru.donmai.us",
+            "safebooru.org", "paheal.net", "exhentai.org", "e-hentai.org",
+            "hitomi.la", "imagefap.com", "pornpics.com", "pornpic.com",
+            "xxx.gallery", "nudy.pics", "siss.pics", "pichunter.com",
+            "imagetwist.com", "imagebam.com", "imagevenue.com", "jpg.fish"
+        )
+        return allowed.any { host == it || host.endsWith(".$it") }
     }
 
     private fun isWebcamSource(source: WebsiteSource): Boolean {
@@ -841,6 +875,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         const val EXTRA_WEB_SCAN_MODE = "com.example.face.EXTRA_WEB_SCAN_MODE"
         const val EXTRA_AUTO_START = "com.example.face.EXTRA_AUTO_START"
         const val EXTRA_WEBCAM_ONLY = "com.example.face.EXTRA_WEBCAM_ONLY"
+        const val EXTRA_IMAGEBOARDS_ONLY = "com.example.face.EXTRA_IMAGEBOARDS_ONLY"
         const val EXTRA_REFERENCE_URIS = "com.example.face.EXTRA_REFERENCE_URIS"
     }
 }

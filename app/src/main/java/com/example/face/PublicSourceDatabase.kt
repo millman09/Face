@@ -835,7 +835,7 @@ object PublicSourceScanner {
             // page; every request remains same-host and robots.txt checked.
             val forumRoutes = buildList {
                 addAll(listOf(
-                    "/forums", "/forum", "/community", "/boards", "/board",
+                    "/", "/forums", "/forum", "/community", "/boards", "/board",
                     "/latest", "/recent", "/activity", "/whats-new/",
                     "/whats-new/posts/", "/categories", "/threads", "/topics",
                     "/discussions", "/posts", "/images", "/photos", "/gallery",

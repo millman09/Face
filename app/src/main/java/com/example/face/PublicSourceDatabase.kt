@@ -19,7 +19,7 @@ data class SearchInfo(val id: Long, val savedAt: Long, val matchCount: Int)
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long, val faceBox: String? = null, val confirmed: Boolean = false)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 11) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 12) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -88,6 +88,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         }
         if (oldVersion < 10) createArchiveTables(db)
         if (oldVersion < 11) seedSources(db)
+        if (oldVersion < 12) seedSources(db)
     }
 
     private fun seedSources(db: SQLiteDatabase) {
@@ -243,6 +244,98 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "Reddit (NSFW search, old.reddit.com)" to "https://old.reddit.com",
             "Coomer" to "https://coomer.su",
             "Kemono" to "https://kemono.su",
+            // More video and clip platforms
+            "PornOne" to "https://www.pornone.com",
+            "SxyPrn" to "https://sxyprn.com",
+            "Txxx" to "https://txxx.com",
+            "ThisVid" to "https://thisvid.com",
+            "HQPorner" to "https://hqporner.com",
+            "PornTrex" to "https://porntrex.com",
+            "GotPorn" to "https://gotporn.com",
+            "PornDig" to "https://porndig.com",
+            "PornKai" to "https://pornkai.com",
+            "VJAV" to "https://vjav.com",
+            "4Tube" to "https://www.4tube.com",
+            "HClips" to "https://hclips.com",
+            "UPorn" to "https://uporn.com",
+            "XXXBunker" to "https://xxxbunker.com",
+            "ExtremeTube" to "https://www.extremetube.com",
+            "MrSkin" to "https://www.mrskin.com",
+            "Brazzers" to "https://www.brazzers.com",
+            "Reality Kings" to "https://www.realitykings.com",
+            "Bangbros" to "https://www.bangbros.com",
+            "Naughty America" to "https://www.naughtyamerica.com",
+            "Digital Playground" to "https://www.digitalplayground.com",
+            "Mofos" to "https://www.mofos.com",
+            "Team Skeet" to "https://www.teamskeet.com",
+            "Vixen" to "https://www.vixen.com",
+            "Blacked" to "https://www.blacked.com",
+            "Tushy" to "https://www.tushy.com",
+            // More galleries and image boards
+            "PimpAndHost" to "https://pimpandhost.com",
+            "Fapdu" to "https://fapdu.com",
+            "Nudography" to "https://nudography.com",
+            "Babepedia" to "https://www.babepedia.com",
+            "MetArt" to "https://www.metart.com",
+            "Hegre" to "https://www.hegre.com",
+            "FTV Girls" to "https://www.ftvgirls.com",
+            "Playboy" to "https://www.playboy.com",
+            "Penthouse" to "https://www.penthouse.com",
+            "Scoreland" to "https://www.scoreland.com",
+            "Imgbox" to "https://imgbox.com",
+            "Pixhost" to "https://pixhost.to",
+            "Turboimagehost" to "https://www.turboimagehost.com",
+            "Vipr.im" to "https://vipr.im",
+            "Picbaron" to "https://picbaron.com",
+            "AcidImg" to "https://acidimg.cc",
+            // Escort and companion ad / review aggregators (a common place a photo ends up reposted without consent)
+            "Tryst" to "https://tryst.link",
+            "CityXGuide" to "https://cityxguide.com",
+            "ListCrawler" to "https://listcrawler.eu",
+            "Slixa" to "https://slixa.com",
+            "EscortAlligator" to "https://escortalligator.com",
+            "AdultSearch" to "https://adultsearch.com",
+            "USASexGuide" to "https://usasexguide.info",
+            "Rubmaps" to "https://rubmaps.ch",
+            "Megapersonals" to "https://megapersonals.eu",
+            "Harlothub" to "https://harlothub.com",
+            "Bedpage" to "https://bedpage.com",
+            "AdultWork" to "https://www.adultwork.com",
+            "PunterNet" to "https://www.punternet.com",
+            // More camming
+            "Jerkmate" to "https://jerkmate.com",
+            "Cams.com" to "https://www.cams.com",
+            // More dating and swinger platforms
+            "Feeld" to "https://feeld.co",
+            "SwapFinder" to "https://www.swapfinder.com",
+            "Kasidie" to "https://www.kasidie.com",
+            "SDC (Swingers Date Club)" to "https://www.sdc.com",
+            "Alt.com" to "https://www.alt.com",
+            "CollarMe" to "https://www.collarme.com",
+            "Kink.com" to "https://www.kink.com",
+            // JAV and other regional platforms
+            "R18" to "https://www.r18.com",
+            "Caribbeancom" to "https://www.caribbeancom.com",
+            "Heyzo" to "https://www.heyzo.com",
+            "1Pondo" to "https://www.1pondo.tv",
+            "Tokyo-Hot" to "https://www.tokyo-hot.com",
+            // Mugshot and public-record aggregators (a common, non-adult exposure vector for your face)
+            "Mugshots.com" to "https://mugshots.com",
+            "JailBase" to "https://jailbase.com",
+            "BustedNewspaper" to "https://www.bustednewspaper.com",
+            "Arrests.org" to "https://arrests.org",
+            "Busted Mugshots" to "https://bustedmugshots.com",
+            // People-search / data-broker aggregators (these often surface photos pulled from other public sources)
+            "Spokeo" to "https://www.spokeo.com",
+            "BeenVerified" to "https://www.beenverified.com",
+            "TruePeopleSearch" to "https://www.truepeoplesearch.com",
+            "PeopleFinders" to "https://www.peoplefinders.com",
+            "Radaris" to "https://radaris.com",
+            "PeekYou" to "https://www.peekyou.com",
+            "FastPeopleSearch" to "https://www.fastpeoplesearch.com",
+            "Whitepages" to "https://www.whitepages.com",
+            "Intelius" to "https://www.intelius.com",
+            "CheckPeople" to "https://checkpeople.com",
         )
         for ((name, address) in starterDomains) {
             val values = ContentValues().apply {

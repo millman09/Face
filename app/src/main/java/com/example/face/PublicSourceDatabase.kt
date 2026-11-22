@@ -304,6 +304,25 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         return result
     }
 
+    @Synchronized fun allCandidatesForSources(sourceIds: List<Long>, limit: Int = 5000): List<StoredCandidate> {
+        if (sourceIds.isEmpty()) return emptyList()
+        val result = mutableListOf<StoredCandidate>()
+        val placeholders = sourceIds.joinToString(",") { "?" }
+        val args = sourceIds.map { it.toString() }.toTypedArray()
+        readableDatabase.rawQuery(
+            """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
+               FROM candidates c JOIN sources s ON s.id=c.source_id
+               WHERE c.source_id IN ($placeholders)
+               ORDER BY c.discovered_at DESC LIMIT ${limit.coerceIn(1, 5000)}""".trimIndent(),
+            args
+        ).use { c ->
+            while (c.moveToNext()) result += StoredCandidate(
+                c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4)
+            )
+        }
+        return result
+    }
+
     @Synchronized fun updateCandidateStatus(id: Long, status: String) {
         val values = ContentValues().apply { put("scan_status", status.take(100)) }
         writableDatabase.update("candidates", values, "id=?", arrayOf(id.toString()))

@@ -866,7 +866,9 @@ object PublicSourceScanner {
                         "/catalog", "/catalog.html", "/archive", "/archive/",
                         "/recent-images", "/latest-images", "/latest-posts",
                         "/images/recent", "/photos/recent", "/threads/recent",
-                        "/posts/recent", "/media/recent"
+                        "/posts/recent", "/media/recent",
+                        "/thread", "/threads", "/posts", "/galleries", "/groups",
+                        "/users", "/members", "/videos", "/images"
                     ))
                 }
             }

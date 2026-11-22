@@ -55,6 +55,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var referenceUris: List<Uri> = emptyList()
     private var webScanMode = false
     private var autoStartScan = false
+    private var webcamOnlyMode = false
     private var imageUris: List<Uri> = emptyList()
     private val executor = Executors.newSingleThreadExecutor()
     private val modelUrl = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobile_facenet/releases/v0.65.0/mobile_facenet-tflite-float.zip"
@@ -84,14 +85,17 @@ class IdentityMatchActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(16), dp(20), dp(24))
         }
-        setToolPage("Face matching", root)
+        setToolPage(if (webcamOnlyMode) "Webcam profile photo search" else "Face matching", root)
         webScanMode = intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false)
         autoStartScan = intent.getBooleanExtra(EXTRA_AUTO_START, false)
+        webcamOnlyMode = intent.getBooleanExtra(EXTRA_WEBCAM_ONLY, false)
         @Suppress("DEPRECATION")
         referenceUris = intent.getParcelableArrayListExtra<Uri>(EXTRA_REFERENCE_URIS)?.distinct().orEmpty()
         referenceUri = referenceUris.firstOrNull()
         root.addView(TextView(this).apply {
-            text = if (webScanMode) {
+            text = if (webScanMode && webcamOnlyMode) {
+                "This scan checks only the public sitemap/feed image links from Chaturbate, Cam4, CamSoda, Stripchat, BongaCams, MyFreeCams, and LiveJasmin, then compares those images with your selected reference photos on this phone. Private/member-only images are not accessed."
+            } else if (webScanMode) {
                 "This page automatically checks every enabled source in the built-in public catalogue, discovers available public image links, and compares them with your selected photos. Candidate images are processed temporarily in memory on this phone and are not saved or uploaded."
             } else {
                 "Downloads Qualcomm AI Hub MobileFaceNet from its public release (Apache 2.0 model weights). It runs locally on this phone. Select reference photo(s) and candidate images. Photos are aligned on-device; no images are uploaded."
@@ -106,7 +110,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         addButton(root, "Choose reference photo(s)") { referencePicker.launch(arrayOf("image/*")) }
         if (!webScanMode) addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
         scanButton = MaterialButton(this).apply {
-            text = if (webScanMode) "Scan all public websites and match my photos" else "Compare faces on this phone"
+            text = if (webScanMode && webcamOnlyMode) "Scan public webcam profile images" else if (webScanMode) "Scan all public websites and match my photos" else "Compare faces on this phone"
             isAllCaps = false
             isEnabled = false
             setOnClickListener { runComparison() }
@@ -452,7 +456,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             val alignedReferences = mutableListOf<Bitmap>()
             val candidateDatabase = PublicSourceDatabase(this)
             try {
-                val sources = candidateDatabase.sources().filter { it.enabled }
+                val sources = candidateDatabase.sources().filter { it.enabled && (!webcamOnlyMode || isWebcamSource(it)) }
                 require(sources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
                 runOnUiThread { progress.max = sources.size }
                 var addedTotal = 0
@@ -485,7 +489,11 @@ class IdentityMatchActivity : AppCompatActivity() {
                     try { Thread.sleep(1200) } catch (_: InterruptedException) { break }
                 }
 
-                val candidates = candidateDatabase.allCandidates(5000)
+                val candidates = if (webcamOnlyMode) {
+                    candidateDatabase.allCandidatesForSources(sources.map { it.id }, 5000)
+                } else {
+                    candidateDatabase.allCandidates(5000)
+                }
                 require(candidates.isNotEmpty()) {
                     "The catalogue scan finished, but its public sitemap/feed endpoints exposed no image links. Many sites do not publish crawlable image sitemaps."
                 }
@@ -518,7 +526,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 }
 
                 val report = StringBuilder(
-                    "Checked $completedSources of ${sources.size} public catalogue sources. " +
+                    "Checked $completedSources of ${sources.size} ${if (webcamOnlyMode) "webcam" else "public catalogue"} sources. " +
                     "Found ${candidateDatabase.candidateCount()} stored image links; comparing up to ${candidates.size} candidates. " +
                     "All selected reference photos are used. Image bytes stay in memory only.\n\n"
                 )
@@ -603,6 +611,15 @@ class IdentityMatchActivity : AppCompatActivity() {
                 candidateDatabase.close()
             }
         }
+    }
+
+    private fun isWebcamSource(source: WebsiteSource): Boolean {
+        val host = Uri.parse(source.baseUrl).host?.lowercase().orEmpty()
+        val allowed = listOf(
+            "chaturbate.com", "cam4.com", "camsoda.com", "stripchat.com",
+            "bongacams.com", "myfreecams.com", "livejasmin.com"
+        )
+        return allowed.any { host == it || host.endsWith(".$it") }
     }
 
     private fun addWebMatchPreview(imageUrl: String, similarity: Float, preview: Bitmap) {
@@ -823,6 +840,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_WEB_SCAN_MODE = "com.example.face.EXTRA_WEB_SCAN_MODE"
         const val EXTRA_AUTO_START = "com.example.face.EXTRA_AUTO_START"
+        const val EXTRA_WEBCAM_ONLY = "com.example.face.EXTRA_WEBCAM_ONLY"
         const val EXTRA_REFERENCE_URIS = "com.example.face.EXTRA_REFERENCE_URIS"
     }
 }

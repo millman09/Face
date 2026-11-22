@@ -199,6 +199,15 @@ class WebScanActivity : AppCompatActivity() {
         })
 
         page.addSpaced(button("Find matching imageboard links · no photo needed") { searchImageboardsOnly() })
+        page.addSpaced(button("Reverse image search my photos") { chooseReverseSearch() }.apply {
+            setBackgroundColor(android.graphics.Color.rgb(105, 83, 230))
+            setTextColor(android.graphics.Color.WHITE)
+        })
+        page.addSpaced(TextView(this).apply {
+            text = "Searches a whole search engine for your photo and look-alikes, much wider than the built-in scan. Your photo goes only to the engine you pick."
+            textSize = 13f
+            alpha = 0.75f
+        }, 2)
         page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
         keywordResultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         page.addView(keywordResultsContainer, LinearLayout.LayoutParams(
@@ -678,6 +687,33 @@ class WebScanActivity : AppCompatActivity() {
         }
         status.text = if (links.isEmpty()) "Search finished. No public indexed links matched those terms."
             else "Search finished. Tap any result to open it. Results are from public search indexes, so coverage varies."
+    }
+
+    /** Pick an engine, then (with several reference photos) which photo to send. */
+    private fun chooseReverseSearch() {
+        if (referencePhotos.isEmpty()) {
+            Toast.makeText(this, "Add a reference photo first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val engines = ReverseImageSearch.Engine.values()
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Reverse image search")
+            .setItems(engines.map { it.label }.toTypedArray()) { _, which ->
+                val engine = engines[which]
+                if (referencePhotos.size == 1) {
+                    ReverseImageSearch.search(this, engine, referencePhotos[0])
+                } else {
+                    com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                        .setTitle("Which photo?")
+                        .setItems(referencePhotos.indices.map { "Photo ${it + 1}" }.toTypedArray()) { _, photo ->
+                            ReverseImageSearch.search(this, engine, referencePhotos[photo])
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun searchAll() {

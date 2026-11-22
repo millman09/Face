@@ -82,5 +82,6 @@ fun LinearLayout.addSpaced(view: View, bottomDp: Int = 8) {
 fun matchLabel(similarity: Float): String = when {
     similarity >= 0.60f -> "Strong match"
     similarity >= 0.50f -> "Likely match"
-    else -> "Possible match"
+    similarity >= 0.40f -> "Possible match"
+    else -> "Weak match (check carefully)"
 }

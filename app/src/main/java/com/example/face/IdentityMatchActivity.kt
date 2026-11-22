@@ -745,6 +745,9 @@ class IdentityMatchActivity : AppCompatActivity() {
                     FaceDetectorOptions.Builder()
                         .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
                         .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+                        // Default ignores faces narrower than 10% of the picture, which skips most faces
+                        // in full-body and group shots. MIN_FACE_PIXELS still drops faces too small to match.
+                        .setMinFaceSize(0.05f)
                         .build()
                 )
                 detector = activeDetector
@@ -781,6 +784,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     hintView.visibility = if (photoHints.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
                 }
                 val threshold = MatchTuning.threshold(this)
+                val weakThreshold = (threshold - 0.06f).coerceAtLeast(0.33f)
 
                 var completedSources = 0
                 var checked = 0
@@ -816,7 +820,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         awaitScanAllowed()
                         val futures = chunk.map { candidate ->
                             completion.submit(java.util.concurrent.Callable {
-                                try { Downloaded(candidate, downloadPublicImageInMemory(candidate.imageUrl), null) }
+                                try { Downloaded(candidate, downloadPublicImageInMemory(candidate.imageUrl, candidate.pageUrl.ifBlank { null }), null) }
                                 catch (e: Exception) { Downloaded(candidate, null, e.localizedMessage ?: "image unavailable") }
                             })
                         }
@@ -846,7 +850,9 @@ class IdentityMatchActivity : AppCompatActivity() {
                                         } finally { aligned?.recycle() }
                                     }
                                     val similarity = best
-                                    val possible = similarity != null && similarity >= threshold
+                                    // Slightly below the threshold still gets shown, labelled as a weak match,
+                                    // so near-misses (bad lighting, odd angle) aren't silently dropped.
+                                    val possible = similarity != null && similarity >= weakThreshold
                                     val faceBox = if (possible && bestFace != null) MatchTuning.formatBox(bestFace!!, bitmap.width, bitmap.height) else null
                                     if (possible) {
                                         possibleMatches++
@@ -1464,7 +1470,8 @@ class IdentityMatchActivity : AppCompatActivity() {
     }
 
     /** Fetches a public HTTPS image into a bounded byte array. Scanning keeps it in memory only; see [loadForDisplay] for matches. */
-    private fun downloadPublicImageInMemory(address: String): Bitmap {
+    /** Throws unless [address] is a public HTTPS address (no local hosts, no embedded logins). */
+    private fun requirePublicHttps(address: String) {
         val uri = Uri.parse(address)
         require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) {
             "Only public HTTPS image URLs are allowed."
@@ -1473,16 +1480,45 @@ class IdentityMatchActivity : AppCompatActivity() {
         require(host != "localhost" && !host.endsWith(".localhost") && !host.endsWith(".local")) {
             "Local network addresses are not allowed."
         }
-        var connection: HttpURLConnection? = null
+    }
+
+    /**
+     * [referer] is the page the image appears on; image hosts commonly refuse requests without it,
+     * exactly as they would for a browser showing the page. Plain-http links are tried over https,
+     * and up to four redirects (image CDNs use them constantly) are followed, re-checking every hop.
+     */
+    private fun downloadPublicImageInMemory(original: String, referer: String? = null): Bitmap {
+        var address = if (original.startsWith("http://", ignoreCase = true)) "https://" + original.substring(7) else original
+        requirePublicHttps(address)
+        var opened: HttpURLConnection? = null
         try {
-            connection = (URL(address).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 8000
-                readTimeout = 12000
-                instanceFollowRedirects = false
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", "FacePersonalScanner/1.0")
-                setRequestProperty("Accept", "image/*")
+            var hops = 0
+            while (true) {
+                val attempt = (URL(address).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 8000
+                    readTimeout = 12000
+                    instanceFollowRedirects = false
+                    requestMethod = "GET"
+                    setRequestProperty("User-Agent", "FacePersonalScanner/1.0")
+                    setRequestProperty("Accept", "image/*")
+                    if (referer != null && referer.startsWith("https://")) setRequestProperty("Referer", referer)
+                }
+                opened = attempt
+                val code = attempt.responseCode
+                val location = attempt.getHeaderField("Location")
+                if (code in 300..399 && hops < 4 && location != null) {
+                    var next = URL(URL(address), location).toString()
+                    if (next.startsWith("http://", ignoreCase = true)) next = "https://" + next.substring(7)
+                    requirePublicHttps(next)
+                    attempt.disconnect()
+                    opened = null
+                    address = next
+                    hops++
+                    continue
+                }
+                break
             }
+            val connection = opened!!
             require(connection.responseCode in 200..299) { "HTTP ${connection.responseCode}" }
             val type = connection.contentType?.substringBefore(';')?.trim()?.lowercase(java.util.Locale.US).orEmpty()
             require(type.startsWith("image/")) { "The link did not return an image." }
@@ -1503,7 +1539,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             }
             return decodeBytes(bytes.toByteArray())
         } finally {
-            connection?.disconnect()
+            opened?.disconnect()
         }
     }
 
@@ -1512,7 +1548,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         // sideways phone photos would never show a face.
         return ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(data))) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val scale = minOf(1f, 1000f / maxOf(info.size.width, info.size.height))
+            // 1280px keeps faces in wide shots large enough to match, without large memory use.
+            val scale = minOf(1f, 1280f / maxOf(info.size.width, info.size.height))
             decoder.setTargetSize(
                 (info.size.width * scale).toInt().coerceAtLeast(1),
                 (info.size.height * scale).toInt().coerceAtLeast(1)

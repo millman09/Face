@@ -381,7 +381,7 @@ class WebScanActivity : AppCompatActivity() {
         val nameVariants = if (rawKeywords.isBlank()) listOf("") else nameSearchVariants(rawKeywords)
         val queryLabel = listOf(rawKeywords, city, state).filter { it.isNotBlank() }.joinToString(" · ")
         keywordResultsContainer.removeAllViews()
-        status.text = "Expanding name spellings, abbreviations and location variations: $queryLabel"
+        status.text = "Expanding name spellings, state abbreviations, and women/female location terms: $queryLabel"
         scanExecutor.execute {
             val siteQueries = listOf(
                 "(site:archive.4plebs.org OR site:warosu.org)",
@@ -395,15 +395,16 @@ class WebScanActivity : AppCompatActivity() {
             nameVariants.forEach { name ->
                 siteQueries.forEach { site -> searches += "($name) $site" }
             }
-            // Also run the exact entered name with each location form, plus location-only
-            // searches to catch posts that omit the name entirely.
-            if (rawKeywords.isNotBlank()) {
-                locationVariants.filter { it.isNotBlank() }.forEach { location ->
-                    siteQueries.forEach { site -> searches += "($rawKeywords $location) $site" }
-                }
-            } else {
-                locationVariants.filter { it.isNotBlank() }.forEach { location ->
-                    siteQueries.forEach { site -> searches += "($location) $site" }
+            // Search location-only posts as well as posts tagged with common
+            // adult female descriptors. This is especially important when the user
+            // enters only a state and no name or other keyword.
+            locationVariants.filter { it.isNotBlank() }.forEach { location ->
+                siteQueries.forEach { site ->
+                    if (rawKeywords.isNotBlank()) searches += "($rawKeywords $location) $site"
+                    else searches += "($location) $site"
+                    searches += "(women $location) $site"
+                    searches += "(woman $location) $site"
+                    searches += "(female $location) $site"
                 }
             }
             val found = linkedMapOf<String, KeywordLink>()

@@ -21,11 +21,16 @@ object UsernameChecker {
      * In the ordinary (non-[codeRange]) rule, a page counts as "found" when it answers [foundCode] and contains
      * [foundText] (if given); as "not found" when it answers [missingCode] or contains [missingText].
      *
-     * When [codeRange] is set (used for Sherlock-sourced sites whose only signal is the response code), "found"
-     * means any 2xx response, and "not found" means anything else — unless [missingCode] is also given, which
-     * then overrides a 2xx that actually means "not found" on that particular site. [noRedirects] additionally
-     * stops the request from following a redirect, for sites where the redirect itself (rather than the page it
-     * leads to) is the "not found" signal.
+     * When [codeRange] is set (used for Sherlock-sourced sites whose only signal is the response code), "not
+     * found" means anything outside 2xx — a real signal even on its own, since most sites genuinely answer with
+     * an error status for a page that doesn't exist. A 2xx response is weaker: on a lot of modern sites (anything
+     * that renders its page in JavaScript) the server answers 200 for every username whether or not it has an
+     * account, so a bare 2xx with nothing else to go on is read as "unsure" rather than "found" — it would
+     * otherwise flag the same large batch of sites as a match for literally any username, every single search.
+     * [missingCode] changes that: when a site gives one (a specific 2xx-range code that it uses to mean "no such
+     * user", distinct from the 2xx it gives for a real profile), a 2xx that isn't that code is trustworthy enough
+     * to count as "found". [noRedirects] additionally stops the request from following a redirect, for sites
+     * where the redirect itself (rather than the page it leads to) is the "not found" signal.
      */
     data class Site(
         val name: String,
@@ -123,13 +128,15 @@ object UsernameChecker {
             val body = if (needBody) readBody(connection, code) else ""
 
             if (site.codeRange) {
-                // The only signal is the response code: any 2xx is "found", unless this site's own missingCode
-                // (a code that happens to also fall in the 2xx range) says otherwise.
+                // Outside 2xx is a real "not found" signal on its own. Inside 2xx, only trust it as "found" when
+                // this site gives a missingCode to distinguish a real profile from a missing one — otherwise a
+                // bare 2xx (common on JS-rendered sites that answer 200 for every username) is unsure, not found.
                 val overriddenMissing = site.missingCode != null && code == site.missingCode
                 return when {
                     overriddenMissing -> Outcome.NOT_FOUND
-                    code in 200..299 -> Outcome.FOUND
-                    else -> Outcome.NOT_FOUND
+                    code !in 200..299 -> Outcome.NOT_FOUND
+                    site.missingCode != null -> Outcome.FOUND
+                    else -> Outcome.UNSURE
                 }
             }
 

@@ -674,29 +674,37 @@ class IdentityMatchActivity : AppCompatActivity() {
                 )
                 detector = activeDetector
                 val photoHints = mutableListOf<String>()
+                var reusedCount = 0
+                val referenceEmbeddings = mutableListOf<FloatArray>()
                 references.forEachIndexed { index, uri ->
+                    val cached = ReferenceEmbeddingCache.get(this, uri)
+                    if (cached != null) {
+                        referenceEmbeddings += cached
+                        reusedCount++
+                        return@forEachIndexed
+                    }
                     val bitmap = decode(uri)
                     try {
                         val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
                         val face = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
                             ?: throw IllegalArgumentException("No face found in reference photo ${index + 1}.")
                         MatchTuning.photoHint(bitmap, face, index + 1)?.let { photoHints += it }
-                        alignedReferences += alignFace(bitmap, face)
+                        val aligned = alignFace(bitmap, face)
+                        val embedding = try { embedFace(activeInterpreter, aligned) } finally { aligned.recycle() }
+                        referenceEmbeddings += embedding
+                        ReferenceEmbeddingCache.put(this, uri, embedding)
                     } finally {
                         bitmap.recycle()
                     }
                 }
 
                 if (references.size == 1) photoHints += "Add 2–3 more photos of you (different angle or lighting) for better matching."
+                if (reusedCount > 0) photoHints += "Reused $reusedCount previously-computed reference face(s) to start faster."
                 runOnUiThread {
                     hintView.text = photoHints.joinToString("\n")
                     hintView.visibility = if (photoHints.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
                 }
                 val threshold = MatchTuning.threshold(this)
-
-                // Cache each reference embedding once. Each candidate face is embedded once,
-                // then compared in memory against all references.
-                val referenceEmbeddings = alignedReferences.map { embedFace(activeInterpreter, it) }
 
                 var completedSources = 0
                 var checked = 0
@@ -803,7 +811,9 @@ class IdentityMatchActivity : AppCompatActivity() {
                             awaitScanAllowed()
                             hostLock.acquire()
                             try {
-                                val discovered = PublicSourceScanner.scan(source)
+                                val previousState = candidateDatabase.loadCrawlState(source.id)
+                                val (discovered, newState) = PublicSourceScanner.scan(source, previousState)
+                                candidateDatabase.saveCrawlState(source.id, newState)
                                 val added = candidateDatabase.saveCandidates(discovered)
                                 candidateDatabase.updateSourceStatus(
                                     source.id, "Checked; ${discovered.size} public image link(s), $added new"

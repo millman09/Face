@@ -16,10 +16,23 @@ data class CandidateUpdate(val id: Long, val status: String, val similarity: Flo
 data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl: String)
 data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String)
 data class SearchInfo(val id: Long, val savedAt: Long, val matchCount: Int)
+/** A source's crawl progress, carried between scans so each run can continue deeper into the site. */
+data class CrawlState(
+    val sitemapVisited: Set<String> = emptySet(),
+    val sitemapFrontier: List<String> = emptyList(),
+    val pageVisited: Set<String> = emptySet(),
+    val pageFrontier: List<String> = emptyList(),
+) {
+    companion object {
+        const val MAX_PERSISTED_SITEMAP_VISITED = 2000
+        const val MAX_PERSISTED_PAGE_VISITED = 8000
+        const val MAX_PERSISTED_FRONTIER = 3000
+    }
+}
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long, val faceBox: String? = null, val confirmed: Boolean = false)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 12) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 14) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -41,7 +54,21 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_candidates_matches ON candidates(scan_status, similarity, checked_at)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_sources_enabled_scan ON sources(enabled, last_scan)")
         createArchiveTables(db)
+        createCrawlStateTable(db)
         seedSources(db)
+    }
+
+    private fun createCrawlStateTable(db: SQLiteDatabase) {
+        // Lets a source's crawl pick up deeper into the site on its next scan instead of re-treading
+        // the same bounded slice near the sitemap root every time. Lists are newline-joined URLs.
+        db.execSQL("""CREATE TABLE IF NOT EXISTS crawl_state (
+            source_id INTEGER PRIMARY KEY,
+            sitemap_visited TEXT NOT NULL DEFAULT '',
+            sitemap_frontier TEXT NOT NULL DEFAULT '',
+            page_visited TEXT NOT NULL DEFAULT '',
+            page_frontier TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY(source_id) REFERENCES sources(id)
+        )""".trimIndent())
     }
 
     private fun createArchiveTables(db: SQLiteDatabase) {
@@ -89,6 +116,8 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         if (oldVersion < 10) createArchiveTables(db)
         if (oldVersion < 11) seedSources(db)
         if (oldVersion < 12) seedSources(db)
+        if (oldVersion < 13) createCrawlStateTable(db)
+        if (oldVersion < 14) seedSources(db)
     }
 
     private fun seedSources(db: SQLiteDatabase) {
@@ -336,6 +365,39 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "Whitepages" to "https://www.whitepages.com",
             "Intelius" to "https://www.intelius.com",
             "CheckPeople" to "https://checkpeople.com",
+            // Even more tube/clip platforms
+            "3Movs" to "https://3movs.com",
+            "AnyPorn" to "https://anyporn.com",
+            "Vporn" to "https://vporn.com",
+            "Fuq" to "https://fuq.com",
+            "Shooshtime" to "https://shooshtime.com",
+            "XCafe" to "https://xcafe.com",
+            "Analdin" to "https://analdin.com",
+            "Upornia" to "https://upornia.com",
+            "Hellporno" to "https://hellporno.com",
+            "Hotmovs" to "https://hotmovs.com",
+            "SunPorno" to "https://www.sunporno.com",
+            "Ah-Me" to "https://ah-me.com",
+            // More galleries
+            "Fuskator" to "https://fuskator.com",
+            "ImgSpice" to "https://imgspice.com",
+            // More camming
+            "SkyPrivate" to "https://skyprivate.com",
+            "xLoveCam" to "https://www.xlovecam.com",
+            // More escort/companion directories
+            "EROS Guide" to "https://www.eros.com",
+            "Vivastreet" to "https://www.vivastreet.co.uk",
+            // More people-search / public-record aggregators
+            "USSearch" to "https://www.ussearch.com",
+            "PeopleLooker" to "https://peoplelooker.com",
+            "InstantCheckmate" to "https://www.instantcheckmate.com",
+            "ThatsThem" to "https://thatsthem.com",
+            "Nuwber" to "https://nuwber.com",
+            "Spytox" to "https://www.spytox.com",
+            "ZabaSearch" to "https://www.zabasearch.com",
+            "Pipl" to "https://pipl.com",
+            "ClustrMaps" to "https://clustrmaps.com",
+            "CountyOffice" to "https://www.countyoffice.org",
         )
         for ((name, address) in starterDomains) {
             val values = ContentValues().apply {
@@ -396,6 +458,42 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         val values = ContentValues().apply { put("last_scan", System.currentTimeMillis()); put("last_status", status.take(300)) }
         writableDatabase.update("sources", values, "id=?", arrayOf(id.toString()))
     }
+
+    /** Where a source's crawl left off, so the next scan can resume deeper instead of restarting at the root. */
+    @Synchronized fun loadCrawlState(sourceId: Long): CrawlState {
+        readableDatabase.rawQuery(
+            "SELECT sitemap_visited,sitemap_frontier,page_visited,page_frontier FROM crawl_state WHERE source_id=?",
+            arrayOf(sourceId.toString())
+        ).use { c ->
+            if (c.moveToFirst()) {
+                return CrawlState(
+                    sitemapVisited = splitLines(c.getString(0)),
+                    sitemapFrontier = splitLines(c.getString(1)).toList(),
+                    pageVisited = splitLines(c.getString(2)),
+                    pageFrontier = splitLines(c.getString(3)).toList(),
+                )
+            }
+        }
+        return CrawlState()
+    }
+
+    @Synchronized fun saveCrawlState(sourceId: Long, state: CrawlState) {
+        val values = ContentValues().apply {
+            put("source_id", sourceId)
+            put("sitemap_visited", joinLines(state.sitemapVisited, CrawlState.MAX_PERSISTED_SITEMAP_VISITED))
+            put("sitemap_frontier", joinLines(state.sitemapFrontier, CrawlState.MAX_PERSISTED_FRONTIER))
+            put("page_visited", joinLines(state.pageVisited, CrawlState.MAX_PERSISTED_PAGE_VISITED))
+            put("page_frontier", joinLines(state.pageFrontier, CrawlState.MAX_PERSISTED_FRONTIER))
+        }
+        writableDatabase.insertWithOnConflict("crawl_state", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    private fun splitLines(text: String?): LinkedHashSet<String> =
+        text.orEmpty().split('\n').filter { it.isNotBlank() }.toCollection(LinkedHashSet())
+
+    /** Keeps only the most recent [max] entries so a very link-dense site can't grow this table forever. */
+    private fun joinLines(items: Collection<String>, max: Int): String =
+        items.toList().takeLast(max).joinToString("\n")
 
     /** Candidates not yet compared in a previous run; unavailable URLs may be retried. */
     @Synchronized fun pendingCandidates(limit: Int = 5000): List<StoredCandidate> {
@@ -605,11 +703,17 @@ object PublicSourceScanner {
     private const val MAX_LINKED_PAGES = 700
     private const val MAX_PAGE_BYTES = 1024 * 1024
 
-    fun scan(source: WebsiteSource): List<DiscoveredImage> {
+    /**
+     * [previousState] resumes a crawl where an earlier scan of this same source left off (its unexplored
+     * frontier, plus what's already been visited), so repeated scans of a large site progress deeper into
+     * it over time instead of re-discovering the same bounded slice near the sitemap root every run. The
+     * returned [CrawlState] is this run's progress, to persist and pass in again next time.
+     */
+    fun scan(source: WebsiteSource, previousState: CrawlState = CrawlState()): Pair<List<DiscoveredImage>, CrawlState> {
         val base = source.baseUrl
         // A timeout, server error, or forbidden robots.txt response means skip this host.
         // A genuine 404 means the site has no robots file and can be crawled normally.
-        val robotsText = readRobots("$base/robots.txt") ?: return emptyList()
+        val robotsText = readRobots("$base/robots.txt") ?: return emptyList<DiscoveredImage>() to previousState
         val rules = parseRobots(robotsText)
         val sitemapUrls = linkedSetOf<String>()
         robotsText.orEmpty().lineSequence().map { it.trim() }
@@ -634,10 +738,12 @@ object PublicSourceScanner {
         )
 
         val found = linkedMapOf<String, DiscoveredImage>()
-        val pending = sitemapUrls.toMutableList()
-        val visited = mutableSetOf<String>()
+        // Resume the leftover frontier from last time first, so this run pushes further into it;
+        // freshly-seeded sitemap entries are appended after and still get a look each run.
+        val pending = (previousState.sitemapFrontier + sitemapUrls.toList()).distinct().toMutableList()
+        val visited = previousState.sitemapVisited.toMutableSet()
         val publicPages = linkedSetOf<String>()
-        while (pending.isNotEmpty() && visited.size < MAX_SITEMAPS && found.size < MAX_IMAGES) {
+        while (pending.isNotEmpty() && visited.size < previousState.sitemapVisited.size + MAX_SITEMAPS && found.size < MAX_IMAGES) {
             val endpoint = pending.removeAt(0)
             if (!visited.add(endpoint)) continue
             if (!sameHost(base, endpoint) || isDisallowed(endpoint, rules)) continue
@@ -650,7 +756,9 @@ object PublicSourceScanner {
         // links from those pages. This reaches gallery/detail pages omitted from
         // image sitemaps without turning the phone into an unbounded crawler.
         val pageQueue = ArrayDeque<String>()
-        publicPages.take(MAX_SITEMAP_PAGES).forEach { pageQueue.addLast(it) }
+        // Resume last run's unexplored page frontier first, so depth genuinely accumulates over time.
+        previousState.pageFrontier.forEach { pageQueue.addLast(it) }
+        publicPages.take(MAX_SITEMAP_PAGES).forEach { if (it !in pageQueue) pageQueue.addLast(it) }
 
         // Forum software often exposes its useful public content from index,
         // category, latest-topic and gallery routes rather than sitemaps.
@@ -675,13 +783,15 @@ object PublicSourceScanner {
                 }
             }
         }
-        val visitedPages = linkedSetOf<String>()
+        val visitedPages = previousState.pageVisited.toMutableSet()
+        var newlyVisited = 0
         var linkedPagesQueued = 0
         while (pageQueue.isNotEmpty() &&
-            visitedPages.size < MAX_SITEMAP_PAGES + MAX_LINKED_PAGES &&
+            newlyVisited < MAX_SITEMAP_PAGES + MAX_LINKED_PAGES &&
             found.size < MAX_IMAGES) {
             val page = pageQueue.removeFirst()
             if (!visitedPages.add(page) || !sameHost(base, page) || isDisallowed(page, rules)) continue
+            newlyVisited++
             val html = readPage(page) ?: continue
             val links = extractPageImages(page, html, source.id, found)
             for (link in links) {
@@ -693,7 +803,13 @@ object PublicSourceScanner {
                 }
             }
         }
-        return found.values.take(MAX_IMAGES)
+        val newState = CrawlState(
+            sitemapVisited = visited,
+            sitemapFrontier = pending.toList(),
+            pageVisited = visitedPages,
+            pageFrontier = pageQueue.toList(),
+        )
+        return found.values.take(MAX_IMAGES).toList() to newState
     }
 
     private fun readRobots(address: String): String? {

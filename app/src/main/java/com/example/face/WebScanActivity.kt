@@ -23,6 +23,8 @@ import java.util.concurrent.Executors
 class WebScanActivity : AppCompatActivity() {
 
     private lateinit var queryInput: EditText
+    private lateinit var cityInput: EditText
+    private lateinit var stateInput: EditText
     private lateinit var searxInput: EditText
     private lateinit var status: TextView
     private lateinit var referencePreview: LinearLayout
@@ -129,6 +131,38 @@ class WebScanActivity : AppCompatActivity() {
             imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         }
         page.addSpaced(queryInput, 12)
+
+        page.addView(TextView(this).apply {
+            text = "OPTIONAL LOCATION KEYWORDS"
+            textSize = 12f
+            letterSpacing = 0.08f
+            setTextColor(android.graphics.Color.rgb(173, 160, 255))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(4), 0, dp(6))
+        })
+        val locationRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        cityInput = EditText(this).apply {
+            hint = "City"
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            imeOptions = EditorInfo.IME_ACTION_NEXT
+        }
+        stateInput = EditText(this).apply {
+            hint = "State"
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            imeOptions = EditorInfo.IME_ACTION_DONE
+        }
+        locationRow.addView(cityInput, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6) })
+        locationRow.addView(stateInput, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(6) })
+        page.addView(locationRow)
+
+        page.addView(TextView(this).apply {
+            text = "These terms are optional. They are added to browser searches and help prioritize public results whose post text or page URL mentions the location."
+            textSize = 12f
+            setTextColor(android.graphics.Color.rgb(165, 172, 190))
+            setPadding(0, dp(2), 0, dp(12))
+        })
 
         page.addView(TextView(this).apply {
             text = "IMAGE SEARCH PROVIDER"
@@ -246,10 +280,15 @@ class WebScanActivity : AppCompatActivity() {
         setOnClickListener { action() }
     }
 
+    private fun locationKeywords(): String =
+        listOf(cityInput.text.toString().trim(), stateInput.text.toString().trim())
+            .filter { it.isNotBlank() }.joinToString(" ")
+
     private fun currentQuery(): String? {
-        val query = queryInput.text.toString().trim()
+        val query = listOf(queryInput.text.toString().trim(), locationKeywords())
+            .filter { it.isNotBlank() }.joinToString(" ")
         if (query.isBlank()) {
-            Toast.makeText(this, "Enter search terms first.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Enter search terms, a city, or a state.", Toast.LENGTH_SHORT).show()
             return null
         }
         return query
@@ -263,6 +302,17 @@ class WebScanActivity : AppCompatActivity() {
         Uri.parse("https://duckduckgo.com/").buildUpon()
             .appendQueryParameter("q", query).appendQueryParameter("ia", "images")
             .appendQueryParameter("iax", "images").build().toString()
+
+    /** Search public 4chan archive indexes directly, without navigating ad-heavy board pages. */
+    private fun fourChanArchiveUrl(query: String): String =
+        Uri.parse("https://duckduckgo.com/").buildUpon()
+            .appendQueryParameter(
+                "q",
+                "($query) (site:archive.4plebs.org OR site:desuarchive.org OR site:warosu.org OR site:archived.moe)"
+            )
+            .appendQueryParameter("ia", "images")
+            .appendQueryParameter("iax", "images")
+            .build().toString()
 
     private fun searxUrl(query: String): String? {
         val raw = searxInput.text.toString().trim()
@@ -285,7 +335,9 @@ class WebScanActivity : AppCompatActivity() {
     private fun searchAll() {
         val query = currentQuery() ?: return
         pendingSearches.clear()
-        pendingSearches.addAll(listOfNotNull(yandexUrl(query), searxUrl(query), duckDuckGoUrl(query)))
+        pendingSearches.addAll(listOfNotNull(
+            yandexUrl(query), searxUrl(query), duckDuckGoUrl(query), fourChanArchiveUrl(query)
+        ))
         if (pendingSearches.isEmpty()) return
         status.text = "Opening ${pendingSearches.size} searches. Press back after each one to open the next."
         openNextSearch()
@@ -365,6 +417,7 @@ class WebScanActivity : AppCompatActivity() {
             putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true)
             putExtra(IdentityMatchActivity.EXTRA_AUTO_START, true)
             group?.let { putExtra(IdentityMatchActivity.EXTRA_SOURCE_GROUP, it.name) }
+            putExtra(IdentityMatchActivity.EXTRA_LOCATION_KEYWORDS, locationKeywords())
         }
         startActivity(intent)
     }

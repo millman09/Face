@@ -589,7 +589,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
     @Synchronized fun allCandidates(limit: Int = 100): List<StoredCandidate> {
         val result = mutableListOf<StoredCandidate>()
         readableDatabase.rawQuery(
-            """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
+            """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url,c.post_text
                FROM candidates c JOIN sources s ON s.id=c.source_id
                WHERE c.checked_at=0
                ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
@@ -1034,9 +1034,9 @@ object PublicSourceScanner {
         val candidates = linkedSetOf<String>()
         val pageLinks = linkedSetOf<String>()
         val metaTag = Regex("(?is)<meta\\b[^>]*>")
-        val attribute = Regex("(?is)([a-z_:][-a-z0-9_:.]*)\\s*=\\s*(['\"])(.*?)\\2")
+        val attrRegex = Regex("(?is)([a-z_:][-a-z0-9_:.]*)\\s*=\\s*(['\"])(.*?)\\2")
         val labels = metaTag.findAll(html).mapNotNull { tag ->
-            val attrs = attribute.findAll(tag.value).associate {
+            val attrs = attrRegex.findAll(tag.value).associate {
                 it.groupValues[1].lowercase(Locale.US) to it.groupValues[3]
             }
             val key = (attrs["property"] ?: attrs["name"] ?: "").lowercase(Locale.US)

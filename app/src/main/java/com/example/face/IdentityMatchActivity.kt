@@ -81,14 +81,14 @@ class IdentityMatchActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        webcamOnlyMode = intent.getBooleanExtra(EXTRA_WEBCAM_ONLY, false)
+        webScanMode = intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false)
+        autoStartScan = intent.getBooleanExtra(EXTRA_AUTO_START, false)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(16), dp(20), dp(24))
         }
         setToolPage(if (webcamOnlyMode) "Webcam profile photo search" else "Face matching", root)
-        webScanMode = intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false)
-        autoStartScan = intent.getBooleanExtra(EXTRA_AUTO_START, false)
-        webcamOnlyMode = intent.getBooleanExtra(EXTRA_WEBCAM_ONLY, false)
         @Suppress("DEPRECATION")
         referenceUris = intent.getParcelableArrayListExtra<Uri>(EXTRA_REFERENCE_URIS)?.distinct().orEmpty()
         referenceUri = referenceUris.firstOrNull()

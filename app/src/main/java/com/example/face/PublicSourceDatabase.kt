@@ -41,7 +41,9 @@ private val REMOVED_IN_15_HOSTS = listOf(
     "rule34.paheal.net", "furry.booru.org", "booru.org", "pixiv.net", "deviantart.com",
 )
 
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 16) {
+private val REMOVED_IN_17_HOSTS = listOf("realbooru.com", "xbooru.com")
+
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 17) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -132,6 +134,9 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             seedSources(db)
         }
         if (oldVersion < 16) seedSources(db)
+        if (oldVersion < 17) {
+            removeSources(db, REMOVED_IN_17_HOSTS)
+        }
     }
 
     /** Deletes these sources (by host) along with their stored image links and crawl progress. */
@@ -443,8 +448,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "X" to "https://x.com",
             "Lipstick Alley Forum" to "https://www.lipstickalley.com",
             // Real-photo boorus (drawn/anime boorus are deliberately left out: they can't contain a real face).
-            "RealBooru" to "https://realbooru.com",
-            "XBooru" to "https://xbooru.com",
         )
         for ((name, address) in starterDomains) {
             val values = ContentValues().apply {

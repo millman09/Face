@@ -95,8 +95,9 @@ class WebScanActivity : AppCompatActivity() {
         page.addSpaced(button("Choose photo(s) to search for") { referencePicker.launch(arrayOf("image/*")) }, 8)
         page.addSpaced(button("Start automatic scan and match my photos") { launchAutomaticScan(false) }, 8)
         page.addSpaced(button("Webcam sites only (public images)") { launchAutomaticScan(true) }, 8)
+        page.addSpaced(button("Imageboards only (including Anonibx)") { launchAutomaticScan(false, true) }, 8)
         page.addView(TextView(this).apply {
-            text = "This separate scan checks only public image links exposed by popular webcam platforms. They may not all be profile photos, and private or member-only images are not accessible."
+            text = "This mode checks only public image links from imageboards and image galleries already in the catalogue, including Anonibx, 4chan, 8kun, e621, Gelbooru, Rule34, Danbooru, Safebooru, Paheal, and related boards. It does not access locked or member-only pages."
             textSize = 13f
             setPadding(0, dp(4), 0, dp(8))
         })
@@ -282,19 +283,35 @@ class WebScanActivity : AppCompatActivity() {
         return allowed.any { host == it || host.endsWith(".$it") }
     }
 
+    private fun isImageboardSource(source: WebsiteSource): Boolean {
+        val host = Uri.parse(source.baseUrl).host?.lowercase().orEmpty()
+        val allowed = listOf(
+            "anonibx.com", "4chan.org", "8kun.top", "e621.net",
+            "gelbooru.com", "rule34.xxx", "danbooru.donmai.us",
+            "safebooru.org", "paheal.net", "exhentai.org", "e-hentai.org",
+            "hitomi.la", "imagefap.com", "pornpics.com", "pornpic.com",
+            "xxx.gallery", "nudy.pics", "siss.pics", "pichunter.com",
+            "imagetwist.com", "imagebam.com", "imagevenue.com", "jpg.fish"
+        )
+        return allowed.any { host == it || host.endsWith(".$it") }
+    }
+
     /** Opens the live results page immediately. Source discovery and face matching run there. */
-    private fun launchAutomaticScan(webcamOnly: Boolean) {
+    private fun launchAutomaticScan(webcamOnly: Boolean, imageboardsOnly: Boolean = false) {
         if (referencePhotos.isEmpty()) {
             Toast.makeText(this, "Choose at least one reference photo first.", Toast.LENGTH_LONG).show()
             return
         }
-        val sourceCount = database.sources().count { it.enabled && (!webcamOnly || isWebcamSource(it)) }
+        val sourceCount = database.sources().count { it.enabled &&
+            (!webcamOnly || isWebcamSource(it)) &&
+            (!imageboardsOnly || isImageboardSource(it)) }
         if (sourceCount == 0) {
             Toast.makeText(this, "There are no enabled public sources to scan.", Toast.LENGTH_LONG).show()
             return
         }
         val intent = Intent(this, IdentityMatchActivity::class.java).apply {
             putExtra(IdentityMatchActivity.EXTRA_WEBCAM_ONLY, webcamOnly)
+            putExtra(IdentityMatchActivity.EXTRA_IMAGEBOARDS_ONLY, imageboardsOnly)
             putParcelableArrayListExtra(IdentityMatchActivity.EXTRA_REFERENCE_URIS, ArrayList(referencePhotos))
             putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true)
             putExtra(IdentityMatchActivity.EXTRA_AUTO_START, true)

@@ -54,6 +54,13 @@ class IdentityMatchActivity : AppCompatActivity() {
     private lateinit var cancelButton: MaterialButton
     private lateinit var pauseButton: MaterialButton
     @Volatile private var paused = false
+    @Volatile private var scanRunning = false
+    private lateinit var modelSetupGroup: LinearLayout
+    private lateinit var modelReadyRow: LinearLayout
+    private lateinit var modelReadyText: TextView
+    private lateinit var referenceSetupButton: MaterialButton
+    private lateinit var referenceReadyRow: LinearLayout
+    private lateinit var referenceReadyText: TextView
     private lateinit var resultsContainer: LinearLayout
     private var activeWebScan: java.util.concurrent.Future<*>? = null
     private var modelFile: File? = null
@@ -109,11 +116,11 @@ class IdentityMatchActivity : AppCompatActivity() {
             setPadding(0, dp(8), 0, dp(8))
         })
         root.addView(TextView(this).apply {
-            text = "Searching for\nyour face."
-            textSize = 29f
+            text = "Searching for your face."
+            textSize = 24f
             setTextColor(android.graphics.Color.WHITE)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(0, 0, 0, dp(14))
+            setPadding(0, 0, 0, dp(10))
         })
         webScanMode = intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false)
         autoStartScan = intent.getBooleanExtra(EXTRA_AUTO_START, false)
@@ -133,24 +140,53 @@ class IdentityMatchActivity : AppCompatActivity() {
         })
         val existingModel = File(filesDir, modelTargetName)
         if (existingModel.exists()) modelFile = existingModel
-        addButton(root, "Install face-matching model  ·  ~4 MB") { downloadOfficialModel() }
-        addButton(root, "Choose a compatible face model") { modelPicker.launch(arrayOf("*/*")) }
-        addButton(root, "Choose reference photos") { referencePicker.launch(arrayOf("image/*")) }
-        if (webScanMode) addButton(root, "Past searches") { showPastSearches() }
-        if (webScanMode) addButton(root, "Clear current search") { confirmClearSearch() }
-        if (webScanMode) addButton(root, "Export saved matches (CSV)") { exportResultsPicker.launch("face-search-results.csv") }
-        if (webScanMode) addButton(root, "Export report with images (PDF)") { exportReportPicker.launch("face-matches-report.pdf") }
+
+        root.addView(sectionLabel("SETUP"))
+        modelSetupGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        addButton(modelSetupGroup, "Install face-matching model  ·  ~4 MB", primary = true) { downloadOfficialModel() }
+        addButton(modelSetupGroup, "Use a different model file") { modelPicker.launch(arrayOf("*/*")) }
+        root.addSpaced(modelSetupGroup, 4)
+        modelReadyText = TextView(this).apply {
+            textSize = 14f
+            setTextColor(android.graphics.Color.rgb(170, 230, 180))
+        }
+        modelReadyRow = readyRow(modelReadyText, "Change") { modelPicker.launch(arrayOf("*/*")) }
+        root.addSpaced(modelReadyRow, 4)
+
+        referenceSetupButton = addButton(root, "Choose reference photos") { referencePicker.launch(arrayOf("image/*")) }
+        referenceReadyText = TextView(this).apply {
+            textSize = 14f
+            setTextColor(android.graphics.Color.rgb(170, 230, 180))
+        }
+        referenceReadyRow = readyRow(referenceReadyText, "Change") { referencePicker.launch(arrayOf("image/*")) }
+        root.addSpaced(referenceReadyRow, 4)
+
         if (!webScanMode) addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
+
+        if (webScanMode) {
+            root.addView(sectionLabel("MANAGE"))
+            addButton(root, "Past searches") { showPastSearches() }
+            addButton(root, "Clear current search") { confirmClearSearch() }
+            addButton(root, "Export saved matches (CSV)") { exportResultsPicker.launch("face-search-results.csv") }
+            addButton(root, "Export report with images (PDF)") { exportReportPicker.launch("face-matches-report.pdf") }
+        }
+
         scanButton = MaterialButton(this).apply {
             text = if (webScanMode) "Start deep search" else "Compare selected photos"
             isAllCaps = false
             isEnabled = false
             setOnClickListener { if (webScanMode) startDeepSearchChoosing() else runComparison() }
         }
-        root.addSpaced(scanButton)
-        progress =ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { visibility = ProgressBar.GONE }
+        root.addSpaced(scanButton, 4)
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            visibility = ProgressBar.GONE
+            progressTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(155, 139, 255))
+        }
         root.addView(progress)
-        cancelButton = MaterialButton(this).apply {
+        val scanControlsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        cancelButton = MaterialButton(
+            this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle
+        ).apply {
             text = "Cancel search"
             isAllCaps = false
             visibility = android.view.View.GONE
@@ -159,8 +195,10 @@ class IdentityMatchActivity : AppCompatActivity() {
                 status.text = "Cancelling search…"
             }
         }
-        root.addView(cancelButton)
-        pauseButton = MaterialButton(this).apply {
+        scanControlsRow.addView(cancelButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(5) })
+        pauseButton = MaterialButton(
+            this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle
+        ).apply {
             text = "Pause"
             isAllCaps = false
             visibility = android.view.View.GONE
@@ -170,7 +208,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                 status.text = if (paused) "Paused. Tap Resume to continue." else "Resuming…"
             }
         }
-        root.addView(pauseButton)
+        scanControlsRow.addView(pauseButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(5) })
+        root.addSpaced(scanControlsRow, 4)
         status = TextView(this).apply {
             text = if (webScanMode) "Install the model and choose reference photo(s)." else "No model or images selected."
             textSize = 14f
@@ -399,13 +438,61 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
-    private fun addButton(root: LinearLayout, label: String, action: () -> Unit) {
-        root.addSpaced(MaterialButton(this).apply { text = label; isAllCaps = false; setOnClickListener { action() } })
+    /** A small uppercase section header, to group related buttons instead of one undifferentiated stack. */
+    private fun sectionLabel(text: String): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 11f
+        letterSpacing = 0.10f
+        setTextColor(android.graphics.Color.rgb(140, 148, 170))
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        setPadding(0, dp(12), 0, dp(4))
+    }
+
+    /** A compact "✓ <status>  [action]" row shown once a setup step is done, replacing its button. */
+    private fun readyRow(statusText: TextView, actionLabel: String, action: () -> Unit): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            visibility = android.view.View.GONE
+            addView(statusText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(MaterialButton(
+                this@IdentityMatchActivity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle
+            ).apply {
+                text = actionLabel
+                isAllCaps = false
+                setOnClickListener { action() }
+            })
+        }
+
+    /** Secondary (outlined) by default; [primary] gives the single filled, accent-colored button on the page. */
+    private fun addButton(root: LinearLayout, label: String, primary: Boolean = false, action: () -> Unit): MaterialButton {
+        val button = if (primary) {
+            MaterialButton(this)
+        } else {
+            MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
+        }
+        button.apply { text = label; isAllCaps = false; setOnClickListener { action() } }
+        root.addSpaced(button)
+        return button
+    }
+
+    /** Swaps each setup step between its button and a compact "done" row once it's complete. */
+    private fun refreshSetupVisibility() {
+        val modelReady = modelFile?.exists() == true
+        modelSetupGroup.visibility = if (modelReady) android.view.View.GONE else android.view.View.VISIBLE
+        modelReadyRow.visibility = if (modelReady) android.view.View.VISIBLE else android.view.View.GONE
+        if (modelReady) modelReadyText.text = "✓ Face-matching model ready (${modelFile!!.length() / 1024} KB)"
+
+        val refsReady = referenceUris.isNotEmpty()
+        referenceSetupButton.visibility = if (refsReady) android.view.View.GONE else android.view.View.VISIBLE
+        referenceReadyRow.visibility = if (refsReady) android.view.View.VISIBLE else android.view.View.GONE
+        if (refsReady) referenceReadyText.text = "✓ ${referenceUris.size} reference photo(s) selected"
     }
 
     private fun updateReady() {
-        scanButton.isEnabled = modelFile?.exists() == true && referenceUris.isNotEmpty() &&
+        scanButton.visibility = if (scanRunning) android.view.View.GONE else android.view.View.VISIBLE
+        scanButton.isEnabled = !scanRunning && modelFile?.exists() == true && referenceUris.isNotEmpty() &&
             (webScanMode || imageUris.isNotEmpty())
+        refreshSetupVisibility()
     }
 
     private fun runComparison() {
@@ -417,7 +504,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         val refs = referenceUris.ifEmpty { listOfNotNull(referenceUri) }
         if (refs.isEmpty()) return
         val candidates = imageUris.toList()
-        scanButton.isEnabled = false
+        scanRunning = true
+        updateReady()
         progress.visibility = ProgressBar.VISIBLE
         progress.max = candidates.size
         progress.progress = 0
@@ -521,6 +609,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                 faceDetector?.close()
                 interpreter?.close()
                 resultsDatabase.close()
+                scanRunning = false
+                runOnUiThread { updateReady() }
             }
         }
     }
@@ -534,7 +624,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         val model = modelFile ?: return
         val references = referenceUris.toList()
         if (references.isEmpty()) return
-        scanButton.isEnabled = false
+        scanRunning = true
+        updateReady()
         progress.visibility = ProgressBar.VISIBLE
         progress.progress = 0
         status.text = "Preparing on-device face matching…"
@@ -761,12 +852,14 @@ class IdentityMatchActivity : AppCompatActivity() {
                 }
             } finally {
                 downloadPool?.shutdownNow()
+                scanRunning = false
                 runOnUiThread {
                     cancelButton.visibility = android.view.View.GONE
                     pauseButton.visibility = android.view.View.GONE
                     pauseButton.text = "Pause"
                     paused = false
                     activeWebScan = null
+                    updateReady()
                 }
                 alignedReferences.forEach { it.recycle() }
                 detector?.close()

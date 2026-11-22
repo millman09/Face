@@ -32,7 +32,7 @@ data class CrawlState(
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long, val faceBox: String? = null, val confirmed: Boolean = false)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 14) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 15) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -118,6 +118,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         if (oldVersion < 12) seedSources(db)
         if (oldVersion < 13) createCrawlStateTable(db)
         if (oldVersion < 14) seedSources(db)
+        if (oldVersion < 15) seedSources(db)
     }
 
     private fun seedSources(db: SQLiteDatabase) {
@@ -146,6 +147,10 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "GIFs.com Adult" to "https://gifs.com",
             "Erome" to "https://www.erome.com",
             "Motherless" to "https://motherless.com",
+            // Public imageboard entry points. Only published, accessible feeds/sitemaps are scanned.
+            "Anonibx" to "https://anonibx.com",
+            "4chan Public Boards" to "https://www.4chan.org",
+            "8kun Public Boards" to "https://8kun.top",
             "ImageFap" to "https://www.imagefap.com",
             "PornPics" to "https://www.pornpics.com",
             "PornPic" to "https://www.pornpic.com",

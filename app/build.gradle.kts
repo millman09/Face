@@ -16,6 +16,16 @@ android {
         versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // The commit this build was built from, so the app can tell whether the "latest-debug"
+        // GitHub release is actually newer than what's installed.
+        val gitSha = providers.exec {
+            commandLine("git", "rev-parse", "HEAD")
+        }.standardOutput.asText.get().trim()
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
+    }
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {

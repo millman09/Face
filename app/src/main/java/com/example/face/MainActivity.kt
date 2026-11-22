@@ -60,6 +60,10 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(20))
         })
 
+        val updateBanner = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        page.addView(updateBanner)
+        checkForUpdate(updateBanner)
+
         addTile(page, "Deep face search", "Choose photos of yourself and scan public image sources for matches.") {
             startActivity(Intent(this, WebScanActivity::class.java))
         }
@@ -93,6 +97,38 @@ class MainActivity : AppCompatActivity() {
         }
 
         showLastCrashIfAny()
+    }
+
+    /** Checks GitHub for a newer "latest-debug" build and, if there is one, shows a banner offering to install it. */
+    private fun checkForUpdate(banner: LinearLayout) {
+        Thread {
+            val info = UpdateChecker.check() ?: return@Thread
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                banner.addView(TextView(this).apply {
+                    text = "A newer build is available."
+                    textSize = 15f
+                    setPadding(0, 0, 0, dp(4))
+                })
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding(0, 0, 0, dp(16))
+                }
+                row.addView(com.google.android.material.button.MaterialButton(this).apply {
+                    text = "Download and install"
+                    setOnClickListener {
+                        Toast.makeText(this@MainActivity, "Downloading… you'll get a notification when it's ready to install.", Toast.LENGTH_LONG).show()
+                        UpdateChecker.downloadAndInstall(this@MainActivity, info)
+                        banner.removeAllViews()
+                    }
+                })
+                row.addView(com.google.android.material.button.MaterialButton(this).apply {
+                    text = "Not now"
+                    setOnClickListener { banner.removeAllViews() }
+                })
+                banner.addView(row)
+            }
+        }.start()
     }
 
     /** If the app closed unexpectedly last time, show the error so it can be copied and sent for a fix. */

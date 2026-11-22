@@ -628,10 +628,32 @@ class IdentityMatchActivity : AppCompatActivity() {
      */
     private fun runWebComparison() {
         if (scanRunning) {
-            // Already running — most likely started from an earlier instance of this screen that the
-            // user backed out of. Don't start a second, overlapping scan; just reflect that it's going.
-            status.text = "A deep search is already running in the background."
-            updateReady()
+            // Already running — most likely a previous search (possibly from an earlier instance of
+            // this screen the user backed out of) that hasn't been told to stop yet. Starting a search
+            // is a clear signal the user wants THIS one running, so cancel the old one and start this
+            // one as soon as it actually clears, instead of just refusing and looking stuck.
+            status.text = "Stopping the previous search before starting this one…"
+            activeWebScan?.cancel(true)
+            Thread {
+                try {
+                    var waited = 0
+                    while (scanRunning && waited < 20_000) {
+                        Thread.sleep(250)
+                        waited += 250
+                    }
+                } catch (_: InterruptedException) {
+                    // Fine — just fall through to reporting current state below.
+                }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    if (scanRunning) {
+                        status.text = "The previous search is taking a moment to stop. Tap \"Start deep search\" again in a few seconds."
+                        updateReady()
+                    } else {
+                        runWebComparison()
+                    }
+                }
+            }.start()
             return
         }
         val model = modelFile ?: return

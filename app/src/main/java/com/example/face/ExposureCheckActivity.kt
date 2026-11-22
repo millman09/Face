@@ -37,6 +37,7 @@ class ExposureCheckActivity : AppCompatActivity() {
     private lateinit var domainButton: MaterialButton
     @Volatile private var usernameRun = 0
     private lateinit var adultSwitch: MaterialSwitch
+    private lateinit var focusedSwitch: MaterialSwitch
     private var usernamePool: java.util.concurrent.ExecutorService? = null
 
     private val brokers = listOf(
@@ -88,6 +89,15 @@ class ExposureCheckActivity : AppCompatActivity() {
         page.addSpaced(usernameInput, 8)
         adultSwitch = MaterialSwitch(this).apply { text = "Include adult sites"; isChecked = true; setPadding(dp(8), dp(8), dp(8), dp(8)) }
         page.addSpaced(adultSwitch, 4)
+        focusedSwitch = MaterialSwitch(this).apply {
+            text = "Only adult sites and major popular sites"
+            isChecked = getSharedPreferences("username_check", MODE_PRIVATE).getBoolean("focused", true)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setOnCheckedChangeListener { _, checked ->
+                getSharedPreferences("username_check", MODE_PRIVATE).edit().putBoolean("focused", checked).apply()
+            }
+        }
+        page.addSpaced(focusedSwitch, 4)
         page.addSpaced(button("Check this username") { checkUsername() }, 8)
         page.addSpaced(button("Guess emails from this username") { showGuessedEmails() }, 8)
         usernameStatus = body("")
@@ -261,6 +271,7 @@ class ExposureCheckActivity : AppCompatActivity() {
         val candidates = if (email != null && email != username) listOf(username, email) else listOf(username)
 
         val includeAdult = adultSwitch.isChecked
+        val focused = focusedSwitch.isChecked
         val run = ++usernameRun
         usernamePool?.shutdownNow()
         val checkPool = Executors.newFixedThreadPool(16)
@@ -269,7 +280,9 @@ class ExposureCheckActivity : AppCompatActivity() {
         usernameStatus.text = "Loading the site list…"
         pool.execute {
             val sites = try {
-                UsernameChecker.load(this).filter { includeAdult || !it.adult }
+                UsernameChecker.load(this)
+                    .filter { includeAdult || !it.adult }
+                    .filter { !focused || it.adult || it.popular }
             } catch (e: Exception) {
                 runOnUiThread { usernameStatus.text = "Could not load the site list: ${e.localizedMessage ?: "unknown error"}" }
                 return@execute

@@ -46,8 +46,38 @@ object UsernameChecker {
         val codeRange: Boolean = false,
         val noRedirects: Boolean = false,
     ) {
-        val adult: Boolean get() = category == "xx NSFW xx"
+        val adult: Boolean get() = category == "xx NSFW xx" || name in ADULT_ADJACENT
+        /** One of the big, widely used sites (social, video, payments, dating, gaming, shopping). */
+        val popular: Boolean get() = name in POPULAR
     }
+
+    /** Adult or hookup sites that the source lists don't tag as adult. */
+    private val ADULT_ADJACENT = setOf(
+        "Fabswingers", "FriendFinder", "FriendFinder-X", "MYM", "RoyalCams", "Massage Anywhere",
+    )
+
+    /** The mainstream sites worth checking in the focused (default) search. Names as in wmn-sites.json. */
+    private val POPULAR = setOf(
+        // Social and messaging
+        "Facebook", "Instagram", "Twitter", "X", "Threads", "threads", "TikTok", "Snapchat", "Reddit",
+        "Pinterest", "tumblr", "LinkedIn", "Telegram", "Bluesky Username", "kik", "Tellonym", "Tellonym.me",
+        "MySpace", "Clubhouse", "Lemon8", "vsco", "weheartit", "Kwai", "Gab", "Truth Social", "Minds",
+        "meet me", "Tinder", "VK", "ok.ru", "Weibo", "LiveJournal", "Quora", "Medium", "Wattpad",
+        // Video, streaming, music
+        "YouTube Channel", "YouTube User", "YouTube User2", "Twitch", "Kick", "Vimeo", "DailyMotion",
+        "Dailymotion", "RumbleChannel", "RumbleUser", "Odysee", "Spotify", "SoundCloud", "Last.fm", "Cameo",
+        // Link-in-bio, creator, payments
+        "Linktree", "Beacons", "AllMyLinks", "Carrd", "carrd.co", "about.me", "Patreon", "Ko-Fi",
+        "BuyMeACoffee", "CashApp", "Venmo", "PayPal.Me", "Gumroad", "gumroad",
+        // Photos
+        "Flickr", "Imgur", "DeviantArt", "Gravatar",
+        // Shopping
+        "eBay", "Etsy", "depop", "Poshmark",
+        // Gaming
+        "Steam", "Roblox", "Xbox Gamertag", "Playstation Network", "Chess.com",
+        // Other big ones
+        "GitHub", "GitHub (User)", "GoodReads", "Letterboxd",
+    )
 
     private var cached: List<Site>? = null
 

@@ -637,7 +637,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private fun isImageboardSource(source: WebsiteSource): Boolean {
         val host = Uri.parse(source.baseUrl).host?.lowercase().orEmpty()
         val allowed = listOf(
-            "anonibx.com", "4chan.org", "8kun.top", "e621.net",
+            "anonibx.com", "motherless.com", "4chan.org", "8kun.top", "e621.net",
             "gelbooru.com", "rule34.xxx", "danbooru.donmai.us",
             "safebooru.org", "paheal.net", "exhentai.org", "e-hentai.org",
             "hitomi.la", "imagefap.com", "pornpics.com", "pornpic.com",

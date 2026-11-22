@@ -776,7 +776,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         .filter { processedIds.add(it.id) }
                     if (batch.isEmpty()) return
                     data class Downloaded(val candidate: StoredCandidate, val bitmap: Bitmap?, val error: String?)
-                    data class MatchPreview(val id: Long, val pageUrl: String, val imageUrl: String, val score: Float, val bitmap: Bitmap, val faceBox: String?, val faceCrop: Bitmap?)
+                    data class MatchPreview(val id: Long, val pageUrl: String, val imageUrl: String, val score: Float, val bitmap: Bitmap, val faceBox: String?, val faceCrop: Bitmap?, val postText: String)
                     val completion = java.util.concurrent.ExecutorCompletionService<Downloaded>(activeDownloadPool)
                     for (chunk in batch.chunked(12)) {
                         awaitScanAllowed()
@@ -818,7 +818,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                         possibleMatches++
                                         previews += MatchPreview(
                                             candidate.id, candidate.pageUrl, candidate.imageUrl, similarity!!,
-                                            makeResultPreview(bitmap), faceBox, MatchTuning.cropFace(bitmap, faceBox)
+                                            makeResultPreview(bitmap), faceBox, MatchTuning.cropFace(bitmap, faceBox), candidate.postText
                                         )
                                     }
                                     updates += CandidateUpdate(candidate.id, if (possible) "Possible match" else "Compared", if (possible) similarity else null, faceBox)
@@ -832,7 +832,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         candidateDatabase.updateCandidateResults(updates)
                         previews.forEach { currentRunMatchIds.add(it.id) }
                         if (previews.isNotEmpty()) onLiveUi {
-                            previews.forEach { item -> addWebMatchPreview(item.id, item.pageUrl, item.imageUrl, item.score, item.bitmap, item.faceCrop, item.faceBox, false) }
+                            previews.forEach { item -> addWebMatchPreview(item.id, item.pageUrl, item.imageUrl, item.score, item.bitmap, item.faceCrop, item.faceBox, false, postText = item.postText) }
                         }
                         // Progress updates are deliberately batched instead of posted once per image.
                         updateSearchProgress("$completedSources/${sources.size} sites checked, $checked images compared, $possibleMatches possible match(es)")
@@ -1057,7 +1057,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     bitmap.recycle()
                     runOnUiThread {
                         if (!isFinishing) addWebMatchPreview(
-                            match.id, match.pageUrl, match.imageUrl, match.similarity, preview, faceCrop, match.faceBox, match.confirmed, readOnly = true
+                            match.id, match.pageUrl, match.imageUrl, match.similarity, preview, faceCrop, match.faceBox, match.confirmed, readOnly = true, postText = match.postText
                         )
                     }
                 } catch (_: Exception) {
@@ -1204,7 +1204,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     bitmap.recycle()
                     runOnUiThread {
                         if (generation == restoreGeneration && !isDestroyed) {
-                            addWebMatchPreview(match.id, match.pageUrl, match.imageUrl, match.similarity, preview, faceCrop, match.faceBox, match.confirmed)
+                            addWebMatchPreview(match.id, match.pageUrl, match.imageUrl, match.similarity, preview, faceCrop, match.faceBox, match.confirmed, postText = match.postText)
                         }
                     }
                     restored++
@@ -1222,7 +1222,7 @@ class IdentityMatchActivity : AppCompatActivity() {
 
     private fun addWebMatchPreview(
         candidateId: Long, pageUrl: String, imageUrl: String, similarity: Float, preview: Bitmap,
-        faceCrop: Bitmap?, faceBox: String?, confirmed: Boolean, readOnly: Boolean = false
+        faceCrop: Bitmap?, faceBox: String?, confirmed: Boolean, readOnly: Boolean = false, postText: String = ""
     ) {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1263,6 +1263,13 @@ class IdentityMatchActivity : AppCompatActivity() {
         details.addView(TextView(this).apply {
             text = if (confirmed) "Confirmed: this is you" else matchLabel(similarity)
             textSize = 16f
+        })
+        if (postText.isNotBlank()) details.addView(TextView(this).apply {
+            text = postText
+            textSize = 14f
+            setTextColor(android.graphics.Color.rgb(235, 220, 170))
+            maxLines = 3
+            ellipsize = android.text.TextUtils.TruncateAt.END
         })
         details.addView(TextView(this).apply {
             text = "Cosine similarity: " + String.format(java.util.Locale.US, "%.3f", similarity)

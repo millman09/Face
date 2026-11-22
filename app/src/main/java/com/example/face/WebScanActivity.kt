@@ -368,26 +368,81 @@ class WebScanActivity : AppCompatActivity() {
 
     private data class KeywordLink(val title: String, val url: String, val source: String)
 
-    /** Keyword-only search gathers publicly indexed page links and displays them together. */
+    /** Keyword-only search expands location terms so a city is not lost inside one overly narrow query. */
     private fun searchImageboardsOnly() {
-        val query = currentQuery() ?: return
+        val rawKeywords = queryInput.text.toString().trim()
+        val city = cityInput.text.toString().trim()
+        val state = stateInput.text.toString().trim()
+        if (rawKeywords.isBlank() && city.isBlank() && state.isBlank()) {
+            Toast.makeText(this, "Enter keywords or a city/state first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val locationVariants = locationQueryVariants(city, state)
+        val keywordVariants = if (rawKeywords.isBlank()) listOf("") else listOf(rawKeywords)
+        val queryLabel = listOf(rawKeywords, city, state).filter { it.isNotBlank() }.joinToString(" · ")
         keywordResultsContainer.removeAllViews()
-        status.text = "Searching public indexes for links matching: $query"
+        status.text = "Searching public indexes with expanded location searches: $queryLabel"
         scanExecutor.execute {
-            val searches = listOf(
-                "($query) (site:archive.4plebs.org OR site:warosu.org)",
-                "($query) site:anonibx.com",
-                "($query) site:motherless.com",
-                "($query) (site:4chan.org OR site:4channel.org)"
+            val siteQueries = listOf(
+                "(site:archive.4plebs.org OR site:warosu.org)",
+                "site:anonibx.com",
+                "site:motherless.com",
+                "(site:4chan.org OR site:4channel.org)"
             )
+            val searches = linkedSetOf<String>()
+            // Search the full phrase, the location by itself, and the city without the state.
+            // This catches posts whose titles mention a city but not the user's other keywords.
+            keywordVariants.forEach { keywords ->
+                locationVariants.forEach { location ->
+                    val terms = listOf(keywords, location).filter { it.isNotBlank() }.joinToString(" ")
+                    if (terms.isNotBlank()) siteQueries.forEach { site -> searches += "($terms) $site" }
+                }
+            }
             val found = linkedMapOf<String, KeywordLink>()
-            searches.forEach { search ->
-                try { fetchKeywordLinks(search).forEach { found.putIfAbsent(it.url, it) } } catch (_: Exception) { }
+            searches.forEachIndexed { index, search ->
+                try {
+                    fetchKeywordLinks(search).forEach { found.putIfAbsent(it.url, it) }
+                } catch (_: Exception) { }
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        status.text = "Checking public indexes… ${index + 1} of ${searches.size} searches · ${found.size} links found"
+                    }
+                }
             }
             runOnUiThread {
-                if (!isFinishing && !isDestroyed) renderKeywordLinks(found.values.toList(), query)
+                if (!isFinishing && !isDestroyed) renderKeywordLinks(found.values.toList(), queryLabel)
             }
         }
+    }
+
+    /** Include state-name and abbreviation variants when the user enters either form. */
+    private fun locationQueryVariants(city: String, state: String): List<String> {
+        if (city.isBlank() && state.isBlank()) return listOf("")
+        val stateNames = mapOf(
+            "AL" to "Alabama", "AK" to "Alaska", "AZ" to "Arizona", "AR" to "Arkansas",
+            "CA" to "California", "CO" to "Colorado", "CT" to "Connecticut", "DE" to "Delaware",
+            "FL" to "Florida", "GA" to "Georgia", "HI" to "Hawaii", "ID" to "Idaho",
+            "IL" to "Illinois", "IN" to "Indiana", "IA" to "Iowa", "KS" to "Kansas",
+            "KY" to "Kentucky", "LA" to "Louisiana", "ME" to "Maine", "MD" to "Maryland",
+            "MA" to "Massachusetts", "MI" to "Michigan", "MN" to "Minnesota", "MS" to "Mississippi",
+            "MO" to "Missouri", "MT" to "Montana", "NE" to "Nebraska", "NV" to "Nevada",
+            "NH" to "New Hampshire", "NJ" to "New Jersey", "NM" to "New Mexico", "NY" to "New York",
+            "NC" to "North Carolina", "ND" to "North Dakota", "OH" to "Ohio", "OK" to "Oklahoma",
+            "OR" to "Oregon", "PA" to "Pennsylvania", "RI" to "Rhode Island", "SC" to "South Carolina",
+            "SD" to "South Dakota", "TN" to "Tennessee", "TX" to "Texas", "UT" to "Utah",
+            "VT" to "Vermont", "VA" to "Virginia", "WA" to "Washington", "WV" to "West Virginia",
+            "WI" to "Wisconsin", "WY" to "Wyoming", "DC" to "District of Columbia"
+        )
+        val normalized = state.uppercase().replace(".", "").trim()
+        val fullState = stateNames[normalized]
+        val abbreviation = stateNames.entries.firstOrNull { it.value.equals(state, ignoreCase = true) }?.key
+        val stateForms = listOfNotNull(state, fullState, abbreviation)
+            .map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        val variants = linkedSetOf<String>()
+        if (city.isNotBlank() && stateForms.isNotEmpty()) stateForms.forEach { variants += "\"$city\" $it" }
+        if (city.isNotBlank()) variants += "\"$city\""
+        if (state.isNotBlank() && city.isBlank()) stateForms.forEach { variants += it }
+        return variants.toList()
     }
 
     /** Reads ordinary HTML search results and only keeps links on the targeted public hosts. */

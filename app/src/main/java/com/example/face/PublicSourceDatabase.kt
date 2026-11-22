@@ -18,7 +18,7 @@ data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: 
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 6) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 7) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -40,6 +40,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             db.execSQL("ALTER TABLE candidates ADD COLUMN checked_at INTEGER NOT NULL DEFAULT 0")
         }
         if (oldVersion < 6) seedSources(db)
+        if (oldVersion < 7) seedSources(db)
     }
 
     private fun seedSources(db: SQLiteDatabase) {
@@ -214,7 +215,23 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "Nutaku" to "https://www.nutaku.net",
             "DLsite" to "https://www.dlsite.com",
             "Itch.io" to "https://itch.io",
-            "Newgrounds Adult" to "https://www.newgrounds.com"
+            "Newgrounds Adult" to "https://www.newgrounds.com",
+            // Additional public image hosts, galleries, and social communities.
+            "Imgur" to "https://imgur.com",
+            "ImgBB" to "https://imgbb.com",
+            "Postimages" to "https://postimages.org",
+            "Imgbox" to "https://imgbox.com",
+            "ImageChest" to "https://imgchest.com",
+            "Catbox" to "https://catbox.moe",
+            "Pixeldrain" to "https://pixeldrain.com",
+            "Pixiv" to "https://www.pixiv.net",
+            "DeviantArt" to "https://www.deviantart.com",
+            "Pinterest" to "https://www.pinterest.com",
+            "Bluesky" to "https://bsky.app",
+            "Mastodon Social" to "https://mastodon.social",
+            "VK" to "https://vk.com",
+            "X" to "https://x.com",
+            "Lipstick Alley Forum" to "https://www.lipstickalley.com"
         )
         for ((name, address) in starterDomains) {
             val values = ContentValues().apply {

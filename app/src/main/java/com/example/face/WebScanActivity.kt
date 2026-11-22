@@ -9,6 +9,7 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -32,6 +33,8 @@ class WebScanActivity : AppCompatActivity() {
     private lateinit var startSearchButton: MaterialButton
     private lateinit var continueSearchButton: MaterialButton
     private lateinit var keywordResultsContainer: LinearLayout
+    private lateinit var keywordProgressBar: ProgressBar
+    private lateinit var keywordProgressText: TextView
     private var groupButtons: List<MaterialButton> = emptyList()
     private lateinit var database: PublicSourceDatabase
     private val scanExecutor = Executors.newSingleThreadExecutor()
@@ -201,6 +204,25 @@ class WebScanActivity : AppCompatActivity() {
         page.addView(keywordResultsContainer, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(12); bottomMargin = dp(16) })
+
+        keywordProgressText = TextView(this).apply {
+            text = "Search progress: waiting"
+            textSize = 13f
+            setTextColor(android.graphics.Color.rgb(190, 195, 210))
+            setPadding(0, dp(4), 0, dp(4))
+            visibility = android.view.View.GONE
+        }
+        page.addView(keywordProgressText)
+        keywordProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            progressTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(125, 105, 255))
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(54, 59, 77))
+            visibility = android.view.View.GONE
+        }
+        page.addView(keywordProgressBar, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(10)
+        ).apply { bottomMargin = dp(12) })
 
         page.addView(TextView(this).apply {
             text = "AUTOMATIC PUBLIC-SOURCE SCAN\nThe built-in source catalogue is checked in one run. Coverage depends on public sitemaps, feeds, and accessible image links. No logins, CAPTCHAs, paywalls, or site protections are bypassed."
@@ -397,6 +419,10 @@ class WebScanActivity : AppCompatActivity() {
         val nameVariants = if (rawKeywords.isBlank()) listOf("") else nameSearchVariants(rawKeywords)
         val queryLabel = listOf(rawKeywords, city, state).filter { it.isNotBlank() }.joinToString(" · ")
         keywordResultsContainer.removeAllViews()
+        keywordProgressBar.progress = 0
+        keywordProgressBar.visibility = android.view.View.VISIBLE
+        keywordProgressText.visibility = android.view.View.VISIBLE
+        keywordProgressText.text = "Search progress: 0% · preparing searches…"
         status.text = "Expanding name spellings, state abbreviations, and women/female location terms: $queryLabel"
         scanExecutor.execute {
             val siteQueries = listOf(
@@ -425,6 +451,12 @@ class WebScanActivity : AppCompatActivity() {
             }
             val found = linkedMapOf<String, KeywordLink>()
             val providerOutcomes = linkedMapOf<String, Int>()
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) {
+                    keywordProgressText.text = "Search progress: 0% · 0 of ${searches.size} searches completed"
+                    status.text = "Searching ${searches.size} public-index queries…"
+                }
+            }
             searches.forEachIndexed { index, search ->
                 val result = fetchKeywordLinks(search)
                 result.links.forEach { found.putIfAbsent(it.url, it) }
@@ -432,17 +464,23 @@ class WebScanActivity : AppCompatActivity() {
                     val provider = outcome.substringBefore(":")
                     providerOutcomes[provider] = (providerOutcomes[provider] ?: 0) + 1
                 }
+                val completed = index + 1
+                val percent = (completed * 100 / searches.size.coerceAtLeast(1))
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
-                        status.text = "Checking public indexes… ${index + 1} of ${searches.size} searches · ${found.size} links found · " +
+                        keywordProgressBar.progress = percent
+                        keywordProgressText.text = "Search progress: $percent% · $completed of ${searches.size} searches completed"
+                        status.text = "Checking public indexes… $percent% · $completed of ${searches.size} searches · ${found.size} links found · " +
                             providerOutcomes.entries.joinToString(", ") { "${it.key}: ${it.value} checks" }
                     }
                 }
             }
             runOnUiThread {
                 if (!isFinishing && !isDestroyed) {
+                    keywordProgressBar.progress = 100
+                    keywordProgressText.text = "Search progress: 100% · finished ${searches.size} searches · ${found.size} links found"
                     renderKeywordLinks(found.values.toList(), queryLabel)
-                    if (found.isEmpty()) status.text = "No indexed links were extracted. Provider checks: ${providerOutcomes.entries.joinToString(", ") { "${it.key}: ${it.value} checks" }}. Try the browser-search button to compare live results."
+                    if (found.isEmpty()) status.text = "Search finished (100%). No indexed links were extracted. Provider checks: ${providerOutcomes.entries.joinToString(", ") { "${it.key}: ${it.value} checks" }}. Try the browser-search button to compare live results."
                 }
             }
         }

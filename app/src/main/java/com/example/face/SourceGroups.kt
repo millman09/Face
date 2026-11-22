@@ -16,6 +16,9 @@ enum class SourceGroup(val title: String, val buttonLabel: String, private val h
             "imagetwist.com", "imagebam.com", "imagevenue.com", "jpg.fish",
             "imgur.com", "imgbb.com", "postimages.org", "imgbox.com", "imgchest.com", "catbox.moe", "pixeldrain.com",
             "erome.com", "fapello.com", "socialmediagirls.com", "simpcity.su", "vipergirls.to", "planetsuzy.org",
+            // Photography-first public galleries and portfolio sites.
+            "500px.com", "35photo.pro", "pbase.com", "smugmug.com", "photobucket.com",
+            "viewbug.com", "photo.net", "pixieset.com", "zenfolio.com", "youpic.com", "flickr.com",
         ),
     );
 

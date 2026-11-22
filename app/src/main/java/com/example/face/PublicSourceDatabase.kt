@@ -559,17 +559,29 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
 
     /** Candidates not yet compared in a previous run; unavailable URLs may be retried. */
     /** Images not compared yet, newest first. [sourceIds] limits it to those sources (null = every source). */
-    @Synchronized fun pendingCandidates(limit: Int = 5000, sourceIds: Collection<Long>? = null): List<StoredCandidate> {
+    @Synchronized fun pendingCandidates(
+        limit: Int = 5000,
+        sourceIds: Collection<Long>? = null,
+        priorityKeywords: List<String> = emptyList()
+    ): List<StoredCandidate> {
         val result = mutableListOf<StoredCandidate>()
         if (sourceIds != null && sourceIds.isEmpty()) return result
         // Ids are numbers from our own table, so inlining them is safe and avoids SQLite's bound-argument limit.
         val sourceFilter = sourceIds?.joinToString(",", prefix = " AND c.source_id IN (", postfix = ")").orEmpty()
+        val terms = priorityKeywords.map { it.trim().lowercase(Locale.US) }
+            .filter { it.length >= 2 }.distinct().take(6)
+        val prioritySql = if (terms.isEmpty()) "" else
+            "CASE WHEN (" + terms.joinToString(" OR ") {
+                "(lower(c.post_text) LIKE ? OR lower(c.page_url) LIKE ?)"
+            } + ") THEN 0 ELSE 1 END, "
+        val args = terms.flatMap { listOf("%$it%", "%$it%") } +
+            listOf(limit.coerceIn(1, 5000).toString())
         readableDatabase.rawQuery(
             """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url,c.post_text
                FROM candidates c JOIN sources s ON s.id=c.source_id
                WHERE c.checked_at=0$sourceFilter
-               ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
-            arrayOf(limit.coerceIn(1, 5000).toString())
+               ORDER BY $prioritySql c.discovered_at DESC LIMIT ?""".trimIndent(),
+            args.toTypedArray()
         ).use { c ->
             while (c.moveToNext()) result += StoredCandidate(
                 c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4), c.getString(5)

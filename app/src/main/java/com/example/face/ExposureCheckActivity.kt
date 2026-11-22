@@ -94,7 +94,7 @@ class ExposureCheckActivity : AppCompatActivity() {
         page.addView(usernameStatus)
         usernameResults = column()
         page.addView(usernameResults)
-        page.addView(body("Site list and detection rules: WhatsMyName project by Micah Hoffman (github.com/WebBreacher/WhatsMyName), CC BY-SA 4.0."))
+        page.addView(body("Site list and detection rules: WhatsMyName project by Micah Hoffman (github.com/WebBreacher/WhatsMyName), CC BY-SA 4.0, and the Sherlock Project (github.com/sherlock-project/sherlock), MIT License."))
 
         // 3. Domain
         page.addView(heading("3. Domain security"))

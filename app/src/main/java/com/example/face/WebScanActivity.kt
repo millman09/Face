@@ -308,7 +308,7 @@ class WebScanActivity : AppCompatActivity() {
         Uri.parse("https://duckduckgo.com/").buildUpon()
             .appendQueryParameter(
                 "q",
-                "($query) (site:archive.4plebs.org OR site:desuarchive.org OR site:warosu.org OR site:archived.moe)"
+                "($query) (site:archive.4plebs.org OR site:warosu.org) -site:archive.4plebs.org/mlpol -site:warosu.org/jp -site:warosu.org/vt"
             )
             .appendQueryParameter("ia", "images")
             .appendQueryParameter("iax", "images")

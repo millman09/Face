@@ -28,6 +28,20 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        // A fixed, committed debug key, used for every build (CI included). Without this, each CI
+        // runner auto-generates its own random debug key, so every build would have a different
+        // signature and Android would refuse to install an update over the previous one, forcing an
+        // uninstall every time (which also loses the app's data). This key has no other purpose, is
+        // not used for anything but this personal test build, and is fine to keep in the repo.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             // R8 is off: the minified build installed fine but was never tapped through, and the

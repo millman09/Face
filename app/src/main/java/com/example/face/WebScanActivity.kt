@@ -28,6 +28,8 @@ class WebScanActivity : AppCompatActivity() {
     private lateinit var referencePreview: LinearLayout
     private lateinit var referenceCount: TextView
     private lateinit var startSearchButton: MaterialButton
+    private lateinit var imageboardsButton: MaterialButton
+    private lateinit var webcamsButton: MaterialButton
     private lateinit var continueSearchButton: MaterialButton
     private lateinit var database: PublicSourceDatabase
     private val scanExecutor = Executors.newSingleThreadExecutor()
@@ -172,6 +174,18 @@ class WebScanActivity : AppCompatActivity() {
         }
         page.addSpaced(continueSearchButton, 8)
         page.addSpaced(startSearchButton, 8)
+        imageboardsButton = button("Imageboards only") { launchAutomaticScan("imageboards") }.apply {
+            isEnabled = false
+            textSize = 15f
+            setTextColor(android.graphics.Color.WHITE)
+        }
+        webcamsButton = button("Webcam profile sources only") { launchAutomaticScan("webcams") }.apply {
+            isEnabled = false
+            textSize = 15f
+            setTextColor(android.graphics.Color.WHITE)
+        }
+        page.addSpaced(imageboardsButton, 6)
+        page.addSpaced(webcamsButton, 6)
 
         status = TextView(this).apply {
             text = "Preparing the public-source catalogue…"
@@ -188,6 +202,8 @@ class WebScanActivity : AppCompatActivity() {
                     catalogueReady = true
                     status.text = "READY  ·  $count public sources available. All enabled, eligible sources are included automatically."
                     startSearchButton.isEnabled = referencePhotos.isNotEmpty()
+                    imageboardsButton.isEnabled = referencePhotos.isNotEmpty()
+                    webcamsButton.isEnabled = referencePhotos.isNotEmpty()
                     refreshRunningScanButtons()
                 }
             }
@@ -322,27 +338,43 @@ class WebScanActivity : AppCompatActivity() {
     }
 
     /** Opens the live results page immediately. Source discovery and face matching run there. */
-    private fun launchAutomaticScan() {
+    private fun launchAutomaticScan(sourceMode: String = "all") {
         if (IdentityMatchActivity.isScanRunning()) {
             com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
                 .setTitle("Start a new search?")
                 .setMessage("A deep search is already running. Starting a new one stops it. Saved matches are kept.")
-                .setPositiveButton("Start new search") { _, _ -> startNewScan() }
+                .setPositiveButton("Start new search") { _, _ -> startNewScan(sourceMode) }
                 .setNeutralButton("Continue current") { _, _ -> openRunningScan() }
                 .setNegativeButton("Cancel", null)
                 .show()
             return
         }
-        startNewScan()
+        startNewScan(sourceMode)
     }
 
-    private fun startNewScan() {
+    private fun isImageboardSource(source: WebsiteSource): Boolean {
+        val host = Uri.parse(source.baseUrl).host?.lowercase().orEmpty()
+        val domains = listOf("anonibx.com", "4chan.org", "8kun.top", "motherless.com",
+            "imagefap.com", "pornpics.com", "pornpic.com", "xxx.gallery", "nudy.pics",
+            "siss.pics", "pichunter.com", "imagetwist.com", "imagebam.com",
+            "imagevenue.com", "jpg.fish", "erome.com", "fapello.com")
+        return domains.any { host == it || host.endsWith(".$it") }
+    }
+
+    private fun isWebcamSource(source: WebsiteSource): Boolean {
+        val host = Uri.parse(source.baseUrl).host?.lowercase().orEmpty()
+        val domains = listOf("chaturbate.com", "cam4.com", "camsoda.com", "stripchat.com",
+            "bongacams.com", "myfreecams.com", "livejasmin.com")
+        return domains.any { host == it || host.endsWith(".$it") }
+    }
+
+    private fun startNewScan(sourceMode: String = "all") {
         if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading. Try again in a moment.", Toast.LENGTH_LONG).show(); return }
         if (referencePhotos.isEmpty()) {
             Toast.makeText(this, "Choose at least one reference photo first.", Toast.LENGTH_LONG).show()
             return
         }
-        val sourceCount = database.sources().count { it.enabled }
+        val sourceCount = database.sources().count { it.enabled && when (sourceMode) { "imageboards" -> isImageboardSource(it); "webcams" -> isWebcamSource(it); else -> true } }
         if (sourceCount == 0) {
             Toast.makeText(this, "There are no enabled public sources to scan.", Toast.LENGTH_LONG).show()
             return
@@ -351,6 +383,7 @@ class WebScanActivity : AppCompatActivity() {
             putParcelableArrayListExtra(IdentityMatchActivity.EXTRA_REFERENCE_URIS, ArrayList(referencePhotos))
             putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true)
             putExtra(IdentityMatchActivity.EXTRA_AUTO_START, true)
+            putExtra(IdentityMatchActivity.EXTRA_SOURCE_MODE, sourceMode)
         }
         startActivity(intent)
     }

@@ -36,6 +36,17 @@ class WebScanActivity : AppCompatActivity() {
     private lateinit var database: PublicSourceDatabase
     private val scanExecutor = Executors.newSingleThreadExecutor()
     private var referencePhotos: List<Uri> = emptyList()
+    // The search waiting on the "run in the background" prompt; it starts once the prompt closes, whatever the answer.
+    private var groupAwaitingBatteryPrompt: SourceGroup? = null
+    private var searchAwaitingBatteryPrompt = false
+    private val batteryPrompt = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (!BackgroundRunHelper.isExempt(this)) BackgroundRunHelper.rememberDeclined(this)
+        if (searchAwaitingBatteryPrompt) {
+            searchAwaitingBatteryPrompt = false
+            startNewScan(groupAwaitingBatteryPrompt, batteryChecked = true)
+        }
+    }
+
     private val referencePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
             referencePhotos = uris.distinct()
@@ -220,6 +231,11 @@ class WebScanActivity : AppCompatActivity() {
             }
         }
         groupButtons.forEach { page.addSpaced(it, 6) }
+        page.addSpaced(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = "Recheck all saved images"
+            isAllCaps = false
+            setOnClickListener { confirmRecheckAll() }
+        }, 6)
 
         status = TextView(this).apply {
             text = "Preparing the public-source catalogue…"
@@ -664,6 +680,47 @@ class WebScanActivity : AppCompatActivity() {
     }
 
     /** While a search is running in the background, offer to go back to it instead of only starting over. */
+    /** Before a search, offers to let Face keep running in the background so the phone doesn't stop the search. */
+    private fun askToRunInBackground(group: SourceGroup?) {
+        val hint = BackgroundRunHelper.manufacturerHint()?.let { "\n\n$it" }.orEmpty()
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Keep searches running?")
+            .setMessage("Long searches can be stopped by your phone's battery saver when you leave the app. Allow Face to run in the background so searches finish.$hint")
+            .setPositiveButton("Allow") { _, _ ->
+                groupAwaitingBatteryPrompt = group
+                searchAwaitingBatteryPrompt = true
+                try {
+                    batteryPrompt.launch(BackgroundRunHelper.requestIntent(this))
+                } catch (_: Exception) {
+                    searchAwaitingBatteryPrompt = false
+                    startNewScan(group, batteryChecked = true)
+                }
+            }
+            .setNegativeButton("Not now") { _, _ ->
+                BackgroundRunHelper.rememberDeclined(this)
+                startNewScan(group, batteryChecked = true)
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    /** Clears earlier comparisons so the next search compares every saved image with the current photos. */
+    private fun confirmRecheckAll() {
+        if (IdentityMatchActivity.isScanRunning()) {
+            Toast.makeText(this, "Wait for the current search to finish, or stop it first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Recheck all saved images?")
+            .setMessage("Your next search will compare every saved image with your current reference photos again. Confirmed matches and ones you marked \"Not a match\" are kept. This makes the next search take longer.")
+            .setPositiveButton("Recheck") { _, _ ->
+                database.resetCheckedResults()
+                Toast.makeText(this, "Done. Start a search to recheck everything.", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun refreshRunningScanButtons() {
         if (!::startSearchButton.isInitialized) return
         val running = IdentityMatchActivity.isScanRunning()
@@ -700,10 +757,14 @@ class WebScanActivity : AppCompatActivity() {
         startNewScan(group)
     }
 
-    private fun startNewScan(group: SourceGroup? = null) {
+    private fun startNewScan(group: SourceGroup? = null, batteryChecked: Boolean = false) {
         if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading. Try again in a moment.", Toast.LENGTH_LONG).show(); return }
         if (referencePhotos.isEmpty()) {
             Toast.makeText(this, "Choose at least one reference photo first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (!batteryChecked && BackgroundRunHelper.shouldAsk(this)) {
+            askToRunInBackground(group)
             return
         }
         val sourceCount = database.sources().count { it.enabled && (group == null || group.contains(it)) }

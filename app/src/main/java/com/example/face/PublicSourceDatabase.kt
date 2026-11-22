@@ -780,6 +780,10 @@ object PublicSourceScanner {
     private const val MAX_SITEMAP_PAGES = 300
     private const val MAX_LINKED_PAGES = 1000
     private const val MAX_PAGE_BYTES = 1024 * 1024
+    // One slow or half-dead site shouldn't hold a crawl slot for the whole search. When either limit
+    // is hit, the unvisited pages are saved and the next search carries on from there.
+    private const val SOURCE_TIME_BUDGET_MS = 6L * 60L * 1000L
+    private const val MAX_CONSECUTIVE_PAGE_FAILURES = 12
 
     /**
      * [previousState] resumes a crawl where an earlier scan of this same source left off (its unexplored
@@ -789,6 +793,8 @@ object PublicSourceScanner {
      */
     fun scan(source: WebsiteSource, previousState: CrawlState = CrawlState()): Pair<List<DiscoveredImage>, CrawlState> {
         val base = source.baseUrl
+        val deadline = System.currentTimeMillis() + SOURCE_TIME_BUDGET_MS
+        fun shouldStop() = Thread.currentThread().isInterrupted || System.currentTimeMillis() > deadline
         // A timeout, server error, or forbidden robots.txt response means skip this host.
         // A genuine 404 means the site has no robots file and can be crawled normally.
         val robotsText = readRobots("$base/robots.txt") ?: return emptyList<DiscoveredImage>() to previousState
@@ -821,7 +827,8 @@ object PublicSourceScanner {
         val pending = (previousState.sitemapFrontier + sitemapUrls.toList()).distinct().toMutableList()
         val visited = previousState.sitemapVisited.toMutableSet()
         val publicPages = linkedSetOf<String>()
-        while (pending.isNotEmpty() && visited.size < previousState.sitemapVisited.size + MAX_SITEMAPS && found.size < MAX_IMAGES) {
+        while (pending.isNotEmpty() && visited.size < previousState.sitemapVisited.size + MAX_SITEMAPS &&
+            found.size < MAX_IMAGES && !shouldStop()) {
             val endpoint = pending.removeAt(0)
             if (!visited.add(endpoint)) continue
             if (!sameHost(base, endpoint) || isDisallowed(endpoint, rules)) continue
@@ -882,19 +889,31 @@ object PublicSourceScanner {
         val visitedPages = previousState.pageVisited.toMutableSet()
         var newlyVisited = 0
         var linkedPagesQueued = 0
+        var consecutiveFailures = 0
+        // Mirrors pageQueue so "already queued?" is a constant-time lookup instead of a scan of the queue.
+        val queued = pageQueue.toHashSet()
         while (pageQueue.isNotEmpty() &&
             newlyVisited < MAX_SITEMAP_PAGES + MAX_LINKED_PAGES &&
-            found.size < MAX_IMAGES) {
+            found.size < MAX_IMAGES &&
+            consecutiveFailures < MAX_CONSECUTIVE_PAGE_FAILURES &&
+            !shouldStop()) {
             val page = pageQueue.removeFirst()
+            queued.remove(page)
             if (!visitedPages.add(page) || !sameHost(base, page) || isDisallowed(page, rules)) continue
             newlyVisited++
-            val html = readPage(page) ?: continue
+            val html = readPage(page)
+            if (html == null) {
+                consecutiveFailures++
+                continue
+            }
+            consecutiveFailures = 0
             val links = extractPageImages(page, html, source.id, found)
             for (link in links) {
                 if (linkedPagesQueued >= MAX_LINKED_PAGES) break
-                if (link !in visitedPages && pageQueue.none { it == link } &&
+                if (link !in visitedPages && link !in queued &&
                     sameHost(base, link) && !isDisallowed(link, rules) && isLikelyHtmlPage(link)) {
                     pageQueue.addLast(link)
+                    queued.add(link)
                     linkedPagesQueued++
                 }
             }

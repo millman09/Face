@@ -25,10 +25,11 @@ object ReferenceEmbeddingCache {
             if (file.exists()) {
                 file.bufferedReader().useLines { lines ->
                     lines.forEach { line ->
-                        val parts = line.split('|')
-                        if (parts.size == 2) {
-                            val values = parts[1].split(',').mapNotNull { it.toFloatOrNull() }
-                            if (values.isNotEmpty()) map[parts[0]] = values.toFloatArray()
+                        // The key itself ("uri|size") contains '|', so the values start after the last one.
+                        val split = line.lastIndexOf('|')
+                        if (split > 0) {
+                            val values = line.substring(split + 1).split(',').mapNotNull { it.toFloatOrNull() }
+                            if (values.isNotEmpty()) map[line.substring(0, split)] = values.toFloatArray()
                         }
                     }
                 }
@@ -49,6 +50,16 @@ object ReferenceEmbeddingCache {
             null
         } ?: return null
         return "$uri|$size"
+    }
+
+    /**
+     * Identifies a set of reference photos (order doesn't matter), so a search can tell when you've
+     * switched to different photos. Null if any photo can't be read.
+     */
+    fun fingerprint(context: Context, uris: List<Uri>): String? {
+        val keys = uris.map { keyFor(context, it) ?: return null }.sorted()
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(keys.joinToString("\n").toByteArray())
+        return digest.joinToString("") { "%02x".format(it) }
     }
 
     /** Null if this exact photo (by Uri and file size) hasn't been embedded and cached before. */

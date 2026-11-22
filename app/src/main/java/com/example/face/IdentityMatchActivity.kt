@@ -66,6 +66,18 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var webScanMode = false
     private var autoStartScan = false
     private var sourceGroup: SourceGroup? = null
+
+    /** One results card, plus the reposts of the same photo folded into it. */
+    private class MatchGroup(
+        val hash: Long?, val alsoFound: LinearLayout, val countLabel: TextView,
+        val candidateIds: MutableList<Long>, val imageUrls: MutableSet<String>,
+    ) {
+        fun updateCount() {
+            countLabel.visibility = android.view.View.VISIBLE
+            countLabel.text = "Same photo found on ${imageUrls.size} sites"
+        }
+    }
+    private val matchGroups = mutableListOf<MatchGroup>()
     private var searchLocationKeywords: List<String> = emptyList()
     @Volatile private var restoreGeneration = 0
     private var imageUris: List<Uri> = emptyList()
@@ -705,6 +717,18 @@ class IdentityMatchActivity : AppCompatActivity() {
                     candidateDatabase.resetCheckedResults()
                     scanState.edit().putInt("scoring_version", SCORING_VERSION).apply()
                 }
+                // Images compared against different reference photos were scored for someone else's
+                // face set, so when the photos change every stored image is compared again.
+                var photosChanged = false
+                val referenceFingerprint = ReferenceEmbeddingCache.fingerprint(this, references)
+                if (referenceFingerprint != null) {
+                    val previousFingerprint = scanState.getString("reference_fingerprint", null)
+                    if (previousFingerprint != null && previousFingerprint != referenceFingerprint) {
+                        candidateDatabase.resetCheckedResults()
+                        photosChanged = true
+                    }
+                    scanState.edit().putString("reference_fingerprint", referenceFingerprint).apply()
+                }
                 val group = sourceGroup
                 val enabledSources = candidateDatabase.sources().filter { it.enabled && (group == null || group.contains(it)) }
                 // For a narrowed search, only compare images that came from that group's sources.
@@ -751,6 +775,7 @@ class IdentityMatchActivity : AppCompatActivity() {
 
                 if (references.size == 1) photoHints += "Add 2–3 more photos of you (different angle or lighting) for better matching."
                 if (reusedCount > 0) photoHints += "Reused $reusedCount previously-computed reference face(s) to start faster."
+                if (photosChanged) photoHints += "Your reference photos changed, so images checked before are being compared again with the new photos."
                 onLiveUi {
                     hintView.text = photoHints.joinToString("\n")
                     hintView.visibility = if (photoHints.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
@@ -848,7 +873,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                     }
                 }
 
-                val sourcePool = Executors.newFixedThreadPool(6)
+                // Different sites crawl side by side; the per-host lock below keeps it to one request stream per site.
+                val sourcePool = Executors.newFixedThreadPool(8)
                 try {
                     val completion = java.util.concurrent.ExecutorCompletionService<Triple<WebsiteSource, Int, Int>>(sourcePool)
                     val hostLocks = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.Semaphore>()
@@ -1007,7 +1033,7 @@ class IdentityMatchActivity : AppCompatActivity() {
 
     /** Lists saved past searches; picking one shows its matches below, separate from the current search. */
     private fun showPastSearches() {
-        executor.execute {
+        restoreExecutor.execute {
             val searches = try {
                 val db = PublicSourceDatabase(this)
                 try { db.pastSearches() } finally { db.close() }
@@ -1040,7 +1066,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     .setTitle("Delete this past search?")
                     .setMessage("Its saved matches will be removed. The current search is not affected.")
                     .setPositiveButton("Delete") { _, _ ->
-                        executor.execute {
+                        restoreExecutor.execute {
                             val db = PublicSourceDatabase(this@IdentityMatchActivity)
                             try { db.deletePastSearch(search.id) } finally { db.close() }
                             runOnUiThread {
@@ -1053,7 +1079,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     .show()
             }
         })
-        executor.execute {
+        restoreExecutor.execute {
             val matches = try {
                 val db = PublicSourceDatabase(this)
                 try { db.pastSearchMatches(search.id) } finally { db.close() }
@@ -1111,25 +1137,68 @@ class IdentityMatchActivity : AppCompatActivity() {
 
     private fun showMatchActions(pageUrl: String, imageUrl: String) {
         val labels = arrayOf(
+            "Email the site a removal request",
+            "Copy removal request text",
+            "StopNCII.org (block reposts on major platforms)",
+            "Report to Google (remove from search)",
             "Copy image link", "Copy page link",
-            "Report to Google (remove from search)", "StopNCII.org (hash-based blocking)"
         )
         MaterialAlertDialogBuilder(this)
             .setTitle("Get this removed")
             .setItems(labels) { _, which ->
                 when (which) {
-                    0 -> copyText("Image link", imageUrl)
-                    1 -> copyText("Page link", pageUrl.ifBlank { imageUrl })
-                    2 -> openResultUrl("https://support.google.com/websearch/answer/13650142")
-                    else -> openResultUrl("https://stopncii.org")
+                    0 -> emailRemovalRequest(pageUrl, imageUrl)
+                    1 -> copyText("Removal request", removalRequestText(pageUrl, imageUrl))
+                    2 -> openResultUrl("https://stopncii.org")
+                    3 -> openResultUrl("https://support.google.com/websearch/answer/13650142")
+                    4 -> copyText("Image link", imageUrl)
+                    else -> copyText("Page link", pageUrl.ifBlank { imageUrl })
                 }
             }
             .setNegativeButton("Close", null)
             .show()
     }
 
+    /** Site domain without "www.", e.g. "example.com". */
+    private fun siteDomain(pageUrl: String, imageUrl: String): String =
+        (Uri.parse(pageUrl.ifBlank { imageUrl }).host ?: "").lowercase(java.util.Locale.US).removePrefix("www.")
+
+    private fun removalRequestText(pageUrl: String, imageUrl: String): String = buildString {
+        appendLine("Hello,")
+        appendLine()
+        appendLine("I am the person shown in an image on your site, and I did not consent to it being posted. Please remove it and any copies:")
+        appendLine()
+        if (pageUrl.isNotBlank()) appendLine("Page: $pageUrl")
+        appendLine("Image: $imageUrl")
+        appendLine()
+        appendLine("Please confirm once it has been removed.")
+        appendLine()
+        append("Thank you.")
+    }
+
+    /**
+     * Opens the user's email app with the request filled in, addressed to the site's standard abuse mailbox
+     * (abuse@domain). Many sites read that mailbox; if a site lists its own removal contact, the user can
+     * change the address before sending.
+     */
+    private fun emailRemovalRequest(pageUrl: String, imageUrl: String) {
+        val domain = siteDomain(pageUrl, imageUrl)
+        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")).apply {
+            if (domain.isNotBlank()) putExtra(Intent.EXTRA_EMAIL, arrayOf("abuse@$domain"))
+            putExtra(Intent.EXTRA_SUBJECT, "Removal request: image posted without my consent")
+            putExtra(Intent.EXTRA_TEXT, removalRequestText(pageUrl, imageUrl))
+        }
+        try {
+            startActivity(intent)
+            Toast.makeText(this, "Check the address before sending. If the site lists its own removal contact, use that.", Toast.LENGTH_LONG).show()
+        } catch (_: Exception) {
+            copyText("Removal request", removalRequestText(pageUrl, imageUrl))
+            Toast.makeText(this, "No email app found. The request was copied so you can paste it into the site's contact form.", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun exportSavedMatches(destination: Uri) {
-        executor.execute {
+        restoreExecutor.execute {
             val db = PublicSourceDatabase(this)
             val matches = try { db.possibleMatches(2000, bestFirst = true) } finally { db.close() }
             try {
@@ -1191,6 +1260,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     /** Empties the results list, and drops any saved-match loading still in flight for the old list. */
     private fun clearResults() {
         restoreGeneration++
+        matchGroups.clear()
         resultsContainer.removeAllViews()
     }
 
@@ -1233,6 +1303,36 @@ class IdentityMatchActivity : AppCompatActivity() {
         candidateId: Long, pageUrl: String, imageUrl: String, similarity: Float, preview: Bitmap,
         faceCrop: Bitmap?, faceBox: String?, confirmed: Boolean, readOnly: Boolean = false, postText: String = ""
     ) {
+        // The same photo reposted on several sites becomes one card that lists every site it's on.
+        val hash = ImageHash.dHash(preview)
+        val existing = if (hash == null) null
+            else matchGroups.firstOrNull { it.hash != null && ImageHash.distance(it.hash, hash) <= ImageHash.SAME_IMAGE_DISTANCE }
+        if (existing != null) {
+            if (existing.imageUrls.add(imageUrl)) {
+                existing.candidateIds += candidateId
+                existing.alsoFound.visibility = android.view.View.VISIBLE
+                existing.alsoFound.addView(TextView(this).apply {
+                    text = "Also on " + (Uri.parse(pageUrl.ifBlank { imageUrl }).host ?: imageUrl).removePrefix("www.") + " ›"
+                    textSize = 13f
+                    setTextColor(android.graphics.Color.rgb(160, 170, 255))
+                    setPadding(0, dp(4), 0, dp(4))
+                    setOnClickListener { openResultUrl(pageUrl.ifBlank { imageUrl }) }
+                })
+                existing.updateCount()
+            }
+            return
+        }
+        val alsoFound = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = android.view.View.GONE
+        }
+        val countLabel = TextView(this).apply {
+            textSize = 13f
+            setTextColor(android.graphics.Color.rgb(255, 200, 120))
+            visibility = android.view.View.GONE
+        }
+        val group = MatchGroup(hash, alsoFound, countLabel, mutableListOf(candidateId), mutableSetOf(imageUrl))
+        matchGroups += group
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(10), dp(10), dp(10), dp(10))
@@ -1285,6 +1385,8 @@ class IdentityMatchActivity : AppCompatActivity() {
             textSize = 14f
         })
         details.addView(TextView(this).apply { text = Uri.parse(imageUrl).host ?: imageUrl; textSize = 12f })
+        details.addView(countLabel)
+        details.addView(alsoFound)
         details.addView(MaterialButton(this).apply {
             text = "Open source page"
             isAllCaps = false
@@ -1308,9 +1410,10 @@ class IdentityMatchActivity : AppCompatActivity() {
                 isEnabled = false
                 text = "Confirmed ✓"
                 MatchTuning.record(this@IdentityMatchActivity, true, similarity)
-                executor.execute {
+                val ids = group.candidateIds.toList()
+                restoreExecutor.execute {
                     val db = PublicSourceDatabase(this@IdentityMatchActivity)
-                    try { db.updateCandidateResult(candidateId, "Confirmed match", similarity) } finally { db.close() }
+                    try { ids.forEach { db.updateCandidateResult(it, "Confirmed match", similarity) } } finally { db.close() }
                 }
                 Toast.makeText(this@IdentityMatchActivity, "Saved. Future scans will use this to judge matches.", Toast.LENGTH_SHORT).show()
             }
@@ -1320,10 +1423,12 @@ class IdentityMatchActivity : AppCompatActivity() {
             isAllCaps = false
             setOnClickListener {
                 MatchTuning.record(this@IdentityMatchActivity, false, similarity)
-                executor.execute {
+                val ids = group.candidateIds.toList()
+                restoreExecutor.execute {
                     val db = PublicSourceDatabase(this@IdentityMatchActivity)
-                    try { db.updateCandidateResult(candidateId, "Not a match", similarity) } finally { db.close() }
+                    try { ids.forEach { db.updateCandidateResult(it, "Not a match", similarity) } } finally { db.close() }
                 }
+                matchGroups.remove(group)
                 resultsContainer.removeView(card)
                 Toast.makeText(this@IdentityMatchActivity, "Removed from possible matches.", Toast.LENGTH_SHORT).show()
             }

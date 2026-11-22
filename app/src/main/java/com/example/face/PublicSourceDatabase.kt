@@ -791,14 +791,20 @@ object PublicSourceScanner {
      * it over time instead of re-discovering the same bounded slice near the sitemap root every run. The
      * returned [CrawlState] is this run's progress, to persist and pass in again next time.
      */
-    fun scan(source: WebsiteSource, previousState: CrawlState = CrawlState()): Pair<List<DiscoveredImage>, CrawlState> {
+    fun scan(
+        source: WebsiteSource,
+        previousState: CrawlState = CrawlState(),
+        onProgress: (String) -> Unit = {}
+    ): Pair<List<DiscoveredImage>, CrawlState> {
         val base = source.baseUrl
+        onProgress("Checking public access rules (robots.txt)")
         val deadline = System.currentTimeMillis() + SOURCE_TIME_BUDGET_MS
         fun shouldStop() = Thread.currentThread().isInterrupted || System.currentTimeMillis() > deadline
         // A timeout, server error, or forbidden robots.txt response means skip this host.
         // A genuine 404 means the site has no robots file and can be crawled normally.
         val robotsText = readRobots("$base/robots.txt") ?: return emptyList<DiscoveredImage>() to previousState
         val rules = parseRobots(robotsText)
+        onProgress("Reading sitemap and feed indexes")
         val sitemapUrls = linkedSetOf<String>()
         robotsText.orEmpty().lineSequence().map { it.trim() }
             .filter { it.startsWith("Sitemap:", true) }
@@ -830,6 +836,7 @@ object PublicSourceScanner {
         while (pending.isNotEmpty() && visited.size < previousState.sitemapVisited.size + MAX_SITEMAPS &&
             found.size < MAX_IMAGES && !shouldStop()) {
             val endpoint = pending.removeAt(0)
+            if (visited.size % 3 == 0) onProgress("Reading sitemap indexes · ${visited.size} checked · ${found.size} image links")
             if (!visited.add(endpoint)) continue
             if (!sameHost(base, endpoint) || isDisallowed(endpoint, rules)) continue
             val xml = readText(endpoint) ?: continue
@@ -840,6 +847,7 @@ object PublicSourceScanner {
         // Inspect a bounded sample, then follow a small number of same-host public
         // links from those pages. This reaches gallery/detail pages omitted from
         // image sitemaps without turning the phone into an unbounded crawler.
+        onProgress("Preparing public gallery and thread pages · ${found.size} image links found")
         val pageQueue = ArrayDeque<String>()
         // Resume last run's unexplored page frontier first, so depth genuinely accumulates over time.
         previousState.pageFrontier.forEach { pageQueue.addLast(it) }
@@ -901,6 +909,9 @@ object PublicSourceScanner {
             queued.remove(page)
             if (!visitedPages.add(page) || !sameHost(base, page) || isDisallowed(page, rules)) continue
             newlyVisited++
+            if (newlyVisited == 1 || newlyVisited % 5 == 0) {
+                onProgress("Checking public pages · $newlyVisited visited · ${pageQueue.size} queued · ${found.size} image links")
+            }
             val html = readPage(page)
             if (html == null) {
                 consecutiveFailures++
@@ -918,6 +929,7 @@ object PublicSourceScanner {
                 }
             }
         }
+        onProgress("Finishing source · $newlyVisited pages checked · ${found.size} image links found")
         val newState = CrawlState(
             sitemapVisited = visited,
             sitemapFrontier = pending.toList(),

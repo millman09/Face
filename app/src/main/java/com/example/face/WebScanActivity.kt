@@ -94,9 +94,9 @@ class WebScanActivity : AppCompatActivity() {
 
         page.addSpaced(button("Choose photo(s) to search for") { referencePicker.launch(arrayOf("image/*")) }, 8)
         page.addSpaced(button("Start automatic scan and match my photos") { launchAutomaticScan(false) }, 8)
-        page.addSpaced(button("Webcam profile photos only") { launchAutomaticScan(true) }, 8)
+        page.addSpaced(button("Webcam sites only (public images)") { launchAutomaticScan(true) }, 8)
         page.addView(TextView(this).apply {
-            text = "The webcam-only scan is limited to public image links exposed by the listed webcam platforms. It cannot see private or member-only profile images."
+            text = "This separate scan checks only public image links exposed by popular webcam platforms. They may not all be profile photos, and private or member-only images are not accessible."
             textSize = 13f
             setPadding(0, dp(4), 0, dp(8))
         })

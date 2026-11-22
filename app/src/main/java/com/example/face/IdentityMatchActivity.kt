@@ -65,6 +65,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var referenceUris: List<Uri> = emptyList()
     private var webScanMode = false
     private var autoStartScan = false
+    @Volatile private var restoreGeneration = 0
     private var imageUris: List<Uri> = emptyList()
     private val modelUrl = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobile_facenet/releases/v0.65.0/mobile_facenet-tflite-float.zip"
     private val modelTargetName = "qualcomm_mobilefacenet.tflite"
@@ -227,12 +228,12 @@ class IdentityMatchActivity : AppCompatActivity() {
         resultSortRow.addView(MaterialButton(this).apply {
             text = "Best matches"
             isAllCaps = false
-            setOnClickListener { resultsContainer.removeAllViews(); restoreSavedMatches(bestFirst = true) }
+            setOnClickListener { clearResults(); restoreSavedMatches(bestFirst = true) }
         }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(5) })
         resultSortRow.addView(MaterialButton(this).apply {
             text = "Most recent"
             isAllCaps = false
-            setOnClickListener { resultsContainer.removeAllViews(); restoreSavedMatches(bestFirst = false) }
+            setOnClickListener { clearResults(); restoreSavedMatches(bestFirst = false) }
         }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(5) })
         if (webScanMode) root.addView(resultSortRow)
         val resultsScroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); isFillViewport = true }
@@ -240,7 +241,14 @@ class IdentityMatchActivity : AppCompatActivity() {
         root.addView(resultsScroll)
         handleSharedImages(intent)
         updateReady()
-        if (webScanMode) restoreSavedMatches()
+        if (webScanMode) when {
+            // Back to a running search: show only what this search has found so far.
+            scanRunning -> restoreSavedMatches(onlyCurrentRun = true)
+            // A brand-new search starts with a clean results list (older matches stay saved; the
+            // "Best matches" / "Most recent" buttons still show them).
+            autoStartScan -> {}
+            else -> restoreSavedMatches()
+        }
         if (webScanMode && scanRunning) {
             // Reopened while a search is already running: show its live progress instead of starting over.
             liveUi = java.lang.ref.WeakReference(this)
@@ -667,6 +675,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         updateReady()
         DeepSearchKeepAliveService.start(this)
         liveUi = java.lang.ref.WeakReference(this)
+        currentRunMatchIds.clear()
+        clearResults()
         publishProgress("Preparing on-device face matching…", 0, true)
         activeWebScan = executor.submit {
             var interpreter: Interpreter? = null
@@ -812,6 +822,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         }
                         // One transaction per chunk replaces one database write per image.
                         candidateDatabase.updateCandidateResults(updates)
+                        previews.forEach { currentRunMatchIds.add(it.id) }
                         if (previews.isNotEmpty()) onLiveUi {
                             previews.forEach { item -> addWebMatchPreview(item.id, item.pageUrl, item.imageUrl, item.score, item.bitmap, item.faceCrop, item.faceBox, false) }
                         }
@@ -1160,10 +1171,22 @@ class IdentityMatchActivity : AppCompatActivity() {
         updateReady()
     }
 
-    private fun restoreSavedMatches(bestFirst: Boolean = false) {
+    /** Empties the results list, and drops any saved-match loading still in flight for the old list. */
+    private fun clearResults() {
+        restoreGeneration++
+        resultsContainer.removeAllViews()
+    }
+
+    private fun restoreSavedMatches(bestFirst: Boolean = false, onlyCurrentRun: Boolean = false) {
+        val generation = restoreGeneration
+        val wanted = if (onlyCurrentRun) synchronized(currentRunMatchIds) { currentRunMatchIds.toSet() } else null
+        if (wanted != null && wanted.isEmpty()) return
         restoreExecutor.execute {
             val db = PublicSourceDatabase(this)
-            val matches = try { db.possibleMatches(30, bestFirst) } finally { db.close() }
+            val matches = try {
+                if (wanted == null) db.possibleMatches(30, bestFirst)
+                else db.possibleMatches(5000, bestFirst).filter { it.id in wanted }.take(30)
+            } finally { db.close() }
             var restored = 0
             for (match in matches) {
                 try {
@@ -1172,16 +1195,18 @@ class IdentityMatchActivity : AppCompatActivity() {
                     val faceCrop = try { MatchTuning.cropFace(bitmap, match.faceBox) } catch (_: Exception) { null }
                     bitmap.recycle()
                     runOnUiThread {
-                        addWebMatchPreview(match.id, match.pageUrl, match.imageUrl, match.similarity, preview, faceCrop, match.faceBox, match.confirmed)
+                        if (generation == restoreGeneration && !isDestroyed) {
+                            addWebMatchPreview(match.id, match.pageUrl, match.imageUrl, match.similarity, preview, faceCrop, match.faceBox, match.confirmed)
+                        }
                     }
                     restored++
                 } catch (_: Exception) {
                     // A previously public image may have been removed or become unavailable.
                 }
             }
-            if (restored > 0) {
+            if (restored > 0 && !onlyCurrentRun) {
                 runOnUiThread {
-                    if (!isFinishing) status.text = "Restored $restored saved possible match(es). Start a new search to find newly discovered images."
+                    if (!isFinishing && generation == restoreGeneration) status.text = "Restored $restored saved possible match(es). Start a new search to find newly discovered images."
                 }
             }
         }
@@ -1531,6 +1556,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         @Volatile private var liveStatus: String? = null
         @Volatile private var livePercent = 0
         @Volatile private var liveProgressVisible = false
+        // Matches found by the search that is running now, so a reopened screen shows only those.
+        private val currentRunMatchIds: MutableSet<Long> = java.util.Collections.synchronizedSet(mutableSetOf())
 
         /** True while a deep search is running in the background, whether or not its screen is open. */
         fun isScanRunning() = scanRunning

@@ -393,7 +393,7 @@ class WebScanActivity : AppCompatActivity() {
     /** Reads ordinary HTML search results and only keeps links on the targeted public hosts. */
     private fun fetchKeywordLinks(searchQuery: String): List<KeywordLink> {
         val encoded = java.net.URLEncoder.encode(searchQuery, "UTF-8")
-        val connection = (java.net.URL("https://html.duckduckgo.com/html/?q=\${encoded}").openConnection() as java.net.HttpURLConnection).apply {
+        val connection = (java.net.URL("https://html.duckduckgo.com/html/?q=${encoded}").openConnection() as java.net.HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10000
             readTimeout = 10000
@@ -433,7 +433,7 @@ class WebScanActivity : AppCompatActivity() {
         keywordResultsContainer.removeAllViews()
         keywordResultsContainer.addView(TextView(this).apply {
             text = if (links.isEmpty()) "No matching public links were returned for “$query”. Try a broader keyword or add a city/state."
-            else "\${links.size} matching public links found for “$query”"
+            else "${links.size} matching public links found for “$query”"
             textSize = 17f
             setTextColor(android.graphics.Color.WHITE)
             setTypeface(typeface, android.graphics.Typeface.BOLD)

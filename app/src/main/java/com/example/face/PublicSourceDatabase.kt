@@ -41,7 +41,7 @@ private val REMOVED_IN_15_HOSTS = listOf(
     "rule34.paheal.net", "furry.booru.org", "booru.org", "pixiv.net", "deviantart.com",
 )
 
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 15) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 16) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -131,6 +131,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             removeSources(db, REMOVED_IN_15_HOSTS)
             seedSources(db)
         }
+        if (oldVersion < 16) seedSources(db)
     }
 
     /** Deletes these sources (by host) along with their stored image links and crawl progress. */
@@ -176,6 +177,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "GIFs.com Adult" to "https://gifs.com",
             "Erome" to "https://www.erome.com",
             "Motherless" to "https://motherless.com",
+            "Anonibx (public pages only)" to "https://anonibx.com",
             "ImageFap" to "https://www.imagefap.com",
             "PornPics" to "https://www.pornpics.com",
             "PornPic" to "https://www.pornpic.com",

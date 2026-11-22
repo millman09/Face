@@ -50,7 +50,7 @@ private val REMOVED_IN_17_HOSTS = listOf(
     "newgrounds.com", "baraag.net",
 )
 
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 18) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 19) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -147,6 +147,10 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         if (oldVersion < 18) {
             db.execSQL("ALTER TABLE candidates ADD COLUMN post_text TEXT NOT NULL DEFAULT ''")
             db.execSQL("ALTER TABLE archived_matches ADD COLUMN post_text TEXT NOT NULL DEFAULT ''")
+        }
+        if (oldVersion < 19) {
+            // Add photo-focused public galleries and portfolio communities.
+            seedSources(db)
         }
     }
 
@@ -445,6 +449,17 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "Pipl" to "https://pipl.com",
             "ClustrMaps" to "https://clustrmaps.com",
             "CountyOffice" to "https://www.countyoffice.org",
+            // Photography-first public galleries and portfolios, not anime/cartoon boards.
+            "500px Photography" to "https://500px.com",
+            "35PHOTO" to "https://35photo.pro",
+            "PBase Photo Galleries" to "https://pbase.com",
+            "SmugMug Public Galleries" to "https://www.smugmug.com",
+            "Photobucket Public Albums" to "https://photobucket.com",
+            "ViewBug Photography" to "https://www.viewbug.com",
+            "Photo.net" to "https://www.photo.net",
+            "Pixieset Public Galleries" to "https://pixieset.com",
+            "Zenfolio Public Galleries" to "https://zenfolio.com",
+            "YouPic Photography" to "https://youpic.com",
             // Image hosts and social sites where photos get reposted.
             "Imgur" to "https://imgur.com",
             "ImgBB" to "https://imgbb.com",

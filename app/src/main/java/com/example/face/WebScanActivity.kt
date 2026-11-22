@@ -77,7 +77,7 @@ class WebScanActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(12))
         })
         page.addView(TextView(this).apply {
-            text = "Select your reference photos and scan supported public image sources. Matches are compared on this device."
+            text = "Photos are optional. Search imageboards with keywords alone, or add reference photos for on-device face matching."
             textSize = 15f
             setTextColor(android.graphics.Color.rgb(190, 195, 210))
             setLineSpacing(dp(3).toFloat(), 1.04f)
@@ -93,7 +93,7 @@ class WebScanActivity : AppCompatActivity() {
             }
         }
         uploadCard.addView(TextView(this).apply {
-            text = "YOUR REFERENCE PHOTOS"
+            text = "OPTIONAL REFERENCE PHOTOS"
             textSize = 11f
             letterSpacing = 0.10f
             setTextColor(android.graphics.Color.rgb(173, 160, 255))
@@ -125,7 +125,7 @@ class WebScanActivity : AppCompatActivity() {
         })
 
         queryInput = EditText(this).apply {
-            hint = "Optional search terms or usernames"
+            hint = "Keywords, names, usernames, or other terms"
             minLines = 2
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
@@ -183,6 +183,7 @@ class WebScanActivity : AppCompatActivity() {
             setPadding(0, dp(4), 0, dp(12))
         })
 
+        page.addSpaced(button("Browse imageboards with keywords · no photo needed") { searchImageboardsOnly() })
         page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
 
         page.addView(TextView(this).apply {
@@ -353,6 +354,21 @@ class WebScanActivity : AppCompatActivity() {
     // background, so the three searches open in turn: one now, the next each time
     // you come back to this screen.
     private val pendingSearches = ArrayDeque<String>()
+
+    private fun imageboardSearchUrls(query: String): List<String> = listOf(
+        fourChanArchiveUrl(query),
+        anonibxArchiveUrl(query),
+        motherlessArchiveUrl(query)
+    )
+
+    /** Keyword-only browsing: public search-index results; no reference photo or face model needed. */
+    private fun searchImageboardsOnly() {
+        val query = currentQuery() ?: return
+        pendingSearches.clear()
+        pendingSearches.addAll(imageboardSearchUrls(query))
+        status.text = "Opening ${pendingSearches.size} public imageboard searches. Press Back after each one to open the next."
+        openNextSearch()
+    }
 
     private fun searchAll() {
         val query = currentQuery() ?: return

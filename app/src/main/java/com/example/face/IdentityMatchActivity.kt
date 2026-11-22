@@ -65,6 +65,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var referenceUris: List<Uri> = emptyList()
     private var webScanMode = false
     private var autoStartScan = false
+    private var sourceMode = "all"
     @Volatile private var restoreGeneration = 0
     private var imageUris: List<Uri> = emptyList()
     private val modelUrl = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobile_facenet/releases/v0.65.0/mobile_facenet-tflite-float.zip"
@@ -121,12 +122,14 @@ class IdentityMatchActivity : AppCompatActivity() {
         })
         webScanMode = intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false)
         autoStartScan = intent.getBooleanExtra(EXTRA_AUTO_START, false)
+        sourceMode = intent.getStringExtra(EXTRA_SOURCE_MODE) ?: "all"
         @Suppress("DEPRECATION")
         referenceUris = intent.getParcelableArrayListExtra<Uri>(EXTRA_REFERENCE_URIS)?.distinct().orEmpty()
         referenceUri = referenceUris.firstOrNull()
         root.addView(TextView(this).apply {
             text = if (webScanMode) {
-                "Your selected reference photos stay on this device. The scan checks supported public sources and compares accessible images locally. Coverage depends on what each source makes publicly available."
+                val scope = when (sourceMode) { "imageboards" -> "selected public imageboards"; "webcams" -> "selected public webcam platforms"; else -> "supported public sources" }
+                "Your selected reference photos stay on this device. The scan checks $scope and compares accessible images locally. Coverage depends on what each source makes publicly available."
             } else {
                 "The face matcher runs on this phone. Select your reference photos and candidate images to compare them privately, without uploading your photos."
             }
@@ -638,6 +641,24 @@ class IdentityMatchActivity : AppCompatActivity() {
      * all collected public image candidates against every selected reference photo.
      * Source discovery and image matching both remain visible on this page.
      */
+    private fun sourceMatchesMode(source: WebsiteSource): Boolean {
+        val host = Uri.parse(source.baseUrl).host?.lowercase().orEmpty()
+        fun matches(domains: List<String>) = domains.any { host == it || host.endsWith(".$it") }
+        return when (sourceMode) {
+            "imageboards" -> matches(listOf(
+                "anonibx.com", "4chan.org", "8kun.top", "motherless.com", "imagefap.com",
+                "pornpics.com", "pornpic.com", "xxx.gallery", "nudy.pics", "siss.pics",
+                "pichunter.com", "imagetwist.com", "imagebam.com", "imagevenue.com",
+                "jpg.fish", "erome.com", "fapello.com"
+            ))
+            "webcams" -> matches(listOf(
+                "chaturbate.com", "cam4.com", "camsoda.com", "stripchat.com",
+                "bongacams.com", "myfreecams.com", "livejasmin.com"
+            ))
+            else -> true
+        }
+    }
+
     private fun runWebComparison() {
         if (scanRunning) {
             // Already running — most likely a previous search (possibly from an earlier instance of
@@ -692,7 +713,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     candidateDatabase.resetCheckedResults()
                     scanState.edit().putInt("scoring_version", SCORING_VERSION).apply()
                 }
-                val enabledSources = candidateDatabase.sources().filter { it.enabled }
+                val enabledSources = candidateDatabase.sources().filter { it.enabled && sourceMatchesMode(it) }
                 require(enabledSources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
                 // Avoid re-crawling the same domains on every run. A source becomes eligible again after 24 hours.
                 val rescanBefore = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
@@ -1538,6 +1559,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         const val EXTRA_WEB_SCAN_MODE = "com.example.face.EXTRA_WEB_SCAN_MODE"
         const val EXTRA_AUTO_START = "com.example.face.EXTRA_AUTO_START"
         const val EXTRA_REFERENCE_URIS = "com.example.face.EXTRA_REFERENCE_URIS"
+        const val EXTRA_SOURCE_MODE = "com.example.face.EXTRA_SOURCE_MODE"
 
         // Shared across every instance of this screen (not per-Activity), and never shut down on
         // onDestroy(): a deep search keeps running on this executor even after the user backs out

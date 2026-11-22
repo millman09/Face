@@ -93,7 +93,13 @@ class WebScanActivity : AppCompatActivity() {
         })
 
         page.addSpaced(button("Choose photo(s) to search for") { referencePicker.launch(arrayOf("image/*")) }, 8)
-        page.addSpaced(button("Start automatic scan and match my photos") { launchAutomaticScan() }, 8)
+        page.addSpaced(button("Start automatic scan and match my photos") { launchAutomaticScan(false) }, 8)
+        page.addSpaced(button("Webcam profile photos only") { launchAutomaticScan(true) }, 8)
+        page.addView(TextView(this).apply {
+            text = "The webcam-only scan is limited to public image links exposed by the listed webcam platforms. It cannot see private or member-only profile images."
+            textSize = 13f
+            setPadding(0, dp(4), 0, dp(8))
+        })
 
         status = TextView(this).apply {
             text = "No scan has been run yet."
@@ -267,18 +273,28 @@ class WebScanActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun isWebcamSource(source: WebsiteSource): Boolean {
+        val host = Uri.parse(source.baseUrl).host?.lowercase().orEmpty()
+        val allowed = listOf(
+            "chaturbate.com", "cam4.com", "camsoda.com", "stripchat.com",
+            "bongacams.com", "myfreecams.com", "livejasmin.com"
+        )
+        return allowed.any { host == it || host.endsWith(".$it") }
+    }
+
     /** Opens the live results page immediately. Source discovery and face matching run there. */
-    private fun launchAutomaticScan() {
+    private fun launchAutomaticScan(webcamOnly: Boolean) {
         if (referencePhotos.isEmpty()) {
             Toast.makeText(this, "Choose at least one reference photo first.", Toast.LENGTH_LONG).show()
             return
         }
-        val sourceCount = database.sources().count { it.enabled }
+        val sourceCount = database.sources().count { it.enabled && (!webcamOnly || isWebcamSource(it)) }
         if (sourceCount == 0) {
             Toast.makeText(this, "There are no enabled public sources to scan.", Toast.LENGTH_LONG).show()
             return
         }
         val intent = Intent(this, IdentityMatchActivity::class.java).apply {
+            putExtra(IdentityMatchActivity.EXTRA_WEBCAM_ONLY, webcamOnly)
             putParcelableArrayListExtra(IdentityMatchActivity.EXTRA_REFERENCE_URIS, ArrayList(referencePhotos))
             putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true)
             putExtra(IdentityMatchActivity.EXTRA_AUTO_START, true)

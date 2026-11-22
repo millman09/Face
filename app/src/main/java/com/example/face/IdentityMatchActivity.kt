@@ -886,7 +886,18 @@ class IdentityMatchActivity : AppCompatActivity() {
                             hostLock.acquire()
                             try {
                                 val previousState = candidateDatabase.loadCrawlState(source.id)
-                                val (discovered, newState) = PublicSourceScanner.scan(source, previousState)
+                                publishProgress(
+                                    "Imageboards: scanning ${source.name} · checking public pages · $completedSources/${sources.size} sites completed",
+                                    if (sources.isEmpty()) 0 else (completedSources * 100 / sources.size),
+                                    true
+                                )
+                                val (discovered, newState) = PublicSourceScanner.scan(source, previousState) { stage ->
+                                    publishProgress(
+                                        "Imageboards: ${source.name} · $stage · $completedSources/${sources.size} sites completed",
+                                        if (sources.isEmpty()) 0 else (completedSources * 100 / sources.size),
+                                        true
+                                    )
+                                }
                                 candidateDatabase.saveCrawlState(source.id, newState)
                                 val added = candidateDatabase.saveCandidates(discovered)
                                 candidateDatabase.updateSourceStatus(

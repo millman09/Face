@@ -13,8 +13,8 @@ import java.util.Locale
 
 data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean, val lastScan: Long = 0L)
 data class CandidateUpdate(val id: Long, val status: String, val similarity: Float?, val faceBox: String? = null)
-data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl: String)
-data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String)
+data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl: String, val postText: String = "")
+data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val postText: String = "")
 data class SearchInfo(val id: Long, val savedAt: Long, val matchCount: Int)
 /** A source's crawl progress, carried between scans so each run can continue deeper into the site. */
 data class CrawlState(
@@ -29,7 +29,7 @@ data class CrawlState(
         const val MAX_PERSISTED_FRONTIER = 3000
     }
 }
-data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long, val faceBox: String? = null, val confirmed: Boolean = false)
+data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long, val faceBox: String? = null, val confirmed: Boolean = false, val postText: String = "")
 
 /** Local source registry and deduplicated candidate-link store. */
 /**
@@ -50,7 +50,7 @@ private val REMOVED_IN_17_HOSTS = listOf(
     "newgrounds.com", "baraag.net",
 )
 
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 17) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 18) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -64,7 +64,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         db.execSQL("""CREATE TABLE candidates (
             id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER NOT NULL,
             page_url TEXT NOT NULL, image_url TEXT NOT NULL UNIQUE,
-            discovered_at INTEGER NOT NULL, scan_status TEXT NOT NULL DEFAULT 'Discovered',
+            discovered_at INTEGER NOT NULL, post_text TEXT NOT NULL DEFAULT '', scan_status TEXT NOT NULL DEFAULT 'Discovered',
             similarity REAL, checked_at INTEGER NOT NULL DEFAULT 0, face_box TEXT,
             FOREIGN KEY(source_id) REFERENCES sources(id)
         )""".trimIndent())
@@ -94,7 +94,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         db.execSQL("""CREATE TABLE IF NOT EXISTS archived_matches (
             id INTEGER PRIMARY KEY AUTOINCREMENT, search_id INTEGER NOT NULL,
             source_base_url TEXT NOT NULL, page_url TEXT NOT NULL, image_url TEXT NOT NULL,
-            similarity REAL NOT NULL, checked_at INTEGER NOT NULL, face_box TEXT, confirmed INTEGER NOT NULL DEFAULT 0
+            similarity REAL NOT NULL, checked_at INTEGER NOT NULL, face_box TEXT, confirmed INTEGER NOT NULL DEFAULT 0, post_text TEXT NOT NULL DEFAULT ''
         )""".trimIndent())
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_archived_search ON archived_matches(search_id)")
     }
@@ -143,6 +143,10 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         if (oldVersion < 16) seedSources(db)
         if (oldVersion < 17) {
             removeSources(db, REMOVED_IN_17_HOSTS)
+        }
+        if (oldVersion < 18) {
+            db.execSQL("ALTER TABLE candidates ADD COLUMN post_text TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE archived_matches ADD COLUMN post_text TEXT NOT NULL DEFAULT ''")
         }
     }
 
@@ -503,6 +507,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
                 val values = ContentValues().apply {
                     put("source_id", item.sourceId); put("page_url", item.pageUrl)
                     put("image_url", item.imageUrl); put("discovered_at", System.currentTimeMillis())
+                    put("post_text", item.postText.take(240))
                 }
                 if (db.insertWithOnConflict("candidates", null, values, SQLiteDatabase.CONFLICT_IGNORE) != -1L) inserted++
             }
@@ -560,14 +565,14 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         // Ids are numbers from our own table, so inlining them is safe and avoids SQLite's bound-argument limit.
         val sourceFilter = sourceIds?.joinToString(",", prefix = " AND c.source_id IN (", postfix = ")").orEmpty()
         readableDatabase.rawQuery(
-            """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
+            """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url,c.post_text
                FROM candidates c JOIN sources s ON s.id=c.source_id
                WHERE c.checked_at=0$sourceFilter
                ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
             arrayOf(limit.coerceIn(1, 5000).toString())
         ).use { c ->
             while (c.moveToNext()) result += StoredCandidate(
-                c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4)
+                c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4), c.getString(5)
             )
         }
         return result
@@ -640,7 +645,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
     @Synchronized fun possibleMatches(limit: Int = 50, bestFirst: Boolean = false): List<MatchResult> {
         val result = mutableListOf<MatchResult>()
         readableDatabase.rawQuery(
-            """SELECT c.id,s.base_url,c.page_url,c.image_url,c.similarity,c.checked_at,c.face_box,c.scan_status
+            """SELECT c.id,s.base_url,c.page_url,c.image_url,c.similarity,c.checked_at,c.face_box,c.scan_status,c.post_text
                FROM candidates c JOIN sources s ON s.id=c.source_id
                WHERE c.scan_status IN ('Possible match','Confirmed match') AND c.similarity >= 0.3
                ORDER BY ${if (bestFirst) "c.similarity DESC, c.checked_at DESC" else "c.checked_at DESC"} LIMIT ?""".trimIndent(),
@@ -648,7 +653,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         ).use { c ->
             while (c.moveToNext()) result += MatchResult(
                 c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getFloat(4), c.getLong(5),
-                c.getString(6), c.getString(7) == "Confirmed match"
+                c.getString(6), c.getString(7) == "Confirmed match", c.getString(8)
             )
         }
         return result
@@ -668,9 +673,9 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             if (saved > 0) {
                 db.execSQL("INSERT INTO searches(saved_at) VALUES (${System.currentTimeMillis()})")
                 db.execSQL(
-                    """INSERT INTO archived_matches(search_id, source_base_url, page_url, image_url, similarity, checked_at, face_box, confirmed)
+                    """INSERT INTO archived_matches(search_id, source_base_url, page_url, image_url, similarity, checked_at, face_box, confirmed, post_text)
                        SELECT (SELECT MAX(id) FROM searches), s.base_url, c.page_url, c.image_url, c.similarity, c.checked_at, c.face_box,
-                              CASE WHEN c.scan_status='Confirmed match' THEN 1 ELSE 0 END
+                              CASE WHEN c.scan_status='Confirmed match' THEN 1 ELSE 0 END, c.post_text
                        FROM candidates c JOIN sources s ON s.id=c.source_id WHERE $keep""".trimIndent()
                 )
             }
@@ -692,12 +697,12 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
     @Synchronized fun pastSearchMatches(searchId: Long): List<MatchResult> {
         val result = mutableListOf<MatchResult>()
         readableDatabase.rawQuery(
-            "SELECT id, source_base_url, page_url, image_url, similarity, checked_at, face_box, confirmed " +
+            "SELECT id, source_base_url, page_url, image_url, similarity, checked_at, face_box, confirmed, post_text " +
                 "FROM archived_matches WHERE search_id=? ORDER BY similarity DESC", arrayOf(searchId.toString())
         ).use { c ->
             while (c.moveToNext()) result += MatchResult(
                 c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getFloat(4), c.getLong(5),
-                c.getString(6), c.getInt(7) == 1
+                c.getString(6), c.getInt(7) == 1, c.getString(8)
             )
         }
         return result
@@ -1030,6 +1035,19 @@ object PublicSourceScanner {
         val pageLinks = linkedSetOf<String>()
         val metaTag = Regex("(?is)<meta\\b[^>]*>")
         val attribute = Regex("(?is)([a-z_:][-a-z0-9_:.]*)\\s*=\\s*(['\"])(.*?)\\2")
+        val labels = metaTag.findAll(html).mapNotNull { tag ->
+            val attrs = attribute.findAll(tag.value).associate {
+                it.groupValues[1].lowercase(Locale.US) to it.groupValues[3]
+            }
+            val key = (attrs["property"] ?: attrs["name"] ?: "").lowercase(Locale.US)
+            if (key in setOf("og:title", "twitter:title", "og:description", "description")) attrs["content"] else null
+        }
+        val pageLabel = (labels.firstOrNull { it.isNotBlank() }
+            ?: Regex("(?is)<title\\b[^>]*>(.*?)</title>").find(html)?.groupValues?.get(1)
+            ?: Regex("(?is)<h1\\b[^>]*>(.*?)</h1>").find(html)?.groupValues?.get(1)
+            ?: "").replace(Regex("<[^>]+>"), " ").replace("&amp;", "&")
+            .replace(Regex("\\s+"), " ").trim().take(240)
+        val attribute = Regex("(?is)([a-z_:][-a-z0-9_:.]*)\\s*=\\s*(['\"])(.*?)\\2")
         for (tag in metaTag.findAll(html)) {
             val attrs = attribute.findAll(tag.value).associate {
                 it.groupValues[1].lowercase(Locale.US) to it.groupValues[3]
@@ -1090,7 +1108,7 @@ object PublicSourceScanner {
             val resolved = try { URL(URL(pageUrl), value) } catch (_: Exception) { continue }
             if (resolved.protocol !in listOf("https", "http") || resolved.userInfo != null) continue
             val imageUrl = resolved.toString()
-            found.putIfAbsent(imageUrl, DiscoveredImage(sourceId, pageUrl, imageUrl))
+            found.putIfAbsent(imageUrl, DiscoveredImage(sourceId, pageUrl, imageUrl, pageLabel))
         }
         return pageLinks.sortedWith(
             compareByDescending<String> { pagePriority(it) }

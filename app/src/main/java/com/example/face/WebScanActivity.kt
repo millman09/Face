@@ -31,6 +31,7 @@ class WebScanActivity : AppCompatActivity() {
     private lateinit var referenceCount: TextView
     private lateinit var startSearchButton: MaterialButton
     private lateinit var continueSearchButton: MaterialButton
+    private lateinit var keywordResultsContainer: LinearLayout
     private var groupButtons: List<MaterialButton> = emptyList()
     private lateinit var database: PublicSourceDatabase
     private val scanExecutor = Executors.newSingleThreadExecutor()
@@ -183,8 +184,12 @@ class WebScanActivity : AppCompatActivity() {
             setPadding(0, dp(4), 0, dp(12))
         })
 
-        page.addSpaced(button("Browse imageboards with keywords · no photo needed") { searchImageboardsOnly() })
+        page.addSpaced(button("Find matching imageboard links · no photo needed") { searchImageboardsOnly() })
         page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
+        keywordResultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        page.addView(keywordResultsContainer, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(12); bottomMargin = dp(16) })
 
         page.addView(TextView(this).apply {
             text = "AUTOMATIC PUBLIC-SOURCE SCAN\nThe built-in source catalogue is checked in one run. Coverage depends on public sitemaps, feeds, and accessible image links. No logins, CAPTCHAs, paywalls, or site protections are bypassed."
@@ -361,13 +366,119 @@ class WebScanActivity : AppCompatActivity() {
         motherlessArchiveUrl(query)
     )
 
-    /** Keyword-only browsing: public search-index results; no reference photo or face model needed. */
+    private data class KeywordLink(val title: String, val url: String, val source: String)
+
+    /** Keyword-only search gathers publicly indexed page links and displays them together. */
     private fun searchImageboardsOnly() {
         val query = currentQuery() ?: return
-        pendingSearches.clear()
-        pendingSearches.addAll(imageboardSearchUrls(query))
-        status.text = "Opening ${pendingSearches.size} public imageboard searches. Press Back after each one to open the next."
-        openNextSearch()
+        keywordResultsContainer.removeAllViews()
+        status.text = "Searching public indexes for links matching: $query"
+        scanExecutor.execute {
+            val searches = listOf(
+                "($query) (site:archive.4plebs.org OR site:warosu.org)",
+                "($query) site:anonibx.com",
+                "($query) site:motherless.com",
+                "($query) (site:4chan.org OR site:4channel.org)"
+            )
+            val found = linkedMapOf<String, KeywordLink>()
+            searches.forEach { search ->
+                try { fetchKeywordLinks(search).forEach { found.putIfAbsent(it.url, it) } } catch (_: Exception) { }
+            }
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) renderKeywordLinks(found.values.toList(), query)
+            }
+        }
+    }
+
+    /** Reads ordinary HTML search results and only keeps links on the targeted public hosts. */
+    private fun fetchKeywordLinks(searchQuery: String): List<KeywordLink> {
+        val encoded = java.net.URLEncoder.encode(searchQuery, "UTF-8")
+        val connection = (java.net.URL("https://html.duckduckgo.com/html/?q=\${encoded}").openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 10000
+            readTimeout = 10000
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36")
+            setRequestProperty("Accept", "text/html")
+        }
+        try {
+            val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val anchorRegex = Regex("""<a(?=[^>]*class=["'][^"']*result__a)[^>]*>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            val results = mutableListOf<KeywordLink>()
+            anchorRegex.findAll(html).forEach { match ->
+                val tagStart = html.lastIndexOf("<a", match.range.first)
+                val tagEnd = html.indexOf('>', tagStart).takeIf { it >= 0 } ?: return@forEach
+                val attributes = html.substring(tagStart, tagEnd + 1)
+                val rawHref = Regex("""href=["']([^"']+)""", RegexOption.IGNORE_CASE).find(attributes)?.groupValues?.get(1) ?: return@forEach
+                val href = try {
+                    val parsed = Uri.parse(rawHref)
+                    parsed.getQueryParameter("uddg") ?: rawHref
+                } catch (_: Exception) { rawHref }
+                val uri = try { Uri.parse(href) } catch (_: Exception) { return@forEach }
+                val host = uri.host?.lowercase()?.removePrefix("www.") ?: return@forEach
+                val allowed = listOf("4plebs.org", "warosu.org", "anonibx.com", "motherless.com", "4chan.org", "4channel.org")
+                if (allowed.none { host == it || host.endsWith(".$it") }) return@forEach
+                if (uri.scheme != "https" && uri.scheme != "http") return@forEach
+                val title = android.text.Html.fromHtml(match.groupValues[1], android.text.Html.FROM_HTML_MODE_LEGACY)
+                    .toString().replace(Regex("""\s+"""), " ").trim().ifBlank { host }
+                results += KeywordLink(title, uri.toString(), host)
+            }
+            return results
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun renderKeywordLinks(links: List<KeywordLink>, query: String) {
+        keywordResultsContainer.removeAllViews()
+        keywordResultsContainer.addView(TextView(this).apply {
+            text = if (links.isEmpty()) "No matching public links were returned for “$query”. Try a broader keyword or add a city/state."
+            else "\${links.size} matching public links found for “$query”"
+            textSize = 17f
+            setTextColor(android.graphics.Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(10))
+        })
+        links.forEachIndexed { index, item ->
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(android.graphics.Color.rgb(25, 29, 43))
+                    setStroke(dp(1), android.graphics.Color.rgb(57, 63, 83))
+                    cornerRadius = dp(12).toFloat()
+                }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.url))) }
+                    catch (_: Exception) { Toast.makeText(this@WebScanActivity, "No browser could open this link.", Toast.LENGTH_SHORT).show() }
+                }
+            }
+            card.addView(TextView(this).apply {
+                text = "\${index + 1}. \${item.title}"
+                textSize = 15f
+                setTextColor(android.graphics.Color.WHITE)
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            })
+            card.addView(TextView(this).apply {
+                text = item.source
+                textSize = 12f
+                setTextColor(android.graphics.Color.rgb(173, 160, 255))
+                setPadding(0, dp(4), 0, dp(3))
+            })
+            card.addView(TextView(this).apply {
+                text = item.url
+                textSize = 11f
+                setTextColor(android.graphics.Color.rgb(160, 190, 235))
+                maxLines = 3
+            })
+            keywordResultsContainer.addView(card, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) })
+        }
+        status.text = if (links.isEmpty()) "Search finished. No public indexed links matched those terms."
+            else "Search finished. Tap any result to open it. Results are from public search indexes, so coverage varies."
     }
 
     private fun searchAll() {

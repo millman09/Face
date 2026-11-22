@@ -758,10 +758,10 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
 object PublicSourceScanner {
     // Deep but bounded per-domain crawl limits to protect phone performance.
     private const val MAX_BYTES = 4 * 1024 * 1024
-    private const val MAX_SITEMAPS = 40
-    private const val MAX_IMAGES = 5000
-    private const val MAX_SITEMAP_PAGES = 250
-    private const val MAX_LINKED_PAGES = 700
+    private const val MAX_SITEMAPS = 60
+    private const val MAX_IMAGES = 8000
+    private const val MAX_SITEMAP_PAGES = 300
+    private const val MAX_LINKED_PAGES = 1000
     private const val MAX_PAGE_BYTES = 1024 * 1024
 
     /**
@@ -824,19 +824,35 @@ object PublicSourceScanner {
         // Forum software often exposes its useful public content from index,
         // category, latest-topic and gallery routes rather than sitemaps.
         // Each route is still checked against robots.txt before it is fetched.
-        val forumLike = source.name.contains("forum", true) ||
+        val imageboardLike = SourceGroup.IMAGEBOARDS.contains(source)
+        val forumLike = imageboardLike ||
+            source.name.contains("forum", true) ||
             source.name.contains("community", true) ||
             source.name.contains("board", true)
         if (forumLike) {
-            val forumRoutes = listOf(
-                "/forums", "/forum", "/community", "/boards", "/board",
-                "/latest", "/recent", "/activity", "/whats-new/",
-                "/whats-new/posts/",
-                "/categories", "/threads", "/topics", "/discussions",
-                "/forum/index.php", "/forumdisplay.php", "/showthread.php",
-                "/viewthread.php", "/viewtopic.php", "/viewforum.php", "/gallery", "/media",
-                "/albums", "/members"
-            )
+            // Public index, gallery, thread and pagination entry points used by
+            // common forum/imageboard software. Missing routes simply return no
+            // page; every request remains same-host and robots.txt checked.
+            val forumRoutes = buildList {
+                addAll(listOf(
+                    "/forums", "/forum", "/community", "/boards", "/board",
+                    "/latest", "/recent", "/activity", "/whats-new/",
+                    "/whats-new/posts/", "/categories", "/threads", "/topics",
+                    "/discussions", "/posts", "/images", "/photos", "/gallery",
+                    "/media", "/albums", "/members", "/search",
+                    "/forum/index.php", "/forumdisplay.php", "/showthread.php",
+                    "/viewthread.php", "/viewtopic.php", "/viewforum.php"
+                ))
+                if (imageboardLike) {
+                    addAll(listOf(
+                        "/index", "/index.php", "/board/index.php", "/boards/index.php",
+                        "/catalog", "/catalog.html", "/archive", "/archive/",
+                        "/recent-images", "/latest-images", "/latest-posts",
+                        "/images/recent", "/photos/recent", "/threads/recent",
+                        "/posts/recent", "/media/recent"
+                    ))
+                }
+            }
             for (route in forumRoutes) {
                 val address = base.trimEnd('/') + route
                 if (!isDisallowed(address, rules) && address !in publicPages) {
@@ -1076,20 +1092,25 @@ object PublicSourceScanner {
             val imageUrl = resolved.toString()
             found.putIfAbsent(imageUrl, DiscoveredImage(sourceId, pageUrl, imageUrl))
         }
-        return pageLinks.sortedByDescending { isPriorityContentPage(it) }
-            .toCollection(linkedSetOf())
+        return pageLinks.sortedWith(
+            compareByDescending<String> { pagePriority(it) }
+                .thenBy { it.length }
+        ).toCollection(linkedSetOf())
     }
 
-    private fun isPriorityContentPage(address: String): Boolean {
-        val path = try { URL(address).path.lowercase(Locale.US) } catch (_: Exception) { return false }
+    private fun pagePriority(address: String): Int {
+        val path = try { URL(address).path.lowercase(Locale.US) } catch (_: Exception) { return 0 }
         val full = address.lowercase(Locale.US)
-        val markers = listOf(
-            "gallery", "photo", "image", "album", "media", "post", "profile",
-            "model", "thread", "topic", "forum", "discussion", "viewforum",
-            "showthread", "viewthread", "viewtopic", "forumdisplay",
-            "whats-new", "recent", "activity", "page=", "start=", "offset=", "p="
-        )
-        return markers.any { marker -> full.contains(marker) || path.contains(marker) }
+        var score = 0
+        // Prefer pages likely to contain user-uploaded photos and public discussions.
+        if (listOf("gallery", "photo", "image", "album", "media", "post", "thread", "topic")
+                .any { path.contains(it) }) score += 5
+        if (listOf("forum", "discussion", "viewforum", "showthread", "viewthread",
+                "viewtopic", "forumdisplay", "profile", "member").any { path.contains(it) }) score += 3
+        // Follow visible pagination/older/newer links before unrelated navigation.
+        if (listOf("page=", "start=", "offset=", "cursor=", "after=", "before=",
+                "next", "older", "previous", "prev").any { full.contains(it) }) score += 6
+        return score
     }
 
     private fun isLikelyHtmlPage(address: String): Boolean {

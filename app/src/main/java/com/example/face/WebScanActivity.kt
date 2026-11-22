@@ -29,6 +29,7 @@ class WebScanActivity : AppCompatActivity() {
     private lateinit var referenceCount: TextView
     private lateinit var startSearchButton: MaterialButton
     private lateinit var continueSearchButton: MaterialButton
+    private var groupButtons: List<MaterialButton> = emptyList()
     private lateinit var database: PublicSourceDatabase
     private val scanExecutor = Executors.newSingleThreadExecutor()
     private var referencePhotos: List<Uri> = emptyList()
@@ -40,7 +41,7 @@ class WebScanActivity : AppCompatActivity() {
             }
             renderReferencePhotos()
             status.text = "${referencePhotos.size} reference photo(s) selected. Ready to search."
-            startSearchButton.isEnabled = true
+            setSearchEnabled(true)
         }
     }
     @Volatile private var scanning = false
@@ -172,6 +173,13 @@ class WebScanActivity : AppCompatActivity() {
         }
         page.addSpaced(continueSearchButton, 8)
         page.addSpaced(startSearchButton, 8)
+        // Narrower, faster searches over one group of sources.
+        groupButtons = SourceGroup.values().map { group ->
+            button(group.buttonLabel) { launchAutomaticScan(group) }.apply {
+                isEnabled = false
+            }
+        }
+        groupButtons.forEach { page.addSpaced(it, 6) }
 
         status = TextView(this).apply {
             text = "Preparing the public-source catalogue…"
@@ -187,7 +195,7 @@ class WebScanActivity : AppCompatActivity() {
                 if (!isFinishing && !isDestroyed) {
                     catalogueReady = true
                     status.text = "READY  ·  $count public sources available. All enabled, eligible sources are included automatically."
-                    startSearchButton.isEnabled = referencePhotos.isNotEmpty()
+                    setSearchEnabled(referencePhotos.isNotEmpty())
                     refreshRunningScanButtons()
                 }
             }
@@ -217,7 +225,7 @@ class WebScanActivity : AppCompatActivity() {
                         .setPositiveButton("Remove") { _, _ ->
                             referencePhotos = referencePhotos.filterIndexed { i, _ -> i != index }
                             renderReferencePhotos()
-                            startSearchButton.isEnabled = referencePhotos.isNotEmpty()
+                            setSearchEnabled(referencePhotos.isNotEmpty())
                             status.text = if (referencePhotos.isEmpty()) "Choose at least one reference photo to begin." else
                                 "${referencePhotos.size} reference photo(s) ready."
                         }.show()
@@ -299,6 +307,11 @@ class WebScanActivity : AppCompatActivity() {
         refreshRunningScanButtons()
     }
 
+    private fun setSearchEnabled(enabled: Boolean) {
+        startSearchButton.isEnabled = enabled
+        groupButtons.forEach { it.isEnabled = enabled }
+    }
+
     /** While a search is running in the background, offer to go back to it instead of only starting over. */
     private fun refreshRunningScanButtons() {
         if (!::startSearchButton.isInitialized) return
@@ -322,27 +335,27 @@ class WebScanActivity : AppCompatActivity() {
     }
 
     /** Opens the live results page immediately. Source discovery and face matching run there. */
-    private fun launchAutomaticScan() {
+    private fun launchAutomaticScan(group: SourceGroup? = null) {
         if (IdentityMatchActivity.isScanRunning()) {
             com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
                 .setTitle("Start a new search?")
                 .setMessage("A deep search is already running. Starting a new one stops it. Saved matches are kept.")
-                .setPositiveButton("Start new search") { _, _ -> startNewScan() }
+                .setPositiveButton("Start new search") { _, _ -> startNewScan(group) }
                 .setNeutralButton("Continue current") { _, _ -> openRunningScan() }
                 .setNegativeButton("Cancel", null)
                 .show()
             return
         }
-        startNewScan()
+        startNewScan(group)
     }
 
-    private fun startNewScan() {
+    private fun startNewScan(group: SourceGroup? = null) {
         if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading. Try again in a moment.", Toast.LENGTH_LONG).show(); return }
         if (referencePhotos.isEmpty()) {
             Toast.makeText(this, "Choose at least one reference photo first.", Toast.LENGTH_LONG).show()
             return
         }
-        val sourceCount = database.sources().count { it.enabled }
+        val sourceCount = database.sources().count { it.enabled && (group == null || group.contains(it)) }
         if (sourceCount == 0) {
             Toast.makeText(this, "There are no enabled public sources to scan.", Toast.LENGTH_LONG).show()
             return
@@ -351,6 +364,7 @@ class WebScanActivity : AppCompatActivity() {
             putParcelableArrayListExtra(IdentityMatchActivity.EXTRA_REFERENCE_URIS, ArrayList(referencePhotos))
             putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true)
             putExtra(IdentityMatchActivity.EXTRA_AUTO_START, true)
+            group?.let { putExtra(IdentityMatchActivity.EXTRA_SOURCE_GROUP, it.name) }
         }
         startActivity(intent)
     }

@@ -32,7 +32,16 @@ data class CrawlState(
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long, val faceBox: String? = null, val confirmed: Boolean = false)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 14) {
+/**
+ * Sources removed in database version 15: 8kun, plus drawn/anime boards that were briefly added on
+ * another branch (they can't contain a photo of a real face, so scanning them only slows searches).
+ */
+private val REMOVED_IN_15_HOSTS = listOf(
+    "8kun.top", "tbib.org", "hypnohub.net", "konachan.com", "yande.re", "rule34.us",
+    "rule34.paheal.net", "furry.booru.org", "booru.org", "pixiv.net", "deviantart.com",
+)
+
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 15) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -118,6 +127,27 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         if (oldVersion < 12) seedSources(db)
         if (oldVersion < 13) createCrawlStateTable(db)
         if (oldVersion < 14) seedSources(db)
+        if (oldVersion < 15) {
+            removeSources(db, REMOVED_IN_15_HOSTS)
+            seedSources(db)
+        }
+    }
+
+    /** Deletes these sources (by host) along with their stored image links and crawl progress. */
+    private fun removeSources(db: SQLiteDatabase, hosts: List<String>) {
+        val ids = mutableListOf<Long>()
+        db.rawQuery("SELECT id, base_url FROM sources", null).use { c ->
+            while (c.moveToNext()) {
+                val host = android.net.Uri.parse(c.getString(1)).host?.lowercase()?.removePrefix("www.").orEmpty()
+                if (hosts.any { host == it || host.endsWith(".$it") }) ids += c.getLong(0)
+            }
+        }
+        for (id in ids) {
+            val arg = arrayOf(id.toString())
+            db.delete("candidates", "source_id=?", arg)
+            db.delete("crawl_state", "source_id=?", arg)
+            db.delete("sources", "id=?", arg)
+        }
     }
 
     private fun seedSources(db: SQLiteDatabase) {
@@ -181,7 +211,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "EroMe Community" to "https://www.erome.com",
             "Reddit (public communities)" to "https://www.reddit.com",
             "4chan (public boards)" to "https://www.4chan.org",
-            "8kun (public boards)" to "https://8kun.top",
             // Stories, blogs, and adult publishing communities
             "StoriesOnline" to "https://storiesonline.net",
             "Literotica" to "https://www.literotica.com",
@@ -398,6 +427,22 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "Pipl" to "https://pipl.com",
             "ClustrMaps" to "https://clustrmaps.com",
             "CountyOffice" to "https://www.countyoffice.org",
+            // Image hosts and social sites where photos get reposted.
+            "Imgur" to "https://imgur.com",
+            "ImgBB" to "https://imgbb.com",
+            "Postimages" to "https://postimages.org",
+            "ImageChest" to "https://imgchest.com",
+            "Catbox" to "https://catbox.moe",
+            "Pixeldrain" to "https://pixeldrain.com",
+            "Pinterest" to "https://www.pinterest.com",
+            "Bluesky" to "https://bsky.app",
+            "Mastodon Social" to "https://mastodon.social",
+            "VK" to "https://vk.com",
+            "X" to "https://x.com",
+            "Lipstick Alley Forum" to "https://www.lipstickalley.com",
+            // Real-photo boorus (drawn/anime boorus are deliberately left out: they can't contain a real face).
+            "RealBooru" to "https://realbooru.com",
+            "XBooru" to "https://xbooru.com",
         )
         for ((name, address) in starterDomains) {
             val values = ContentValues().apply {
@@ -496,12 +541,16 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         items.toList().takeLast(max).joinToString("\n")
 
     /** Candidates not yet compared in a previous run; unavailable URLs may be retried. */
-    @Synchronized fun pendingCandidates(limit: Int = 5000): List<StoredCandidate> {
+    /** Images not compared yet, newest first. [sourceIds] limits it to those sources (null = every source). */
+    @Synchronized fun pendingCandidates(limit: Int = 5000, sourceIds: Collection<Long>? = null): List<StoredCandidate> {
         val result = mutableListOf<StoredCandidate>()
+        if (sourceIds != null && sourceIds.isEmpty()) return result
+        // Ids are numbers from our own table, so inlining them is safe and avoids SQLite's bound-argument limit.
+        val sourceFilter = sourceIds?.joinToString(",", prefix = " AND c.source_id IN (", postfix = ")").orEmpty()
         readableDatabase.rawQuery(
             """SELECT c.id,c.source_id,s.base_url,c.page_url,c.image_url
                FROM candidates c JOIN sources s ON s.id=c.source_id
-               WHERE c.checked_at=0
+               WHERE c.checked_at=0$sourceFilter
                ORDER BY c.discovered_at DESC LIMIT ?""".trimIndent(),
             arrayOf(limit.coerceIn(1, 5000).toString())
         ).use { c ->

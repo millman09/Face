@@ -65,6 +65,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var referenceUris: List<Uri> = emptyList()
     private var webScanMode = false
     private var autoStartScan = false
+    private var sourceGroup: SourceGroup? = null
     @Volatile private var restoreGeneration = 0
     private var imageUris: List<Uri> = emptyList()
     private val modelUrl = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobile_facenet/releases/v0.65.0/mobile_facenet-tflite-float.zip"
@@ -103,7 +104,10 @@ class IdentityMatchActivity : AppCompatActivity() {
             setPadding(dp(20), dp(18), dp(20), dp(28))
             setBackgroundColor(android.graphics.Color.rgb(13, 16, 24))
         }
-        setToolPage("Deep search", root)
+        // A screen reopened onto a running search shows that search's group, not whatever the intent says.
+        sourceGroup = if (intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false) && scanRunning) runningGroup
+            else SourceGroup.fromName(intent.getStringExtra(EXTRA_SOURCE_GROUP))
+        setToolPage(sourceGroup?.let { "Deep search · ${it.title}" } ?: "Deep search", root)
         root.addView(TextView(this).apply {
             text = "FACE SEARCH  /  LIVE SCAN"
             textSize = 11f
@@ -113,7 +117,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             setPadding(0, dp(8), 0, dp(8))
         })
         root.addView(TextView(this).apply {
-            text = "Searching for your face."
+            text = sourceGroup?.let { "Searching ${it.title.lowercase()} for your face." } ?: "Searching for your face."
             textSize = 24f
             setTextColor(android.graphics.Color.WHITE)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -675,6 +679,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         updateReady()
         DeepSearchKeepAliveService.start(this)
         liveUi = java.lang.ref.WeakReference(this)
+        runningGroup = sourceGroup
         currentRunMatchIds.clear()
         clearResults()
         publishProgress("Preparing on-device face matching…", 0, true)
@@ -692,7 +697,10 @@ class IdentityMatchActivity : AppCompatActivity() {
                     candidateDatabase.resetCheckedResults()
                     scanState.edit().putInt("scoring_version", SCORING_VERSION).apply()
                 }
-                val enabledSources = candidateDatabase.sources().filter { it.enabled }
+                val group = sourceGroup
+                val enabledSources = candidateDatabase.sources().filter { it.enabled && (group == null || group.contains(it)) }
+                // For a narrowed search, only compare images that came from that group's sources.
+                val groupSourceIds = if (group == null) null else enabledSources.map { it.id }.toSet()
                 require(enabledSources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
                 // Avoid re-crawling the same domains on every run. A source becomes eligible again after 24 hours.
                 val rescanBefore = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
@@ -764,7 +772,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 val activeDownloadPool = Executors.newFixedThreadPool(6)
                 downloadPool = activeDownloadPool
                 fun comparePendingCandidates() {
-                    val batch = candidateDatabase.pendingCandidates(5000)
+                    val batch = candidateDatabase.pendingCandidates(5000, groupSourceIds)
                         .filter { processedIds.add(it.id) }
                     if (batch.isEmpty()) return
                     data class Downloaded(val candidate: StoredCandidate, val bitmap: Bitmap?, val error: String?)
@@ -1537,6 +1545,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         private const val MAX_FACE_YAW = 45f
         const val EXTRA_WEB_SCAN_MODE = "com.example.face.EXTRA_WEB_SCAN_MODE"
         const val EXTRA_AUTO_START = "com.example.face.EXTRA_AUTO_START"
+        /** Name of a [SourceGroup] to limit the search to; absent = every source. */
+        const val EXTRA_SOURCE_GROUP = "com.example.face.EXTRA_SOURCE_GROUP"
         const val EXTRA_REFERENCE_URIS = "com.example.face.EXTRA_REFERENCE_URIS"
 
         // Shared across every instance of this screen (not per-Activity), and never shut down on
@@ -1556,6 +1566,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         @Volatile private var liveStatus: String? = null
         @Volatile private var livePercent = 0
         @Volatile private var liveProgressVisible = false
+        @Volatile private var runningGroup: SourceGroup? = null
         // Matches found by the search that is running now, so a reopened screen shows only those.
         private val currentRunMatchIds: MutableSet<Long> = java.util.Collections.synchronizedSet(mutableSetOf())
 

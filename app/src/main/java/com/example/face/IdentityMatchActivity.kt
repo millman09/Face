@@ -53,8 +53,6 @@ class IdentityMatchActivity : AppCompatActivity() {
     private lateinit var scanButton: MaterialButton
     private lateinit var cancelButton: MaterialButton
     private lateinit var pauseButton: MaterialButton
-    @Volatile private var paused = false
-    @Volatile private var scanRunning = false
     private lateinit var modelSetupGroup: LinearLayout
     private lateinit var modelReadyRow: LinearLayout
     private lateinit var modelReadyText: TextView
@@ -62,14 +60,12 @@ class IdentityMatchActivity : AppCompatActivity() {
     private lateinit var referenceReadyRow: LinearLayout
     private lateinit var referenceReadyText: TextView
     private lateinit var resultsContainer: LinearLayout
-    private var activeWebScan: java.util.concurrent.Future<*>? = null
     private var modelFile: File? = null
     private var referenceUri: Uri? = null
     private var referenceUris: List<Uri> = emptyList()
     private var webScanMode = false
     private var autoStartScan = false
     private var imageUris: List<Uri> = emptyList()
-    private val executor = Executors.newSingleThreadExecutor()
     private val modelUrl = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobile_facenet/releases/v0.65.0/mobile_facenet-tflite-float.zip"
     private val modelTargetName = "qualcomm_mobilefacenet.tflite"
 
@@ -199,7 +195,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         pauseButton = MaterialButton(
             this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle
         ).apply {
-            text = "Pause"
+            text = if (paused) "Resume" else "Pause"
             isAllCaps = false
             visibility = android.view.View.GONE
             setOnClickListener {
@@ -488,10 +484,20 @@ class IdentityMatchActivity : AppCompatActivity() {
         if (refsReady) referenceReadyText.text = "✓ ${referenceUris.size} reference photo(s) selected"
     }
 
+    /**
+     * Reflects the shared (companion) scan state in this instance's views. Called whenever that state
+     * changes, and also right after this screen is built — so if a scan started from an earlier instance
+     * of this screen is still going when the user comes back, this instance shows that immediately
+     * instead of a misleading "idle" state.
+     */
     private fun updateReady() {
         scanButton.visibility = if (scanRunning) android.view.View.GONE else android.view.View.VISIBLE
         scanButton.isEnabled = !scanRunning && modelFile?.exists() == true && referenceUris.isNotEmpty() &&
             (webScanMode || imageUris.isNotEmpty())
+        val showScanControls = scanRunning && webScanMode
+        cancelButton.visibility = if (showScanControls) android.view.View.VISIBLE else android.view.View.GONE
+        pauseButton.visibility = if (showScanControls) android.view.View.VISIBLE else android.view.View.GONE
+        pauseButton.text = if (paused) "Resume" else "Pause"
         refreshSetupVisibility()
     }
 
@@ -621,16 +627,22 @@ class IdentityMatchActivity : AppCompatActivity() {
      * Source discovery and image matching both remain visible on this page.
      */
     private fun runWebComparison() {
+        if (scanRunning) {
+            // Already running — most likely started from an earlier instance of this screen that the
+            // user backed out of. Don't start a second, overlapping scan; just reflect that it's going.
+            status.text = "A deep search is already running in the background."
+            updateReady()
+            return
+        }
         val model = modelFile ?: return
         val references = referenceUris.toList()
         if (references.isEmpty()) return
         scanRunning = true
         updateReady()
+        DeepSearchKeepAliveService.start(this)
         progress.visibility = ProgressBar.VISIBLE
         progress.progress = 0
         status.text = "Preparing on-device face matching…"
-        cancelButton.visibility = android.view.View.VISIBLE
-        pauseButton.visibility = android.view.View.VISIBLE
         activeWebScan = executor.submit {
             var interpreter: Interpreter? = null
             var detector: FaceDetector? = null
@@ -853,12 +865,11 @@ class IdentityMatchActivity : AppCompatActivity() {
             } finally {
                 downloadPool?.shutdownNow()
                 scanRunning = false
+                paused = false
+                activeWebScan = null
+                DeepSearchKeepAliveService.stop(this)
                 runOnUiThread {
-                    cancelButton.visibility = android.view.View.GONE
-                    pauseButton.visibility = android.view.View.GONE
                     pauseButton.text = "Pause"
-                    paused = false
-                    activeWebScan = null
                     updateReady()
                 }
                 alignedReferences.forEach { it.recycle() }
@@ -1440,10 +1451,9 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
-    override fun onDestroy() {
-        executor.shutdown()
-        super.onDestroy()
-    }
+    // No onDestroy() override: the scan, its executor and Future live in the companion object
+    // (shared across activity instances) specifically so that leaving this screen never stops it.
+    // See the companion object below.
 
     companion object {
         private const val SCORING_VERSION = 2
@@ -1452,5 +1462,15 @@ class IdentityMatchActivity : AppCompatActivity() {
         const val EXTRA_WEB_SCAN_MODE = "com.example.face.EXTRA_WEB_SCAN_MODE"
         const val EXTRA_AUTO_START = "com.example.face.EXTRA_AUTO_START"
         const val EXTRA_REFERENCE_URIS = "com.example.face.EXTRA_REFERENCE_URIS"
+
+        // Shared across every instance of this screen (not per-Activity), and never shut down on
+        // onDestroy(): a deep search keeps running on this executor even after the user backs out
+        // of this screen and uses other parts of the app. DeepSearchKeepAliveService keeps the whole
+        // app process alive at foreground priority for as long as a search is running, so the OS
+        // doesn't reclaim it as an ordinary background process partway through.
+        private val executor = Executors.newSingleThreadExecutor()
+        @Volatile private var activeWebScan: java.util.concurrent.Future<*>? = null
+        @Volatile private var paused = false
+        @Volatile private var scanRunning = false
     }
 }

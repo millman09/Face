@@ -18,7 +18,7 @@ data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: 
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 5) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 6) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -35,11 +35,11 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         seedSources(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 4) seedSources(db)
         if (oldVersion < 5) {
             db.execSQL("ALTER TABLE candidates ADD COLUMN similarity REAL")
             db.execSQL("ALTER TABLE candidates ADD COLUMN checked_at INTEGER NOT NULL DEFAULT 0")
         }
+        if (oldVersion < 6) seedSources(db)
     }
 
     private fun seedSources(db: SQLiteDatabase) {
@@ -119,6 +119,8 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "Reddit (public communities)" to "https://www.reddit.com",
             "4chan (public boards)" to "https://www.4chan.org",
             "8kun (public boards)" to "https://8kun.top",
+            // Public endpoint check only; locked/member pages are not accessed.
+            "Anonibx (public pages only)" to "https://anonibx.com",
             // Stories, blogs, and adult publishing communities
             "StoriesOnline" to "https://storiesonline.net",
             "Literotica" to "https://www.literotica.com",

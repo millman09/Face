@@ -314,6 +314,28 @@ class WebScanActivity : AppCompatActivity() {
             .appendQueryParameter("iax", "images")
             .build().toString()
 
+    /** Find indexed public Anonibx threads/posts without loading ad-heavy board indexes. */
+    private fun anonibxArchiveUrl(query: String): String =
+        Uri.parse("https://duckduckgo.com/").buildUpon()
+            .appendQueryParameter(
+                "q",
+                "($query) site:anonibx.com (thread OR archive OR post OR image OR gallery)"
+            )
+            .appendQueryParameter("ia", "images")
+            .appendQueryParameter("iax", "images")
+            .build().toString()
+
+    /** Find indexed public Motherless galleries, posts and older media pages. */
+    private fun motherlessArchiveUrl(query: String): String =
+        Uri.parse("https://duckduckgo.com/").buildUpon()
+            .appendQueryParameter(
+                "q",
+                "($query) site:motherless.com (gallery OR group OR user OR post OR image OR video)"
+            )
+            .appendQueryParameter("ia", "images")
+            .appendQueryParameter("iax", "images")
+            .build().toString()
+
     private fun searxUrl(query: String): String? {
         val raw = searxInput.text.toString().trim()
         val base = try { Uri.parse(raw) } catch (_: Exception) { null }
@@ -336,7 +358,12 @@ class WebScanActivity : AppCompatActivity() {
         val query = currentQuery() ?: return
         pendingSearches.clear()
         pendingSearches.addAll(listOfNotNull(
-            yandexUrl(query), searxUrl(query), duckDuckGoUrl(query), fourChanArchiveUrl(query)
+            yandexUrl(query),
+            searxUrl(query),
+            duckDuckGoUrl(query),
+            fourChanArchiveUrl(query),
+            anonibxArchiveUrl(query),
+            motherlessArchiveUrl(query)
         ))
         if (pendingSearches.isEmpty()) return
         status.text = "Opening ${pendingSearches.size} searches. Press back after each one to open the next."

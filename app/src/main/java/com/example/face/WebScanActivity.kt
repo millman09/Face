@@ -374,14 +374,14 @@ class WebScanActivity : AppCompatActivity() {
         val city = cityInput.text.toString().trim()
         val state = stateInput.text.toString().trim()
         if (rawKeywords.isBlank() && city.isBlank() && state.isBlank()) {
-            Toast.makeText(this, "Enter keywords or a city/state first.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Enter a name, keywords, or a city/state first.", Toast.LENGTH_SHORT).show()
             return
         }
         val locationVariants = locationQueryVariants(city, state)
-        val keywordVariants = if (rawKeywords.isBlank()) listOf("") else listOf(rawKeywords)
+        val nameVariants = if (rawKeywords.isBlank()) listOf("") else nameSearchVariants(rawKeywords)
         val queryLabel = listOf(rawKeywords, city, state).filter { it.isNotBlank() }.joinToString(" · ")
         keywordResultsContainer.removeAllViews()
-        status.text = "Searching public indexes with expanded location searches: $queryLabel"
+        status.text = "Expanding name spellings, abbreviations and location variations: $queryLabel"
         scanExecutor.execute {
             val siteQueries = listOf(
                 "(site:archive.4plebs.org OR site:warosu.org)",
@@ -390,12 +390,20 @@ class WebScanActivity : AppCompatActivity() {
                 "(site:4chan.org OR site:4channel.org)"
             )
             val searches = linkedSetOf<String>()
-            // Search the full phrase, the location by itself, and the city without the state.
-            // This catches posts whose titles mention a city but not the user's other keywords.
-            keywordVariants.forEach { keywords ->
-                locationVariants.forEach { location ->
-                    val terms = listOf(keywords, location).filter { it.isNotBlank() }.joinToString(" ")
-                    if (terms.isNotBlank()) siteQueries.forEach { site -> searches += "($terms) $site" }
+            // Try each plausible spelling independently so a location or other keyword
+            // cannot hide a post whose title uses only a shortened version of the name.
+            nameVariants.forEach { name ->
+                siteQueries.forEach { site -> searches += "($name) $site" }
+            }
+            // Also run the exact entered name with each location form, plus location-only
+            // searches to catch posts that omit the name entirely.
+            if (rawKeywords.isNotBlank()) {
+                locationVariants.filter { it.isNotBlank() }.forEach { location ->
+                    siteQueries.forEach { site -> searches += "($rawKeywords $location) $site" }
+                }
+            } else {
+                locationVariants.filter { it.isNotBlank() }.forEach { location ->
+                    siteQueries.forEach { site -> searches += "($location) $site" }
                 }
             }
             val found = linkedMapOf<String, KeywordLink>()
@@ -413,6 +421,35 @@ class WebScanActivity : AppCompatActivity() {
                 if (!isFinishing && !isDestroyed) renderKeywordLinks(found.values.toList(), queryLabel)
             }
         }
+    }
+
+    /**
+     * Build conservative name variants: punctuation-free and joined spellings,
+     * first/last initials, and initials. No guessed nicknames or unrelated names.
+     */
+    private fun nameSearchVariants(input: String): List<String> {
+        val original = input.trim().replace(Regex("\\s+"), " ")
+        val ascii = java.text.Normalizer.normalize(original, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+        val tokens = ascii.split(Regex("[^\\p{L}\\p{N}]+"))
+            .filter { it.isNotBlank() }
+        val variants = linkedSetOf<String>()
+        if (original.isNotBlank()) variants += original
+        if (ascii.isNotBlank()) variants += ascii
+        if (tokens.isNotEmpty()) {
+            variants += tokens.joinToString("")
+            variants += tokens.joinToString(" ")
+        }
+        if (tokens.size >= 2) {
+            val first = tokens.first()
+            val last = tokens.last()
+            variants += "${first.first()} $last"
+            variants += "$first ${last.first()}"
+            variants += "${first.first()}$last"
+            variants += "$first${last.first()}"
+            variants += tokens.joinToString("") { it.first().toString() }
+        }
+        return variants.filter { it.isNotBlank() }.take(8)
     }
 
     /** Include state-name and abbreviation variants when the user enters either form. */

@@ -287,6 +287,9 @@ class WebScanActivity : AppCompatActivity() {
         val host = Uri.parse(source.baseUrl).host?.lowercase().orEmpty()
         val allowed = listOf(
             "anonibx.com", "motherless.com", "4chan.org", "8kun.top", "e621.net",
+            "realbooru.com", "xbooru.com", "tbib.org", "hypnohub.net",
+            "konachan.com", "yande.re", "rule34.us", "rule34.paheal.net",
+            "furry.booru.org", "booru.org",
             "gelbooru.com", "rule34.xxx", "danbooru.donmai.us",
             "safebooru.org", "paheal.net", "exhentai.org", "e-hentai.org",
             "hitomi.la", "imagefap.com", "pornpics.com", "pornpic.com",

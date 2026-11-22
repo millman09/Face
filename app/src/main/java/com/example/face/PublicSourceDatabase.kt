@@ -41,7 +41,14 @@ private val REMOVED_IN_15_HOSTS = listOf(
     "rule34.paheal.net", "furry.booru.org", "booru.org", "pixiv.net", "deviantart.com",
 )
 
-private val REMOVED_IN_17_HOSTS = listOf("realbooru.com", "xbooru.com")
+private val REMOVED_IN_17_HOSTS = listOf(
+    "realbooru.com", "xbooru.com", "e621.net", "gelbooru.com", "rule34.xxx",
+    "danbooru.donmai.us", "safebooru.org", "paheal.net", "exhentai.org",
+    "e-hentai.org", "hitomi.la", "tbib.org", "hypnohub.net", "konachan.com",
+    "yande.re", "rule34.us", "rule34.paheal.net", "furry.booru.org", "booru.org",
+    "pixiv.net", "deviantart.com", "inkbunny.net", "furaffinity.net",
+    "newgrounds.com", "baraag.net",
+)
 
 class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 17) {
     override fun onConfigure(db: SQLiteDatabase) {

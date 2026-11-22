@@ -66,6 +66,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var webScanMode = false
     private var autoStartScan = false
     private var sourceGroup: SourceGroup? = null
+    private var searchLocationKeywords: List<String> = emptyList()
     @Volatile private var restoreGeneration = 0
     private var imageUris: List<Uri> = emptyList()
     private val modelUrl = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobile_facenet/releases/v0.65.0/mobile_facenet-tflite-float.zip"
@@ -125,6 +126,12 @@ class IdentityMatchActivity : AppCompatActivity() {
         })
         webScanMode = intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false)
         autoStartScan = intent.getBooleanExtra(EXTRA_AUTO_START, false)
+        searchLocationKeywords = if (webScanMode && scanRunning) runningLocationKeywords
+            else intent.getStringExtra(EXTRA_LOCATION_KEYWORDS).orEmpty()
+                .split(Regex("\\s+")).filter { it.length >= 2 }.take(6)
+        if (autoStartScan && webScanMode && !scanRunning) {
+            runningLocationKeywords = searchLocationKeywords
+        }
         @Suppress("DEPRECATION")
         referenceUris = intent.getParcelableArrayListExtra<Uri>(EXTRA_REFERENCE_URIS)?.distinct().orEmpty()
         referenceUri = referenceUris.firstOrNull()
@@ -680,6 +687,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         DeepSearchKeepAliveService.start(this)
         liveUi = java.lang.ref.WeakReference(this)
         runningGroup = sourceGroup
+        runningLocationKeywords = searchLocationKeywords
         currentRunMatchIds.clear()
         clearResults()
         publishProgress("Preparing on-device face matching…", 0, true)
@@ -772,8 +780,9 @@ class IdentityMatchActivity : AppCompatActivity() {
                 val activeDownloadPool = Executors.newFixedThreadPool(6)
                 downloadPool = activeDownloadPool
                 fun comparePendingCandidates() {
-                    val batch = candidateDatabase.pendingCandidates(5000, groupSourceIds)
-                        .filter { processedIds.add(it.id) }
+                    val batch = candidateDatabase.pendingCandidates(
+                        5000, groupSourceIds, searchLocationKeywords
+                    ).filter { processedIds.add(it.id) }
                     if (batch.isEmpty()) return
                     data class Downloaded(val candidate: StoredCandidate, val bitmap: Bitmap?, val error: String?)
                     data class MatchPreview(val id: Long, val pageUrl: String, val imageUrl: String, val score: Float, val bitmap: Bitmap, val faceBox: String?, val faceCrop: Bitmap?, val postText: String)
@@ -1555,6 +1564,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         /** Name of a [SourceGroup] to limit the search to; absent = every source. */
         const val EXTRA_SOURCE_GROUP = "com.example.face.EXTRA_SOURCE_GROUP"
         const val EXTRA_REFERENCE_URIS = "com.example.face.EXTRA_REFERENCE_URIS"
+        const val EXTRA_LOCATION_KEYWORDS = "com.example.face.EXTRA_LOCATION_KEYWORDS"
 
         // Shared across every instance of this screen (not per-Activity), and never shut down on
         // onDestroy(): a deep search keeps running on this executor even after the user backs out
@@ -1574,6 +1584,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         @Volatile private var livePercent = 0
         @Volatile private var liveProgressVisible = false
         @Volatile private var runningGroup: SourceGroup? = null
+        @Volatile private var runningLocationKeywords: List<String> = emptyList()
         // Matches found by the search that is running now, so a reopened screen shows only those.
         private val currentRunMatchIds: MutableSet<Long> = java.util.Collections.synchronizedSet(mutableSetOf())
 

@@ -43,6 +43,8 @@ class WebScanActivity : AppCompatActivity() {
             renderReferencePhotos()
             status.text = "${referencePhotos.size} reference photo(s) selected. Ready to search."
             startSearchButton.isEnabled = true
+            imageboardsButton.isEnabled = catalogueReady
+            webcamsButton.isEnabled = catalogueReady
         }
     }
     @Volatile private var scanning = false

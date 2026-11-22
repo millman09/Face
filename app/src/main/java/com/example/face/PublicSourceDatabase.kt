@@ -18,7 +18,7 @@ data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: 
 data class MatchResult(val id: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val similarity: Float, val checkedAt: Long)
 
 /** Local source registry and deduplicated candidate-link store. */
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 7) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 8) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -41,6 +41,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         }
         if (oldVersion < 6) seedSources(db)
         if (oldVersion < 7) seedSources(db)
+        if (oldVersion < 8) seedSources(db)
     }
 
     private fun seedSources(db: SQLiteDatabase) {
@@ -122,6 +123,17 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "8kun (public boards)" to "https://8kun.top",
             // Public endpoint check only; locked/member pages are not accessed.
             "Anonibx (public pages only)" to "https://anonibx.com",
+            // Additional public imageboard / booru sources. Availability varies by site.
+            "RealBooru" to "https://realbooru.com",
+            "XBooru" to "https://xbooru.com",
+            "The Big ImageBoard (TBIB)" to "https://tbib.org",
+            "HypnoHub" to "https://hypnohub.net",
+            "Konachan" to "https://konachan.com",
+            "Yande.re" to "https://yande.re",
+            "Rule34.us" to "https://rule34.us",
+            "Rule34 Paheal" to "https://rule34.paheal.net",
+            "FurryBooru" to "https://furry.booru.org",
+            "Booru.org" to "https://booru.org",
             // Stories, blogs, and adult publishing communities
             "StoriesOnline" to "https://storiesonline.net",
             "Literotica" to "https://www.literotica.com",

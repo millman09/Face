@@ -540,6 +540,80 @@ class WebScanActivity : AppCompatActivity() {
     }
 
     /**
+     * Checks the publicly exposed Illinois/Texas catalog HTML for the user's
+     * entered name variants. Respects robots.txt, stays on anonibx.com, and
+     * never attempts login, challenge, or access-control workarounds.
+     */
+    private fun fetchAnonibxCatalogMatches(board: String, names: List<String>): Pair<List<KeywordLink>, String> {
+        val base = "https://anonibx.com"
+        val catalogPath = "/$board/catalog"
+        var connection: java.net.HttpURLConnection? = null
+        try {
+            fun getText(path: String, limit: Int): Pair<Int, String> {
+                val url = java.net.URL(base + path)
+                val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 7000
+                    readTimeout = 9000
+                    instanceFollowRedirects = true
+                    setRequestProperty("User-Agent", "FacePersonalSearch/1.0 (public catalog name search)")
+                    setRequestProperty("Accept", "text/html,text/plain,*/*")
+                }
+                val code = conn.responseCode
+                val body = if (code in 200..299) conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(limit) } else ""
+                conn.disconnect()
+                return code to body
+            }
+
+            val (robotsCode, robots) = getText("/robots.txt", 128 * 1024)
+            if (robotsCode !in 200..299 && robotsCode != 404) return emptyList<KeywordLink>() to "robots.txt HTTP $robotsCode"
+            val relevantRules = robots.lineSequence().map { it.substringBefore("#").trim() }
+                .filter { it.startsWith("Disallow:", true) }
+                .map { it.substringAfter(":").trim() }
+                .filter { it.isNotBlank() && (it.startsWith("/") || it.startsWith("*")) }
+                .toList()
+            if (relevantRules.any { rule -> rule != "/" && catalogPath.startsWith(rule.removeSuffix("*")) }) {
+                return emptyList<KeywordLink>() to "catalog disallowed by robots.txt"
+            }
+
+            val (code, html) = getText(catalogPath, 2 * 1024 * 1024)
+            if (code !in 200..299) return emptyList<KeywordLink>() to "catalog HTTP $code"
+            val normalizedNames = names.map { normalizeNameForMatch(it) }.filter { it.length >= 3 }.distinct()
+            val anchorRegex = Regex("""<a\\b([^>]*)>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            val hrefRegex = Regex("""href\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            val titleRegex = Regex("""title\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            val matches = linkedMapOf<String, KeywordLink>()
+            anchorRegex.findAll(html).forEach { match ->
+                val attrs = match.groupValues[1]
+                val rawHref = hrefRegex.find(attrs)?.groupValues?.get(1) ?: return@forEach
+                val uri = Uri.parse(base).buildUpon().encodedPath(rawHref).build()
+                val resolved = try { Uri.parse(rawHref).let { if (it.isRelative) Uri.parse(base).buildUpon().encodedPath(rawHref).build() else it } } catch (_: Exception) { return@forEach }
+                if (!resolved.host.equals("anonibx.com", true)) return@forEach
+                val anchorText = android.text.Html.fromHtml(match.groupValues[2], android.text.Html.FROM_HTML_MODE_LEGACY).toString()
+                val titleText = titleRegex.find(attrs)?.groupValues?.get(1).orEmpty()
+                val label = listOf(anchorText, titleText, resolved.lastPathSegment.orEmpty()).joinToString(" ").replace(Regex("\\s+"), " ").trim()
+                val normalizedLabel = normalizeNameForMatch(label)
+                if (normalizedNames.any { term -> normalizedLabel.contains(term) }) {
+                    val link = resolved.toString()
+                    matches.putIfAbsent(link, KeywordLink(label.ifBlank { "Anonibx $board catalog match" }, link, "Anonibx $board catalog"))
+                }
+            }
+            return matches.values.toList() to "catalog checked · ${matches.size} name matches"
+        } catch (e: java.net.SocketTimeoutException) {
+            return emptyList<KeywordLink>() to "catalog timed out"
+        } catch (e: Exception) {
+            return emptyList<KeywordLink>() to "catalog unavailable (${e.javaClass.simpleName})"
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    private fun normalizeNameForMatch(value: String): String =
+        java.text.Normalizer.normalize(value.lowercase(), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+            .replace(Regex("[^\\p{L}\\p{N}]+"), "")
+
+    /**
      * Searches public indexes for Anonibx pages only, using the user's own
      * name/keywords and optional location. No photos or protected pages are used.
      */
@@ -569,6 +643,18 @@ class WebScanActivity : AppCompatActivity() {
         scanExecutor.execute {
             val found = linkedMapOf<String, KeywordLink>()
             val outcomes = mutableListOf<String>()
+            // First inspect the actual public catalog pages, not only search-engine indexes.
+            boardPaths.forEach { board ->
+                val (catalogMatches, catalogStatus) = fetchAnonibxCatalogMatches(board, names)
+                catalogMatches.forEach { found.putIfAbsent(it.url, it) }
+                outcomes += "Anonibx $board direct: $catalogStatus"
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        keywordProgressText.text = "Checking Anonibx public catalogs · ${found.size} name matches so far"
+                        status.text = "Direct catalog check: $catalogStatus"
+                    }
+                }
+            }
             val total = (searches.size * boardPaths.size).coerceAtLeast(1)
             val allBoardSearches = boardPaths.flatMap { board -> searches.map { terms -> board to terms } }
             allBoardSearches.forEachIndexed { index, (board, terms) ->

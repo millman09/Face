@@ -871,6 +871,10 @@ object PublicSourceScanner {
         // Resume last run's unexplored page frontier first, so depth genuinely accumulates over time.
         previousState.pageFrontier.forEach { pageQueue.addLast(it) }
         publicPages.take(MAX_SITEMAP_PAGES).forEach { if (it !in pageQueue) pageQueue.addLast(it) }
+        // Always inspect the public home page, not only forums. Many galleries and
+        // photo sites have no sitemap/feed, but expose their public catalog from /.
+        val homePage = base.trimEnd('/') + "/"
+        if (!isDisallowed(homePage, rules) && homePage !in pageQueue) pageQueue.addFirst(homePage)
 
         // Forum software often exposes its useful public content from index,
         // category, latest-topic and gallery routes rather than sitemaps.

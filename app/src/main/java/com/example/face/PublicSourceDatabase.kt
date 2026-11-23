@@ -11,7 +11,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 
-data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean, val lastScan: Long = 0L)
+data class WebsiteSource(val id: Long, val name: String, val baseUrl: String, val enabled: Boolean, val lastScan: Long = 0L, val lastStatus: String = "Not scanned")
 data class CandidateUpdate(val id: Long, val status: String, val similarity: Float?, val faceBox: String? = null)
 data class DiscoveredImage(val sourceId: Long, val pageUrl: String, val imageUrl: String, val postText: String = "")
 data class StoredCandidate(val id: Long, val sourceId: Long, val sourceBaseUrl: String, val pageUrl: String, val imageUrl: String, val postText: String = "")
@@ -499,8 +499,8 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
 
     @Synchronized fun sources(): List<WebsiteSource> {
         val result = mutableListOf<WebsiteSource>()
-        readableDatabase.rawQuery("SELECT id,name,base_url,enabled,last_scan FROM sources ORDER BY name COLLATE NOCASE", null).use { c ->
-            while (c.moveToNext()) result += WebsiteSource(c.getLong(0), c.getString(1), c.getString(2), c.getInt(3) == 1, c.getLong(4))
+        readableDatabase.rawQuery("SELECT id,name,base_url,enabled,last_scan,last_status FROM sources ORDER BY name COLLATE NOCASE", null).use { c ->
+            while (c.moveToNext()) result += WebsiteSource(c.getLong(0), c.getString(1), c.getString(2), c.getInt(3) == 1, c.getLong(4), c.getString(5))
         }
         return result
     }
@@ -531,8 +531,11 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         return inserted
     }
 
-    @Synchronized fun updateSourceStatus(id: Long, status: String) {
-        val values = ContentValues().apply { put("last_scan", System.currentTimeMillis()); put("last_status", status.take(300)) }
+    @Synchronized fun updateSourceStatus(id: Long, status: String, successful: Boolean = true) {
+        val values = ContentValues().apply {
+            if (successful) put("last_scan", System.currentTimeMillis())
+            put("last_status", status.take(300))
+        }
         writableDatabase.update("sources", values, "id=?", arrayOf(id.toString()))
     }
 
@@ -817,7 +820,8 @@ object PublicSourceScanner {
         fun shouldStop() = Thread.currentThread().isInterrupted || System.currentTimeMillis() > deadline
         // A timeout, server error, or forbidden robots.txt response means skip this host.
         // A genuine 404 means the site has no robots file and can be crawled normally.
-        val robotsText = readRobots("$base/robots.txt") ?: return emptyList<DiscoveredImage>() to previousState
+        val robotsText = readRobots("$base/robots.txt")
+            ?: throw java.io.IOException("robots.txt could not be read (blocked, timed out, or server error)")
         val rules = parseRobots(robotsText)
         onProgress("Reading sitemap and feed indexes")
         val sitemapUrls = linkedSetOf<String>()

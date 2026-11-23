@@ -199,7 +199,7 @@ class WebScanActivity : AppCompatActivity() {
         })
 
         page.addSpaced(button("Find matching imageboard links · no photo needed") { searchImageboardsOnly() })
-        page.addSpaced(button("Search Anonibx Illinois board · your own terms") { searchAnonibxOnly() })
+        page.addSpaced(button("Search Anonibx Illinois + Texas · your own terms") { searchAnonibxOnly() })
         page.addSpaced(button("Open Anonibx Illinois board") { openAnonibxCatalog("illi") })
         page.addSpaced(button("Open Anonibx Texas catalog") { openAnonibxCatalog("tx") })
         page.addSpaced(button("Reverse image search my photos") { chooseReverseSearch() }.apply {
@@ -385,7 +385,7 @@ class WebScanActivity : AppCompatActivity() {
     private fun openAnonibxCatalog(stateCode: String) {
         val url = when (stateCode.lowercase()) {
             "illi" -> "https://anonibx.com/illi/"
-            "tx" -> "https://anonibx.com/tx/catalog"
+            "tx" -> "https://anonibx.com/tx"
             else -> return
         }
         try {
@@ -531,6 +531,7 @@ class WebScanActivity : AppCompatActivity() {
         if (locations.isNotEmpty()) {
             names.forEach { name -> locations.forEach { location -> searches += "$name $location" } }
         }
+        val boardPaths = listOf("illi", "tx")
         val queryLabel = listOf(raw, city, state).filter { it.isNotBlank() }.joinToString(" · ")
         keywordResultsContainer.removeAllViews()
         keywordProgressBar.progress = 0
@@ -541,9 +542,10 @@ class WebScanActivity : AppCompatActivity() {
         scanExecutor.execute {
             val found = linkedMapOf<String, KeywordLink>()
             val outcomes = mutableListOf<String>()
-            val total = searches.size.coerceAtLeast(1)
-            searches.forEachIndexed { index, terms ->
-                val result = fetchKeywordLinks("site:anonibx.com/illi/ ($terms)", setOf("anonibx.com"))
+            val total = (searches.size * boardPaths.size).coerceAtLeast(1)
+            val allBoardSearches = boardPaths.flatMap { board -> searches.map { terms -> board to terms } }
+            allBoardSearches.forEachIndexed { index, (board, terms) ->
+                val result = fetchKeywordLinks("site:anonibx.com/$board ($terms)", setOf("anonibx.com"))
                 result.links.forEach { found.putIfAbsent(it.url, it) }
                 outcomes += result.status
                 val completed = index + 1
@@ -551,7 +553,7 @@ class WebScanActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         keywordProgressBar.progress = percent
-                        keywordProgressText.text = "Anonibx search: $percent% · $completed of $total queries · ${found.size} links · $result.status"
+                        keywordProgressText.text = "Anonibx $board search: $percent% · $completed of $total queries · ${found.size} links · $result.status"
                         status.text = "Checking public search indexes only… $percent% · latest: $result.status"
                     }
                 }

@@ -529,79 +529,117 @@ class WebScanActivity : AppCompatActivity() {
     }
 
     /**
-     * Checks the publicly exposed Illinois/Texas catalog HTML for the user's
-     * entered name variants. Respects robots.txt, stays on anonibx.com, and
-     * never attempts login, challenge, or access-control workarounds.
+     * Walk publicly linked catalog, pagination, and thread pages under one board.
+     * Searches only the user's entered identifying terms; never fetches media.
+     * Respects robots.txt and caps work to 250 public HTML pages per board.
      */
     private fun fetchAnonibxCatalogMatches(board: String, names: List<String>): Pair<List<KeywordLink>, String> {
         val base = "https://anonibx.com"
-        val catalogPath = "/$board/catalog"
-        var connection: java.net.HttpURLConnection? = null
-        try {
-            fun getText(path: String, limit: Int): Pair<Int, String> {
-                val url = java.net.URL(base + path)
-                val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 7000
-                    readTimeout = 9000
-                    instanceFollowRedirects = true
-                    setRequestProperty("User-Agent", "FacePersonalSearch/1.0 (public catalog name search)")
-                    setRequestProperty("Accept", "text/html,text/plain,*/*")
-                }
-                val code = conn.responseCode
-                val body = if (code in 200..299) conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(limit) } else ""
-                conn.disconnect()
-                return code to body
-            }
+        val root = "/$board"
+        val terms = names.map { normalizeNameForMatch(it) }.filter { it.length >= 3 }.distinct()
+        if (terms.isEmpty()) return emptyList<KeywordLink>() to "no usable name variants"
 
-            val (robotsCode, robots) = getText("/robots.txt", 128 * 1024)
-            if (robotsCode !in 200..299 && robotsCode != 404) return emptyList<KeywordLink>() to "robots.txt HTTP $robotsCode"
-            val relevantRules = robots.lineSequence().map { it.substringBefore("#").trim() }
-                .filter { it.startsWith("Disallow:", true) }
-                .map { it.substringAfter(":").trim() }
-                .filter { it.isNotBlank() && (it.startsWith("/") || it.startsWith("*")) }
-                .toList()
-            if (relevantRules.any { rule -> rule == "/" || catalogPath.startsWith(rule.removeSuffix("*")) }) {
-                return emptyList<KeywordLink>() to "catalog disallowed by robots.txt"
-            }
-
-            val (code, html) = getText(catalogPath, 2 * 1024 * 1024)
-            if (code !in 200..299) return emptyList<KeywordLink>() to "catalog HTTP $code"
-            val normalizedNames = names.map { normalizeNameForMatch(it) }.filter { it.length >= 3 }.distinct()
-            val anchorRegex = Regex("""<a\b([^>]*)>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            val hrefRegex = Regex("""href\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-            val titleRegex = Regex("""title\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-            val matches = linkedMapOf<String, KeywordLink>()
-            anchorRegex.findAll(html).forEach { match ->
-                val attrs = match.groupValues[1]
-                val rawHref = hrefRegex.find(attrs)?.groupValues?.get(1) ?: return@forEach
-                val resolved = try {
-                    val parsed = Uri.parse(rawHref)
-                    when {
-                        parsed.scheme != null -> parsed
-                        parsed.authority != null -> Uri.parse("https:" + rawHref)
-                        else -> Uri.parse(base).buildUpon()
-                            .encodedPath(if (rawHref.startsWith("/")) rawHref else "/$board/$rawHref")
-                            .build()
+        fun readPage(url: java.net.URL, limit: Int): Pair<Int, String> {
+            val c = url.openConnection() as java.net.HttpURLConnection
+            c.requestMethod = "GET"
+            c.connectTimeout = 7000
+            c.readTimeout = 9000
+            c.instanceFollowRedirects = true
+            c.setRequestProperty("User-Agent", "FacePersonalSearch/1.1 (public page search)")
+            c.setRequestProperty("Accept", "text/html,application/xhtml+xml")
+            try {
+                val code = c.responseCode
+                if (code !in 200..299) return code to ""
+                val type = c.contentType.orEmpty().lowercase()
+                if (type.isNotBlank() && !type.contains("html") && !type.contains("text")) return code to ""
+                val body = c.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                    val out = StringBuilder()
+                    val buffer = CharArray(8192)
+                    while (out.length < limit) {
+                        val n = reader.read(buffer, 0, minOf(buffer.size, limit - out.length))
+                        if (n < 0) break
+                        out.append(buffer, 0, n)
                     }
-                } catch (_: Exception) { return@forEach }
-                if (!resolved.host.equals("anonibx.com", true)) return@forEach
-                val anchorText = android.text.Html.fromHtml(match.groupValues[2], android.text.Html.FROM_HTML_MODE_LEGACY).toString()
-                val titleText = titleRegex.find(attrs)?.groupValues?.get(1).orEmpty()
-                val label = listOf(anchorText, titleText, resolved.lastPathSegment.orEmpty()).joinToString(" ").replace(Regex("\\s+"), " ").trim()
-                val normalizedLabel = normalizeNameForMatch(label)
-                if (normalizedNames.any { term -> normalizedLabel.contains(term) }) {
-                    val link = resolved.toString()
-                    matches.putIfAbsent(link, KeywordLink(label.ifBlank { "Anonibx $board catalog match" }, link, "Anonibx $board catalog"))
+                    out.toString()
                 }
+                return code to body
+            } finally { c.disconnect() }
+        }
+
+        try {
+            val (robotsCode, robots) = readPage(java.net.URL("$base/robots.txt"), 128 * 1024)
+            if (robotsCode !in 200..299 && robotsCode != 404) return emptyList<KeywordLink>() to "robots.txt HTTP $robotsCode"
+            val disallowed = robots.lineSequence().map { it.substringBefore("#").trim() }
+                .filter { it.startsWith("Disallow:", true) }
+                .map { it.substringAfter(":").trim() }.filter { it.isNotBlank() }.toList()
+            fun allowed(path: String) = disallowed.none { it == "/" || path.startsWith(it.removeSuffix("*")) }
+            if (!allowed("$root/catalog")) return emptyList<KeywordLink>() to "$board catalog disallowed by robots.txt"
+
+            val pending = ArrayDeque<String>()
+            val visited = linkedSetOf<String>()
+            val matches = linkedMapOf<String, KeywordLink>()
+            pending.add("$base$root/catalog")
+            var loaded = 0
+            var failed = 0
+            var discovered = 0
+            val pageLimit = 250
+            val anchor = Regex("""<a\b([^>]*)>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            val href = Regex("""href\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            val title = Regex("""(?is)<title[^>]*>(.*?)</title>""")
+            val skip = setOf("jpg", "jpeg", "png", "gif", "webp", "mp4", "webm", "pdf", "css", "js", "zip")
+
+            while (pending.isNotEmpty() && loaded < pageLimit) {
+                val current = pending.removeFirst()
+                if (!visited.add(current)) continue
+                val path = Uri.parse(current).path.orEmpty()
+                if (!path.startsWith("$root/") || !allowed(path)) continue
+                val (code, html) = readPage(java.net.URL(current), 1536 * 1024)
+                if (code !in 200..299 || html.isBlank()) { failed++; continue }
+                loaded++
+
+                val cleanHtml = html.replace(Regex("""(?is)<(script|style|noscript)[^>]*>.*?</\1>"""), " ")
+                val visible = android.text.Html.fromHtml(
+                    cleanHtml.replace(Regex("""(?i)<br\s*/?>|</p>|</div>|</li>"""), " "),
+                    android.text.Html.FROM_HTML_MODE_LEGACY
+                ).toString()
+                val pageTitle = title.find(cleanHtml)?.groupValues?.get(1).orEmpty()
+                val normalizedPage = normalizeNameForMatch(pageTitle + " " + visible)
+                val hits = terms.filter { normalizedPage.contains(it) }
+
+                anchor.findAll(html).forEach { a ->
+                    val raw = href.find(a.groupValues[1])?.groupValues?.get(1) ?: return@forEach
+                    val targetUrl = try {
+                        java.net.URL(java.net.URL(current), android.text.Html.fromHtml(raw, android.text.Html.FROM_HTML_MODE_LEGACY).toString())
+                    } catch (_: Exception) { return@forEach }
+                    if (targetUrl.protocol != "https" || !targetUrl.host.equals("anonibx.com", true)) return@forEach
+                    val target = Uri.parse(targetUrl.toString())
+                    val targetPath = target.path.orEmpty()
+                    if (!targetPath.startsWith("$root/") || !allowed(targetPath)) return@forEach
+                    if (targetPath.substringAfterLast('.', "").lowercase() in skip) return@forEach
+                    if (targetPath.contains("/login", true) || targetPath.contains("/report", true)) return@forEach
+                    discovered++
+                    if (visited.size + pending.size < pageLimit && targetPath.length < 300) {
+                        val next = target.buildUpon().fragment(null).build().toString()
+                        if (next !in visited && next !in pending) pending.add(next)
+                    }
+                }
+
+                if (hits.isNotEmpty()) {
+                    val label = (pageTitle + " · " + hits.joinToString(", ")).trim().take(180)
+                        .ifBlank { "Anonibx " + board + " public page match" }
+                    matches.putIfAbsent(current, KeywordLink(label, current, "Anonibx " + board + " public page"))
+                }
+                if (pending.isNotEmpty()) Thread.sleep(350)
             }
-            return matches.values.toList() to "catalog checked · ${matches.size} name matches"
+            val coverage = if (pending.isNotEmpty()) "stopped at " + pageLimit + "-page safety limit" else "all reachable public links checked"
+            val summary = board + " crawl · " + loaded + " pages checked · " + discovered +
+                " same-board links discovered · " + matches.size + " name matches · " + failed +
+                " unavailable · " + coverage
+            return matches.values.toList() to summary
         } catch (e: java.net.SocketTimeoutException) {
-            return emptyList<KeywordLink>() to "catalog timed out"
+            return emptyList<KeywordLink>() to "$board crawl timed out"
         } catch (e: Exception) {
-            return emptyList<KeywordLink>() to "catalog unavailable (${e.javaClass.simpleName})"
-        } finally {
-            connection?.disconnect()
+            return emptyList<KeywordLink>() to "$board crawl unavailable (" + e.javaClass.simpleName + ")"
         }
     }
 

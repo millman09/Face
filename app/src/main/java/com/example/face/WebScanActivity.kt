@@ -572,7 +572,7 @@ class WebScanActivity : AppCompatActivity() {
                 .map { it.substringAfter(":").trim() }
                 .filter { it.isNotBlank() && (it.startsWith("/") || it.startsWith("*")) }
                 .toList()
-            if (relevantRules.any { rule -> rule != "/" && catalogPath.startsWith(rule.removeSuffix("*")) }) {
+            if (relevantRules.any { rule -> rule == "/" || catalogPath.startsWith(rule.removeSuffix("*")) }) {
                 return emptyList<KeywordLink>() to "catalog disallowed by robots.txt"
             }
 
@@ -586,8 +586,16 @@ class WebScanActivity : AppCompatActivity() {
             anchorRegex.findAll(html).forEach { match ->
                 val attrs = match.groupValues[1]
                 val rawHref = hrefRegex.find(attrs)?.groupValues?.get(1) ?: return@forEach
-                val uri = Uri.parse(base).buildUpon().encodedPath(rawHref).build()
-                val resolved = try { Uri.parse(rawHref).let { if (it.isRelative) Uri.parse(base).buildUpon().encodedPath(rawHref).build() else it } } catch (_: Exception) { return@forEach }
+                val resolved = try {
+                    val parsed = Uri.parse(rawHref)
+                    when {
+                        parsed.scheme != null -> parsed
+                        parsed.authority != null -> Uri.parse("https:" + rawHref)
+                        else -> Uri.parse(base).buildUpon()
+                            .encodedPath(if (rawHref.startsWith("/")) rawHref else "/$board/$rawHref")
+                            .build()
+                    }
+                } catch (_: Exception) { return@forEach }
                 if (!resolved.host.equals("anonibx.com", true)) return@forEach
                 val anchorText = android.text.Html.fromHtml(match.groupValues[2], android.text.Html.FROM_HTML_MODE_LEGACY).toString()
                 val titleText = titleRegex.find(attrs)?.groupValues?.get(1).orEmpty()

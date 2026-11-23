@@ -200,6 +200,8 @@ class WebScanActivity : AppCompatActivity() {
 
         page.addSpaced(button("Find matching imageboard links · no photo needed") { searchImageboardsOnly() })
         page.addSpaced(button("Search Anonibx only · keywords, name, state") { searchAnonibxOnly() })
+        page.addSpaced(button("Open Anonibx Illinois catalog") { openAnonibxCatalog("il") })
+        page.addSpaced(button("Open Anonibx Texas catalog") { openAnonibxCatalog("tx") })
         page.addSpaced(button("Reverse image search my photos") { chooseReverseSearch() }.apply {
             setBackgroundColor(android.graphics.Color.rgb(105, 83, 230))
             setTextColor(android.graphics.Color.WHITE)
@@ -378,6 +380,20 @@ class WebScanActivity : AppCompatActivity() {
             .appendQueryParameter("ia", "images")
             .appendQueryParameter("iax", "images")
             .build().toString()
+
+    /** Open one of the user-requested public state catalog pages in the browser. */
+    private fun openAnonibxCatalog(stateCode: String) {
+        val url = when (stateCode.lowercase()) {
+            "il" -> "https://anonibx.com/il/catalog"
+            "tx" -> "https://anonibx.com/tx/catalog"
+            else -> return
+        }
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (_: Exception) {
+            Toast.makeText(this, "No browser could open the Anonibx catalog.", Toast.LENGTH_LONG).show()
+        }
+    }
 
     /** Find indexed public Motherless galleries, posts and older media pages. */
     private fun motherlessArchiveUrl(query: String): String =

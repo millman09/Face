@@ -671,7 +671,7 @@ class WebScanActivity : AppCompatActivity() {
             if (allowed.none { host == it || host.endsWith(".$it") }) return null
             if (uri.scheme != "https" && uri.scheme != "http") return null
             val cleanTitle = android.text.Html.fromHtml(title, android.text.Html.FROM_HTML_MODE_LEGACY)
-                .toString().replace(Regex("""\\s+"""), " ").trim().ifBlank { host }
+                .toString().replace(Regex("""\s+"""), " ").trim().ifBlank { host }
             return KeywordLink(cleanTitle, uri.toString(), host)
         }
 
@@ -688,7 +688,7 @@ class WebScanActivity : AppCompatActivity() {
         }
 
         request("Bing", "https://www.bing.com/search?q=$encoded") { html ->
-            val regex = Regex("""<li[^>]*class=["'][^"']*b_algo[^"']*["'][^>]*>.*?<h2[^>]*>\\s*<a[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            val regex = Regex("""<li[^>]*class=["'][^"']*b_algo[^"']*["'][^>]*>.*?<h2[^>]*>\s*<a[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
             regex.findAll(html).mapNotNull { match ->
                 val title = match.groupValues[2].replace(Regex("""<[^>]+>"""), "")
                 allowedLink(match.groupValues[1], title)

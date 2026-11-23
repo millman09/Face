@@ -199,8 +199,8 @@ class WebScanActivity : AppCompatActivity() {
         })
 
         page.addSpaced(button("Find matching imageboard links · no photo needed") { searchImageboardsOnly() })
-        page.addSpaced(button("Search Anonibx only · keywords, name, state") { searchAnonibxOnly() })
-        page.addSpaced(button("Open Anonibx Illinois catalog") { openAnonibxCatalog("il") })
+        page.addSpaced(button("Search Anonibx Illinois board · your own terms") { searchAnonibxOnly() })
+        page.addSpaced(button("Open Anonibx Illinois board") { openAnonibxCatalog("illi") })
         page.addSpaced(button("Open Anonibx Texas catalog") { openAnonibxCatalog("tx") })
         page.addSpaced(button("Reverse image search my photos") { chooseReverseSearch() }.apply {
             setBackgroundColor(android.graphics.Color.rgb(105, 83, 230))
@@ -384,7 +384,7 @@ class WebScanActivity : AppCompatActivity() {
     /** Open one of the user-requested public state catalog pages in the browser. */
     private fun openAnonibxCatalog(stateCode: String) {
         val url = when (stateCode.lowercase()) {
-            "il" -> "https://anonibx.com/il/catalog"
+            "illi" -> "https://anonibx.com/illi/"
             "tx" -> "https://anonibx.com/tx/catalog"
             else -> return
         }
@@ -520,18 +520,15 @@ class WebScanActivity : AppCompatActivity() {
         val raw = queryInput.text.toString().trim()
         val city = cityInput.text.toString().trim()
         val state = stateInput.text.toString().trim()
-        if (raw.isBlank() && city.isBlank() && state.isBlank()) {
-            Toast.makeText(this, "Enter your own name, keywords, city, or state.", Toast.LENGTH_SHORT).show()
+        if (raw.isBlank()) {
+            Toast.makeText(this, "Enter your own name, username, or identifying keyword to search the Illinois board.", Toast.LENGTH_LONG).show()
             return
         }
-        val names = if (raw.isBlank()) listOf("") else nameSearchVariants(raw)
+        val names = nameSearchVariants(raw)
         val locations = locationQueryVariants(city, state).filter { it.isNotBlank() }
         val searches = linkedSetOf<String>()
-        names.filter { it.isNotBlank() }.forEach { searches += it }
-        locations.forEach { location ->
-            searches += if (raw.isNotBlank()) "$raw $location" else location
-        }
-        if (raw.isNotBlank() && locations.isNotEmpty()) {
+        names.forEach { name -> searches += name }
+        if (locations.isNotEmpty()) {
             names.forEach { name -> locations.forEach { location -> searches += "$name $location" } }
         }
         val queryLabel = listOf(raw, city, state).filter { it.isNotBlank() }.joinToString(" · ")
@@ -546,7 +543,7 @@ class WebScanActivity : AppCompatActivity() {
             val outcomes = mutableListOf<String>()
             val total = searches.size.coerceAtLeast(1)
             searches.forEachIndexed { index, terms ->
-                val result = fetchKeywordLinks("site:anonibx.com ($terms)", setOf("anonibx.com"))
+                val result = fetchKeywordLinks("site:anonibx.com/illi/ ($terms)", setOf("anonibx.com"))
                 result.links.forEach { found.putIfAbsent(it.url, it) }
                 outcomes += result.status
                 val completed = index + 1

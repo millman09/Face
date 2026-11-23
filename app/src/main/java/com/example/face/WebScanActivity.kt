@@ -272,9 +272,7 @@ class WebScanActivity : AppCompatActivity() {
 
         // Keep the board and keyword actions visible as separate buttons, as in the earlier layout.
         page.addSpaced(button("Find matching imageboard links · no photo needed") { searchImageboardsOnly() })
-        page.addSpaced(button("Search Anonibx Illinois + Texas · your own terms") { searchAnonibxOnly() })
-        page.addSpaced(button("Open Anonibx Illinois board") { openAnonibxCatalog("illi") })
-        page.addSpaced(button("Open Anonibx Texas catalog") { openAnonibxCatalog("tx") })
+        page.addSpaced(button("Search All Anonibx · Illinois + Texas") { searchAnonibxOnly() })
         page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
         keywordResultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         page.addView(keywordResultsContainer, LinearLayout.LayoutParams(

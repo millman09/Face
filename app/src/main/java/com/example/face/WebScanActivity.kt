@@ -538,8 +538,8 @@ class WebScanActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         keywordProgressBar.progress = percent
-                        keywordProgressText.text = "Anonibx search: $percent% · $completed of $total queries · ${found.size} links"
-                        status.text = "Checking Anonibx public indexes only… $percent% · ${found.size} links found"
+                        keywordProgressText.text = "Anonibx search: $percent% · $completed of $total queries · ${found.size} links · $result.status"
+                        status.text = "Checking public search indexes only… $percent% · latest: $result.status"
                     }
                 }
             }
@@ -549,7 +549,7 @@ class WebScanActivity : AppCompatActivity() {
                     keywordProgressText.text = "Anonibx search: 100% · finished $total queries · ${found.size} links"
                     renderKeywordLinks(found.values.toList(), "Anonibx: $queryLabel")
                     if (found.isEmpty()) {
-                        status.text = "No Anonibx links were returned by public search indexes. This does not prove there are no posts. Provider results: ${outcomes.distinct().joinToString(" · ")}"
+                        status.text = "No Anonibx links were returned by public search indexes. This search cannot see every post or private/restricted content. Provider results: ${outcomes.distinct().joinToString(" · ")}"
                     }
                 }
             }

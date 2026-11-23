@@ -538,18 +538,18 @@ class WebScanActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         keywordProgressBar.progress = percent
-                        keywordProgressText.text = "Anonibx search: $percent% · $completed of $total queries · \${found.size} links"
-                        status.text = "Checking Anonibx public indexes only… $percent% · \${found.size} links found"
+                        keywordProgressText.text = "Anonibx search: $percent% · $completed of $total queries · ${found.size} links"
+                        status.text = "Checking Anonibx public indexes only… $percent% · ${found.size} links found"
                     }
                 }
             }
             runOnUiThread {
                 if (!isFinishing && !isDestroyed) {
                     keywordProgressBar.progress = 100
-                    keywordProgressText.text = "Anonibx search: 100% · finished $total queries · \${found.size} links"
+                    keywordProgressText.text = "Anonibx search: 100% · finished $total queries · ${found.size} links"
                     renderKeywordLinks(found.values.toList(), "Anonibx: $queryLabel")
                     if (found.isEmpty()) {
-                        status.text = "No Anonibx links were returned by public search indexes. This does not prove there are no posts. Provider results: \${outcomes.distinct().joinToString(" · ")}"
+                        status.text = "No Anonibx links were returned by public search indexes. This does not prove there are no posts. Provider results: ${outcomes.distinct().joinToString(" · ")}"
                     }
                 }
             }
@@ -725,7 +725,7 @@ class WebScanActivity : AppCompatActivity() {
                 }
             }
             card.addView(TextView(this).apply {
-                text = "\${index + 1}. \${item.title}"
+                text = "${index + 1}. ${item.title}"
                 textSize = 15f
                 setTextColor(android.graphics.Color.WHITE)
                 setTypeface(typeface, android.graphics.Typeface.BOLD)

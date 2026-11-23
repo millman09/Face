@@ -270,24 +270,12 @@ class WebScanActivity : AppCompatActivity() {
             setPadding(0, dp(4), 0, dp(12))
         })
 
-        moreOptions.addView(outlined("Search public boards") {
-            MaterialAlertDialogBuilder(this)
-                .setTitle("Public board search")
-                .setItems(arrayOf("Search supported boards", "Search Anonibx Illinois + Texas")) { _, which ->
-                    if (which == 0) searchImageboardsOnly() else searchAnonibxOnly()
-                }
-                .show()
-        })
-        moreOptions.addView(outlined("Open Anonibx board") {
-            MaterialAlertDialogBuilder(this)
-                .setTitle("Choose Anonibx board")
-                .setItems(arrayOf("Illinois", "Texas")) { _, which ->
-                    openAnonibxCatalog(if (which == 0) "illi" else "tx")
-                }
-                .show()
-        })
-        moreOptions.addView(outlined("Open browser searches") { searchAll() })
-        moreOptions.addView(hint("Board searches use your own name, username, or identifying terms. Results depend on public search-engine indexes."))
+        // Keep the board and keyword actions visible as separate buttons, as in the earlier layout.
+        page.addSpaced(button("Find matching imageboard links · no photo needed") { searchImageboardsOnly() })
+        page.addSpaced(button("Search Anonibx Illinois + Texas · your own terms") { searchAnonibxOnly() })
+        page.addSpaced(button("Open Anonibx Illinois board") { openAnonibxCatalog("illi") })
+        page.addSpaced(button("Open Anonibx Texas catalog") { openAnonibxCatalog("tx") })
+        page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
         keywordResultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         page.addView(keywordResultsContainer, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT

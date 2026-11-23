@@ -734,9 +734,14 @@ class IdentityMatchActivity : AppCompatActivity() {
                 // For a narrowed search, only compare images that came from that group's sources.
                 val groupSourceIds = if (group == null) null else enabledSources.map { it.id }.toSet()
                 require(enabledSources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
-                // Avoid re-crawling the same domains on every run. A source becomes eligible again after 24 hours.
+                // Retry empty and failed sources on the next manual search. Only sources that
+                // actually produced public image links get the 24-hour cooldown.
                 val rescanBefore = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
-                val sources = enabledSources.filter { it.lastScan == 0L || it.lastScan < rescanBefore }
+                val sources = enabledSources.filter {
+                    it.lastScan == 0L || it.lastScan < rescanBefore ||
+                        it.lastStatus.contains("0 public image", ignoreCase = true) ||
+                        it.lastStatus.startsWith("Could not scan", ignoreCase = true)
+                }
 
                 validateMobileFaceNetModel(model)
                 val activeInterpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
@@ -912,7 +917,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 Triple(source, discovered.size, added)
                             } catch (e: Exception) {
                                 candidateDatabase.updateSourceStatus(
-                                    source.id, "Could not scan: ${e.localizedMessage ?: "network error"}"
+                                    source.id, "Could not scan: ${e.localizedMessage ?: "network error"}",
+                                    successful = false
                                 )
                                 Triple(source, -1, 0)
                             } finally { hostLock.release() }

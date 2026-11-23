@@ -76,27 +76,17 @@ class WebScanActivity : AppCompatActivity() {
         setToolPage("Deep image search", page)
 
         page.addView(TextView(this).apply {
-            text = "FACE SEARCH  /  PRIVATE WORKSPACE"
-            textSize = 11f
-            letterSpacing = 0.12f
-            setTextColor(android.graphics.Color.rgb(155, 139, 255))
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(0, dp(8), 0, dp(10))
-        })
-        page.addView(TextView(this).apply {
-            text = "Search the web\nfor your face."
-            textSize = 31f
+            text = "Find your face online"
+            textSize = 26f
             setTextColor(android.graphics.Color.WHITE)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setLineSpacing(dp(2).toFloat(), 1f)
-            setPadding(0, 0, 0, dp(12))
+            setPadding(0, dp(4), 0, dp(4))
         })
         page.addView(TextView(this).apply {
-            text = "Photos are optional. Search imageboards with keywords alone, or add reference photos for on-device face matching."
-            textSize = 15f
-            setTextColor(android.graphics.Color.rgb(190, 195, 210))
-            setLineSpacing(dp(3).toFloat(), 1.04f)
-            setPadding(0, 0, 0, dp(20))
+            text = "Add photos of yourself, then search. Matching happens on this phone."
+            textSize = 14f
+            setTextColor(android.graphics.Color.rgb(170, 176, 194))
+            setPadding(0, 0, 0, dp(16))
         })
         val uploadCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -108,7 +98,7 @@ class WebScanActivity : AppCompatActivity() {
             }
         }
         uploadCard.addView(TextView(this).apply {
-            text = "OPTIONAL REFERENCE PHOTOS"
+            text = "YOUR PHOTOS"
             textSize = 11f
             letterSpacing = 0.10f
             setTextColor(android.graphics.Color.rgb(173, 160, 255))
@@ -137,6 +127,87 @@ class WebScanActivity : AppCompatActivity() {
         })
         page.addView(uploadCard, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             bottomMargin = dp(20)
+        })
+
+        // Face search: one clear main action, the wide reverse search, and the rest tucked under "More options".
+        val searchCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(android.graphics.Color.rgb(25, 29, 43))
+                cornerRadius = dp(18).toFloat()
+            }
+        }
+        searchCard.addView(TextView(this).apply {
+            text = "SEARCH FOR YOUR FACE"
+            textSize = 11f
+            letterSpacing = 0.10f
+            setTextColor(android.graphics.Color.rgb(173, 160, 255))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, dp(8))
+        })
+        fun primary(button: MaterialButton) = button.apply {
+            textSize = 16f
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setBackgroundColor(android.graphics.Color.rgb(105, 83, 230))
+            setTextColor(android.graphics.Color.WHITE)
+        }
+        fun outlined(label: String, action: () -> Unit) =
+            MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = label
+                isAllCaps = false
+                setOnClickListener { action() }
+            }
+        fun hint(text: String) = TextView(this).apply {
+            this.text = text
+            textSize = 12f
+            setTextColor(android.graphics.Color.rgb(150, 157, 178))
+            setPadding(dp(2), dp(2), dp(2), dp(10))
+        }
+        continueSearchButton = primary(button("Continue current search") { openRunningScan() }).apply {
+            visibility = android.view.View.GONE
+        }
+        searchCard.addView(continueSearchButton)
+        startSearchButton = primary(button("Scan sites for my face") { launchAutomaticScan() }).apply { isEnabled = false }
+        searchCard.addView(startSearchButton)
+        searchCard.addView(hint("Checks the built-in list of sites and compares every face it finds with your photos."))
+        searchCard.addView(outlined("Reverse image search my photos") { chooseReverseSearch() })
+        searchCard.addView(hint("Yandex, Google Lens or Bing search their whole index for your photo. Finds the most."))
+
+        val moreOptions = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = android.view.View.GONE
+        }
+        val moreToggle = TextView(this).apply {
+            text = "More options  ▾"
+            textSize = 14f
+            setTextColor(android.graphics.Color.rgb(173, 160, 255))
+            setPadding(dp(2), dp(6), dp(2), dp(6))
+            setOnClickListener {
+                val open = moreOptions.visibility != android.view.View.VISIBLE
+                moreOptions.visibility = if (open) android.view.View.VISIBLE else android.view.View.GONE
+                text = if (open) "More options  ▴" else "More options  ▾"
+            }
+        }
+        searchCard.addView(moreToggle)
+        groupButtons = SourceGroup.values().map { group ->
+            outlined(group.buttonLabel) { launchAutomaticScan(group) }.apply { isEnabled = false }
+        }
+        groupButtons.forEach { moreOptions.addView(it) }
+        moreOptions.addView(hint("Faster scans of one kind of site."))
+        moreOptions.addView(outlined("Recheck all saved images") { confirmRecheckAll() })
+        moreOptions.addView(hint("Compare everything found before with your current photos again."))
+        searchCard.addView(moreOptions)
+
+        status = TextView(this).apply {
+            text = "Preparing the site list…"
+            textSize = 13f
+            setTextColor(android.graphics.Color.rgb(190, 195, 210))
+            setPadding(dp(2), dp(8), dp(2), 0)
+        }
+        searchCard.addView(status)
+        page.addView(searchCard, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(24)
         })
 
         queryInput = EditText(this).apply {
@@ -202,15 +273,6 @@ class WebScanActivity : AppCompatActivity() {
         page.addSpaced(button("Search Anonibx Illinois + Texas · your own terms") { searchAnonibxOnly() })
         page.addSpaced(button("Open Anonibx Illinois board") { openAnonibxCatalog("illi") })
         page.addSpaced(button("Open Anonibx Texas catalog") { openAnonibxCatalog("tx") })
-        page.addSpaced(button("Reverse image search my photos") { chooseReverseSearch() }.apply {
-            setBackgroundColor(android.graphics.Color.rgb(105, 83, 230))
-            setTextColor(android.graphics.Color.WHITE)
-        })
-        page.addSpaced(TextView(this).apply {
-            text = "Searches a whole search engine for your photo and look-alikes, much wider than the built-in scan. Your photo goes only to the engine you pick."
-            textSize = 13f
-            alpha = 0.75f
-        }, 2)
         page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
         keywordResultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         page.addView(keywordResultsContainer, LinearLayout.LayoutParams(
@@ -236,47 +298,6 @@ class WebScanActivity : AppCompatActivity() {
             LinearLayout.LayoutParams.MATCH_PARENT, dp(10)
         ).apply { bottomMargin = dp(12) })
 
-        page.addView(TextView(this).apply {
-            text = "AUTOMATIC PUBLIC-SOURCE SCAN\nThe built-in source catalogue is checked in one run. Coverage depends on public sitemaps, feeds, and accessible image links. No logins, CAPTCHAs, paywalls, or site protections are bypassed."
-            textSize = 14f
-            setPadding(0, dp(16), 0, dp(12))
-        })
-
-        startSearchButton = button("Search for matches") { launchAutomaticScan() }.apply {
-            isEnabled = false
-            textSize = 16f
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            setBackgroundColor(android.graphics.Color.rgb(105, 83, 230))
-            setTextColor(android.graphics.Color.WHITE)
-        }
-        continueSearchButton = button("Continue current search") { openRunningScan() }.apply {
-            textSize = 16f
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            setBackgroundColor(android.graphics.Color.rgb(105, 83, 230))
-            setTextColor(android.graphics.Color.WHITE)
-            visibility = android.view.View.GONE
-        }
-        page.addSpaced(continueSearchButton, 8)
-        page.addSpaced(startSearchButton, 8)
-        // Narrower, faster searches over one group of sources.
-        groupButtons = SourceGroup.values().map { group ->
-            button(group.buttonLabel) { launchAutomaticScan(group) }.apply {
-                isEnabled = false
-            }
-        }
-        groupButtons.forEach { page.addSpaced(it, 6) }
-        page.addSpaced(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-            text = "Recheck all saved images"
-            isAllCaps = false
-            setOnClickListener { confirmRecheckAll() }
-        }, 6)
-
-        status = TextView(this).apply {
-            text = "Preparing the public-source catalogue…"
-            textSize = 14f
-            setPadding(0, dp(14), 0, dp(8))
-        }
-        page.addView(status)
         renderReferencePhotos()
         // The first SQLite open may create and seed the full catalogue. Do it off the UI thread.
         scanExecutor.execute {
@@ -284,7 +305,8 @@ class WebScanActivity : AppCompatActivity() {
             runOnUiThread {
                 if (!isFinishing && !isDestroyed) {
                     catalogueReady = true
-                    status.text = "READY  ·  $count public sources available. All enabled, eligible sources are included automatically."
+                    status.text = if (referencePhotos.isEmpty()) "Ready · $count sites. Add a photo to start."
+                        else "Ready · $count sites."
                     setSearchEnabled(referencePhotos.isNotEmpty())
                     refreshRunningScanButtons()
                 }
@@ -875,7 +897,7 @@ class WebScanActivity : AppCompatActivity() {
         if (!::startSearchButton.isInitialized) return
         val running = IdentityMatchActivity.isScanRunning()
         continueSearchButton.visibility = if (running) android.view.View.VISIBLE else android.view.View.GONE
-        startSearchButton.text = if (running) "Start new search" else "Search for matches"
+        startSearchButton.text = if (running) "Start new search" else "Scan sites for my face"
         if (running) status.text = "A deep search is still running. Continue it, or start a new one (this stops the current search)."
     }
 

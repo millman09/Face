@@ -199,6 +199,7 @@ class WebScanActivity : AppCompatActivity() {
         })
 
         page.addSpaced(button("Find matching imageboard links · no photo needed") { searchImageboardsOnly() })
+        page.addSpaced(button("Search Anonibx only · keywords, name, state") { searchAnonibxOnly() })
         page.addSpaced(button("Reverse image search my photos") { chooseReverseSearch() }.apply {
             setBackgroundColor(android.graphics.Color.rgb(105, 83, 230))
             setTextColor(android.graphics.Color.WHITE)
@@ -496,6 +497,66 @@ class WebScanActivity : AppCompatActivity() {
     }
 
     /**
+     * Searches public indexes for Anonibx pages only, using the user's own
+     * name/keywords and optional location. No photos or protected pages are used.
+     */
+    private fun searchAnonibxOnly() {
+        val raw = queryInput.text.toString().trim()
+        val city = cityInput.text.toString().trim()
+        val state = stateInput.text.toString().trim()
+        if (raw.isBlank() && city.isBlank() && state.isBlank()) {
+            Toast.makeText(this, "Enter your own name, keywords, city, or state.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val names = if (raw.isBlank()) listOf("") else nameSearchVariants(raw)
+        val locations = locationQueryVariants(city, state).filter { it.isNotBlank() }
+        val searches = linkedSetOf<String>()
+        names.filter { it.isNotBlank() }.forEach { searches += it }
+        locations.forEach { location ->
+            searches += if (raw.isNotBlank()) "$raw $location" else location
+        }
+        if (raw.isNotBlank() && locations.isNotEmpty()) {
+            names.forEach { name -> locations.forEach { location -> searches += "$name $location" } }
+        }
+        val queryLabel = listOf(raw, city, state).filter { it.isNotBlank() }.joinToString(" · ")
+        keywordResultsContainer.removeAllViews()
+        keywordProgressBar.progress = 0
+        keywordProgressBar.visibility = android.view.View.VISIBLE
+        keywordProgressText.visibility = android.view.View.VISIBLE
+        keywordProgressText.text = "Anonibx search: 0% · preparing…"
+        status.text = "Searching Anonibx public indexes only: $queryLabel"
+        scanExecutor.execute {
+            val found = linkedMapOf<String, KeywordLink>()
+            val outcomes = mutableListOf<String>()
+            val total = searches.size.coerceAtLeast(1)
+            searches.forEachIndexed { index, terms ->
+                val result = fetchKeywordLinks("site:anonibx.com ($terms)", setOf("anonibx.com"))
+                result.links.forEach { found.putIfAbsent(it.url, it) }
+                outcomes += result.status
+                val completed = index + 1
+                val percent = completed * 100 / total
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        keywordProgressBar.progress = percent
+                        keywordProgressText.text = "Anonibx search: $percent% · $completed of $total queries · \${found.size} links"
+                        status.text = "Checking Anonibx public indexes only… $percent% · \${found.size} links found"
+                    }
+                }
+            }
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) {
+                    keywordProgressBar.progress = 100
+                    keywordProgressText.text = "Anonibx search: 100% · finished $total queries · \${found.size} links"
+                    renderKeywordLinks(found.values.toList(), "Anonibx: $queryLabel")
+                    if (found.isEmpty()) {
+                        status.text = "No Anonibx links were returned by public search indexes. This does not prove there are no posts. Provider results: \${outcomes.distinct().joinToString(" · ")}"
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Build conservative name variants: punctuation-free and joined spellings,
      * first/last initials, and initials. No guessed nicknames or unrelated names.
      */
@@ -563,7 +624,7 @@ class WebScanActivity : AppCompatActivity() {
      * Query two ordinary public web-search result pages. This does not crawl
      * protected pages or evade provider challenges; it reports those outcomes.
      */
-    private fun fetchKeywordLinks(searchQuery: String): ProviderSearchResult {
+    private fun fetchKeywordLinks(searchQuery: String, allowedHosts: Set<String>? = null): ProviderSearchResult {
         val links = linkedMapOf<String, KeywordLink>()
         val outcomes = mutableListOf<String>()
         val encoded = java.net.URLEncoder.encode(searchQuery, "UTF-8")
@@ -606,7 +667,7 @@ class WebScanActivity : AppCompatActivity() {
         fun allowedLink(raw: String, title: String): KeywordLink? {
             val uri = try { Uri.parse(raw) } catch (_: Exception) { return null }
             val host = uri.host?.lowercase()?.removePrefix("www.") ?: return null
-            val allowed = listOf("4plebs.org", "warosu.org", "anonibx.com", "motherless.com", "4chan.org", "4channel.org")
+            val allowed = allowedHosts ?: setOf("4plebs.org", "warosu.org", "anonibx.com", "motherless.com", "4chan.org", "4channel.org")
             if (allowed.none { host == it || host.endsWith(".$it") }) return null
             if (uri.scheme != "https" && uri.scheme != "http") return null
             val cleanTitle = android.text.Html.fromHtml(title, android.text.Html.FROM_HTML_MODE_LEGACY)

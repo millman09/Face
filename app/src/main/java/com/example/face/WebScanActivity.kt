@@ -579,9 +579,9 @@ class WebScanActivity : AppCompatActivity() {
             val (code, html) = getText(catalogPath, 2 * 1024 * 1024)
             if (code !in 200..299) return emptyList<KeywordLink>() to "catalog HTTP $code"
             val normalizedNames = names.map { normalizeNameForMatch(it) }.filter { it.length >= 3 }.distinct()
-            val anchorRegex = Regex("""<a\\b([^>]*)>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            val hrefRegex = Regex("""href\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-            val titleRegex = Regex("""title\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            val anchorRegex = Regex("""<a\b([^>]*)>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            val hrefRegex = Regex("""href\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            val titleRegex = Regex("""title\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
             val matches = linkedMapOf<String, KeywordLink>()
             anchorRegex.findAll(html).forEach { match ->
                 val attrs = match.groupValues[1]

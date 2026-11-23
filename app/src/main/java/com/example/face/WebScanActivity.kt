@@ -269,11 +269,24 @@ class WebScanActivity : AppCompatActivity() {
             setPadding(0, dp(4), 0, dp(12))
         })
 
-        page.addSpaced(button("Find matching imageboard links · no photo needed") { searchImageboardsOnly() })
-        page.addSpaced(button("Search Anonibx Illinois + Texas · your own terms") { searchAnonibxOnly() })
-        page.addSpaced(button("Open Anonibx Illinois board") { openAnonibxCatalog("illi") })
-        page.addSpaced(button("Open Anonibx Texas catalog") { openAnonibxCatalog("tx") })
-        page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
+        moreOptions.addView(outlined("Search public boards") {
+            MaterialAlertDialogBuilder(this)
+                .setTitle("Public board search")
+                .setItems(arrayOf("Search supported boards", "Search Anonibx Illinois + Texas")) { _, which ->
+                    if (which == 0) searchImageboardsOnly() else searchAnonibxOnly()
+                }
+                .show()
+        })
+        moreOptions.addView(outlined("Open Anonibx board") {
+            MaterialAlertDialogBuilder(this)
+                .setTitle("Choose Anonibx board")
+                .setItems(arrayOf("Illinois", "Texas")) { _, which ->
+                    openAnonibxCatalog(if (which == 0) "illi" else "tx")
+                }
+                .show()
+        })
+        moreOptions.addView(outlined("Open browser searches") { searchAll() })
+        moreOptions.addView(hint("Board searches use your own name, username, or identifying terms. Results depend on public search-engine indexes."))
         keywordResultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         page.addView(keywordResultsContainer, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -459,19 +472,19 @@ class WebScanActivity : AppCompatActivity() {
         val rawKeywords = queryInput.text.toString().trim()
         val city = cityInput.text.toString().trim()
         val state = stateInput.text.toString().trim()
-        if (rawKeywords.isBlank() && city.isBlank() && state.isBlank()) {
-            Toast.makeText(this, "Enter a name, keywords, or a city/state first.", Toast.LENGTH_SHORT).show()
+        if (rawKeywords.isBlank()) {
+            Toast.makeText(this, "Enter your own name, username, or identifying keyword first.", Toast.LENGTH_LONG).show()
             return
         }
         val locationVariants = locationQueryVariants(city, state)
-        val nameVariants = if (rawKeywords.isBlank()) listOf("") else nameSearchVariants(rawKeywords)
+        val nameVariants = nameSearchVariants(rawKeywords)
         val queryLabel = listOf(rawKeywords, city, state).filter { it.isNotBlank() }.joinToString(" · ")
         keywordResultsContainer.removeAllViews()
         keywordProgressBar.progress = 0
         keywordProgressBar.visibility = android.view.View.VISIBLE
         keywordProgressText.visibility = android.view.View.VISIBLE
         keywordProgressText.text = "Search progress: 0% · preparing searches…"
-        status.text = "Expanding name spellings, state abbreviations, and women/female location terms: $queryLabel"
+        status.text = "Expanding your identifying terms and optional location variations: $queryLabel"
         scanExecutor.execute {
             val siteQueries = listOf(
                 "(site:archive.4plebs.org OR site:warosu.org)",
@@ -480,21 +493,13 @@ class WebScanActivity : AppCompatActivity() {
                 "(site:4chan.org OR site:4channel.org)"
             )
             val searches = linkedSetOf<String>()
-            // Try each plausible spelling independently so a location or other keyword
-            // cannot hide a post whose title uses only a shortened version of the name.
+            // Search only for the user's own identifying terms. Expand spelling
+            // variants and combine them with optional location terms; never run
+            // broad gender/state-only searches that could target unrelated people.
             nameVariants.forEach { name ->
                 siteQueries.forEach { site -> searches += "($name) $site" }
-            }
-            // Search location-only posts as well as posts tagged with common
-            // adult female descriptors. This is especially important when the user
-            // enters only a state and no name or other keyword.
-            locationVariants.filter { it.isNotBlank() }.forEach { location ->
-                siteQueries.forEach { site ->
-                    if (rawKeywords.isNotBlank()) searches += "($rawKeywords $location) $site"
-                    else searches += "($location) $site"
-                    searches += "(women $location) $site"
-                    searches += "(woman $location) $site"
-                    searches += "(female $location) $site"
+                locationVariants.filter { it.isNotBlank() }.forEach { location ->
+                    siteQueries.forEach { site -> searches += "($name $location) $site" }
                 }
             }
             val found = linkedMapOf<String, KeywordLink>()

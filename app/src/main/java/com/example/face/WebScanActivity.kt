@@ -408,7 +408,7 @@ class WebScanActivity : AppCompatActivity() {
     /** Open one of the user-requested public state catalog pages in the browser. */
     private fun openAnonibxCatalog(stateCode: String) {
         val url = when (stateCode.lowercase()) {
-            "il", "illi" -> "https://anonibx.com/il/catalog"
+            "illi", "il" -> "https://anonibx.com/illi/catalog"
             "tx" -> "https://anonibx.com/tx/catalog"
             else -> return
         }
@@ -629,7 +629,7 @@ class WebScanActivity : AppCompatActivity() {
         if (locations.isNotEmpty()) {
             names.forEach { name -> locations.forEach { location -> searches += "$name $location" } }
         }
-        val boardPaths = listOf("il", "tx")
+        val boardPaths = listOf("illi", "tx")
         val queryLabel = listOf(raw, city, state).filter { it.isNotBlank() }.joinToString(" · ")
         keywordResultsContainer.removeAllViews()
         keywordProgressBar.progress = 0

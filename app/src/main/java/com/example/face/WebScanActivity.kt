@@ -553,6 +553,10 @@ class WebScanActivity : AppCompatActivity() {
             c.setRequestProperty("Accept", "text/html,application/xhtml+xml")
             try {
                 val code = c.responseCode
+                // Never consume a page after the server redirects outside the requested host.
+                val finalUrl = c.url
+                if (!finalUrl.protocol.equals("https", true) ||
+                    !finalUrl.host.equals("anonibx.com", true)) return code to ""
                 if (code !in 200..299) return code to ""
                 val type = c.contentType.orEmpty().lowercase()
                 if (type.isNotBlank() && !type.contains("html") && !type.contains("text")) return code to ""
@@ -659,26 +663,78 @@ class WebScanActivity : AppCompatActivity() {
      */
     private fun discoverAnonibxBoardPaths(): List<String> {
         val boards = linkedSetOf("illi", "tx")
+        val base = "https://anonibx.com/"
+        val sitemapUrls = linkedSetOf(
+            "https://anonibx.com/sitemap.xml",
+            "https://anonibx.com/sitemap_index.xml",
+            "https://anonibx.com/sitemap-index.xml"
+        )
         try {
-            val connection = java.net.URL("https://anonibx.com/").openConnection() as java.net.HttpURLConnection
+            // Homepage and robots.txt are public discovery sources. Do not follow
+            // redirects, leave anonibx.com, or attempt challenge/login pages.
+            val connection = java.net.URL(base).openConnection() as java.net.HttpURLConnection
             connection.requestMethod = "GET"
             connection.connectTimeout = 5000
             connection.readTimeout = 6000
             connection.instanceFollowRedirects = false
-            connection.setRequestProperty("User-Agent", "FacePersonalSearch/1.1 (public catalog discovery)")
+            connection.setRequestProperty("User-Agent", "FacePersonalSearch/1.2 (public catalog discovery)")
             connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
             try {
                 val code = connection.responseCode
-                if (code !in 200..299 || !connection.contentType.orEmpty().contains("html", true)) return boards.toList()
-                val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(2 * 1024 * 1024) }
-                val href = Regex("""href\s*=\s*["']([^"'#]+)["']""", RegexOption.IGNORE_CASE)
-                href.findAll(html).forEach { match ->
-                    val link = try { java.net.URL(java.net.URL("https://anonibx.com/"), match.groupValues[1]) } catch (_: Exception) { return@forEach }
-                    if (link.protocol != "https" || !link.host.equals("anonibx.com", true)) return@forEach
-                    val path = link.path.trim('/').lowercase()
-                    if (path.matches(Regex("[a-z]{2,5}/catalog"))) boards.add(path.substringBefore("/"))
+                if (code in 200..299 && connection.contentType.orEmpty().contains("html", true)) {
+                    val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(2 * 1024 * 1024) }
+                    val href = Regex("""href\\s*=\\s*["']([^"'#]+)["']""", RegexOption.IGNORE_CASE)
+                    href.findAll(html).forEach { match ->
+                        val link = try { java.net.URL(java.net.URL(base), match.groupValues[1]) } catch (_: Exception) { return@forEach }
+                        if (link.protocol != "https" || !link.host.equals("anonibx.com", true)) return@forEach
+                        val path = link.path.trim('/').lowercase()
+                        if (path.matches(Regex("[a-z]{2,5}/catalog"))) boards.add(path.substringBefore("/"))
+                    }
                 }
             } finally { connection.disconnect() }
+
+            val robotsConnection = java.net.URL("https://anonibx.com/robots.txt").openConnection() as java.net.HttpURLConnection
+            robotsConnection.connectTimeout = 5000
+            robotsConnection.readTimeout = 6000
+            robotsConnection.instanceFollowRedirects = false
+            robotsConnection.setRequestProperty("User-Agent", "FacePersonalSearch/1.2")
+            try {
+                if (robotsConnection.responseCode in 200..299) {
+                    val robots = robotsConnection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(256 * 1024) }
+                    Regex("""(?im)^\\s*Sitemap:\\s*(\\S+)""").findAll(robots).forEach { match ->
+                        val sitemap = try { java.net.URL(java.net.URL(base), match.groupValues[1]) } catch (_: Exception) { return@forEach }
+                        if (sitemap.protocol == "https" && sitemap.host.equals("anonibx.com", true)) {
+                            sitemapUrls.add(sitemap.toString())
+                        }
+                    }
+                }
+            } finally { robotsConnection.disconnect() }
+
+            // Inspect a small, bounded set of public sitemap endpoints. Only
+            // catalog paths on the same host are used to seed the board crawl.
+            sitemapUrls.take(6).forEach { sitemapUrl ->
+                var sitemapConnection: java.net.HttpURLConnection? = null
+                try {
+                    sitemapConnection = java.net.URL(sitemapUrl).openConnection() as java.net.HttpURLConnection
+                    sitemapConnection.connectTimeout = 5000
+                    sitemapConnection.readTimeout = 7000
+                    sitemapConnection.instanceFollowRedirects = false
+                    sitemapConnection.setRequestProperty("User-Agent", "FacePersonalSearch/1.2 (public sitemap discovery)")
+                    val code = sitemapConnection.responseCode
+                    if (code !in 200..299 || !sitemapConnection.contentType.orEmpty().let { it.isBlank() || it.contains("xml", true) || it.contains("text", true) }) return@forEach
+                    val xml = sitemapConnection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(2 * 1024 * 1024) }
+                    val loc = Regex("""(?is)<loc>\\s*(.*?)\\s*</loc>""")
+                    loc.findAll(xml).forEach { match ->
+                        val raw = android.text.Html.fromHtml(match.groupValues[1], android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim()
+                        val url = try { java.net.URL(raw) } catch (_: Exception) { return@forEach }
+                        if (url.protocol != "https" || !url.host.equals("anonibx.com", true)) return@forEach
+                        val path = url.path.trim('/').lowercase()
+                        if (path.matches(Regex("[a-z]{2,5}/catalog"))) boards.add(path.substringBefore("/"))
+                    }
+                } catch (_: Exception) {
+                    // A missing or blocked sitemap does not stop the known public catalogs.
+                } finally { sitemapConnection?.disconnect() }
+            }
         } catch (_: Exception) {
             // Known paths remain as fallback.
         }
@@ -730,7 +786,8 @@ class WebScanActivity : AppCompatActivity() {
                     }
                 }
                 val (catalogMatches, catalogStatus) = fetchAnonibxCatalogMatches(board, names) { checked, limit, matchCount ->
-                    val progress = (3 + ((boardIndex * 2 + checked.toFloat() / limit.coerceAtLeast(1)) * 25)).toInt().coerceIn(3, 53)
+                    val boardFraction = (boardIndex + checked.toFloat() / limit.coerceAtLeast(1)) / boardPaths.size.coerceAtLeast(1)
+                    val progress = (3 + boardFraction * 50).toInt().coerceIn(3, 53)
                     runOnUiThread {
                         if (!isFinishing && !isDestroyed) {
                             keywordProgressBar.progress = maxOf(keywordProgressBar.progress, progress)

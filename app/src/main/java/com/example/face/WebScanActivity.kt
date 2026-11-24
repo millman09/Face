@@ -39,6 +39,7 @@ class WebScanActivity : AppCompatActivity() {
     private var groupButtons: List<MaterialButton> = emptyList()
     private lateinit var database: PublicSourceDatabase
     private val scanExecutor = Executors.newSingleThreadExecutor()
+    private val keywordExecutor = Executors.newSingleThreadExecutor()
     private var referencePhotos: List<Uri> = emptyList()
     // The search waiting on the "run in the background" prompt; it starts once the prompt closes, whatever the answer.
     private var groupAwaitingBatteryPrompt: SourceGroup? = null
@@ -348,6 +349,7 @@ class WebScanActivity : AppCompatActivity() {
     }
     override fun onDestroy() {
         scanExecutor.shutdownNow()
+        keywordExecutor.shutdownNow()
         database.close()
         super.onDestroy()
     }
@@ -531,7 +533,11 @@ class WebScanActivity : AppCompatActivity() {
      * Searches only the user's entered identifying terms; never fetches media.
      * Respects robots.txt and caps work to 250 public HTML pages per board.
      */
-    private fun fetchAnonibxCatalogMatches(board: String, names: List<String>): Pair<List<KeywordLink>, String> {
+    private fun fetchAnonibxCatalogMatches(
+        board: String,
+        names: List<String>,
+        onProgress: (checked: Int, limit: Int, matches: Int) -> Unit = { _, _, _ -> }
+    ): Pair<List<KeywordLink>, String> {
         val base = "https://anonibx.com"
         val root = "/$board"
         val terms = names.map { normalizeNameForMatch(it) }.filter { it.length >= 3 }.distinct()
@@ -580,7 +586,7 @@ class WebScanActivity : AppCompatActivity() {
             var loaded = 0
             var failed = 0
             var discovered = 0
-            val pageLimit = 250
+            val pageLimit = 60
             val anchor = Regex("""<a\b([^>]*)>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
             val href = Regex("""href\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
             val title = Regex("""(?is)<title[^>]*>(.*?)</title>""")
@@ -592,8 +598,9 @@ class WebScanActivity : AppCompatActivity() {
                 val path = Uri.parse(current).path.orEmpty()
                 if (!path.startsWith("$root/") || !allowed(path)) continue
                 val (code, html) = readPage(java.net.URL(current), 1536 * 1024)
-                if (code !in 200..299 || html.isBlank()) { failed++; continue }
+                if (code !in 200..299 || html.isBlank()) { failed++; onProgress(loaded + failed, pageLimit, matches.size); continue }
                 loaded++
+                onProgress(loaded + failed, pageLimit, matches.size)
 
                 val cleanHtml = html.replace(Regex("""(?is)<(script|style|noscript)[^>]*>.*?</\1>"""), " ")
                 val visible = android.text.Html.fromHtml(
@@ -673,12 +680,29 @@ class WebScanActivity : AppCompatActivity() {
         keywordProgressText.visibility = android.view.View.VISIBLE
         keywordProgressText.text = "Anonibx search: 0% · preparing…"
         status.text = "Searching Anonibx public indexes only: $queryLabel"
-        scanExecutor.execute {
+        keywordExecutor.execute {
+            try {
             val found = linkedMapOf<String, KeywordLink>()
             val outcomes = mutableListOf<String>()
             // First inspect the actual public catalog pages, not only search-engine indexes.
-            boardPaths.forEach { board ->
-                val (catalogMatches, catalogStatus) = fetchAnonibxCatalogMatches(board, names)
+            boardPaths.forEachIndexed { boardIndex, board ->
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        keywordProgressBar.progress = maxOf(keywordProgressBar.progress, 1 + boardIndex * 2)
+                        keywordProgressText.text = "Anonibx search: ${keywordProgressBar.progress}% · starting $board catalog…"
+                        status.text = "Connecting to the public $board catalog…"
+                    }
+                }
+                val (catalogMatches, catalogStatus) = fetchAnonibxCatalogMatches(board, names) { checked, limit, matchCount ->
+                    val progress = (3 + ((boardIndex * 2 + checked.toFloat() / limit.coerceAtLeast(1)) * 25)).toInt().coerceIn(3, 53)
+                    runOnUiThread {
+                        if (!isFinishing && !isDestroyed) {
+                            keywordProgressBar.progress = maxOf(keywordProgressBar.progress, progress)
+                            keywordProgressText.text = "Anonibx search: $progress% · $board catalog · $checked pages checked · $matchCount matches"
+                            status.text = "Reading reachable public $board pages…"
+                        }
+                    }
+                }
                 catalogMatches.forEach { found.putIfAbsent(it.url, it) }
                 outcomes += "Anonibx $board direct: $catalogStatus"
                 runOnUiThread {
@@ -695,7 +719,7 @@ class WebScanActivity : AppCompatActivity() {
                 result.links.forEach { found.putIfAbsent(it.url, it) }
                 outcomes += result.status
                 val completed = index + 1
-                val percent = completed * 100 / total
+                val percent = 55 + completed * 45 / total
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         keywordProgressBar.progress = percent
@@ -711,6 +735,14 @@ class WebScanActivity : AppCompatActivity() {
                     renderKeywordLinks(found.values.toList(), "Anonibx: $queryLabel")
                     if (found.isEmpty()) {
                         status.text = "No Anonibx links were returned by public search indexes. This search cannot see every post or private/restricted content. Provider results: ${outcomes.distinct().joinToString(" · ")}"
+                    }
+                }
+            }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        keywordProgressText.text = "Anonibx search stopped · ${e.javaClass.simpleName}"
+                        status.text = "Search error: ${e.message ?: e.javaClass.simpleName}"
                     }
                 }
             }

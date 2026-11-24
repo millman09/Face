@@ -654,9 +654,6 @@ class WebScanActivity : AppCompatActivity() {
             .replace(Regex("[^\\p{L}\\p{N}]+"), "")
 
     /**
-     * Searches public indexes for Anonibx pages only, using the user's own
-     * name/keywords and optional location. No photos or protected pages are used.
-     */
     /**
      * Discover catalog trees linked publicly from the homepage.
      * Does not follow redirects or access gated content.
@@ -705,7 +702,6 @@ class WebScanActivity : AppCompatActivity() {
             names.forEach { name -> locations.forEach { location -> searches += "$name $location" } }
         }
         // Keep known paths first, then discover other public catalog trees from the homepage.
-        val boardPaths = discoverAnonibxBoardPaths()
         val queryLabel = listOf(raw, city, state).filter { it.isNotBlank() }.joinToString(" · ")
         keywordResultsContainer.removeAllViews()
         keywordProgressBar.progress = 0
@@ -715,6 +711,7 @@ class WebScanActivity : AppCompatActivity() {
         status.text = "Searching Anonibx public indexes only: $queryLabel"
         keywordExecutor.execute {
             try {
+            val boardPaths = discoverAnonibxBoardPaths()
             val found = linkedMapOf<String, KeywordLink>()
             val outcomes = mutableListOf<String>()
             // First inspect the actual public catalog pages, not only search-engine indexes.

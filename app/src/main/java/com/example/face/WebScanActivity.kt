@@ -531,7 +531,7 @@ class WebScanActivity : AppCompatActivity() {
     /**
      * Walk publicly linked catalog, pagination, and thread pages under one board.
      * Searches only the user's entered identifying terms; never fetches media.
-     * Respects robots.txt and caps work to 250 public HTML pages per board.
+     * Respects robots.txt and caps work to 60 public HTML pages per board.
      */
     private fun fetchAnonibxCatalogMatches(
         board: String,

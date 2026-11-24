@@ -592,7 +592,7 @@ class WebScanActivity : AppCompatActivity() {
             var discovered = 0
             val pageLimit = 250
             val anchor = Regex("""<a\b([^>]*)>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            val href = Regex("""href\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                    val href = Regex("""href\s*=\s*["']([^"'#]+)["']""", RegexOption.IGNORE_CASE)
             val title = Regex("""(?is)<title[^>]*>(.*?)</title>""")
             val skip = setOf("jpg", "jpeg", "png", "gif", "webp", "mp4", "webm", "pdf", "css", "js", "zip")
 
@@ -683,7 +683,7 @@ class WebScanActivity : AppCompatActivity() {
                 val code = connection.responseCode
                 if (code in 200..299 && connection.contentType.orEmpty().contains("html", true)) {
                     val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(2 * 1024 * 1024) }
-                    val href = Regex("""href\\s*=\\s*["']([^"'#]+)["']""", RegexOption.IGNORE_CASE)
+                    val href = Regex("""href\s*=\s*["']([^"'#]+)["']""", RegexOption.IGNORE_CASE)
                     href.findAll(html).forEach { match ->
                         val link = try { java.net.URL(java.net.URL(base), match.groupValues[1]) } catch (_: Exception) { return@forEach }
                         if (link.protocol != "https" || !link.host.equals("anonibx.com", true)) return@forEach
@@ -701,7 +701,7 @@ class WebScanActivity : AppCompatActivity() {
             try {
                 if (robotsConnection.responseCode in 200..299) {
                     val robots = robotsConnection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(256 * 1024) }
-                    Regex("""(?im)^\\s*Sitemap:\\s*(\\S+)""").findAll(robots).forEach { match ->
+                    Regex("""(?im)^\s*Sitemap:\s*(\S+)""").findAll(robots).forEach { match ->
                         val sitemap = try { java.net.URL(java.net.URL(base), match.groupValues[1]) } catch (_: Exception) { return@forEach }
                         if (sitemap.protocol == "https" && sitemap.host.equals("anonibx.com", true)) {
                             sitemapUrls.add(sitemap.toString())
@@ -723,7 +723,7 @@ class WebScanActivity : AppCompatActivity() {
                     val code = sitemapConnection.responseCode
                     if (code !in 200..299 || !sitemapConnection.contentType.orEmpty().let { it.isBlank() || it.contains("xml", true) || it.contains("text", true) }) return@forEach
                     val xml = sitemapConnection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(2 * 1024 * 1024) }
-                    val loc = Regex("""(?is)<loc>\\s*(.*?)\\s*</loc>""")
+                    val loc = Regex("""(?is)<loc>\s*(.*?)\s*</loc>""")
                     loc.findAll(xml).forEach { match ->
                         val raw = android.text.Html.fromHtml(match.groupValues[1], android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim()
                         val url = try { java.net.URL(raw) } catch (_: Exception) { return@forEach }
@@ -967,7 +967,7 @@ class WebScanActivity : AppCompatActivity() {
                 val tagStart = html.lastIndexOf("<a", match.range.first)
                 val tagEnd = html.indexOf('>', tagStart).takeIf { it >= 0 } ?: return@mapNotNull null
                 val attrs = html.substring(tagStart, tagEnd + 1)
-                val href = Regex("""href=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(attrs)?.groupValues?.get(1) ?: return@mapNotNull null
+                    val href = Regex("""href\s*=\s*["']([^"'#]+)["']""", RegexOption.IGNORE_CASE)
                 val decoded = try { Uri.parse(href).getQueryParameter("uddg") ?: href } catch (_: Exception) { href }
                 allowedLink(decoded, match.groupValues[1])
             }.toList()

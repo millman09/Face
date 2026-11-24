@@ -58,75 +58,121 @@ class ExposureCheckActivity : AppCompatActivity() {
         }
         setToolPage("Exposure check", page)
 
-        page.addView(body("Check what is publicly exposed about you: breached email addresses, profiles under your usernames, the security of a domain you own, and data brokers that list you. All checks are read-only."))
+        page.addView(body("Tap a section to open it. Everything here only looks things up; nothing is changed or signed into."))
 
-        // 1. Email breaches
-        page.addView(heading("1. Email breaches"))
-        page.addView(body("Your email address is sent to the free XposedOrNot service, which reports the known breaches that include it, adult sites included. A site's own member list can't be searched without signing up or resetting passwords there, which this app never does, so breach records are how exposure shows up. Use your own address only."))
+        // Email
+        val email = section(page, "Email breaches", "Was your email in a data breach?")
+        email.addView(note("Sends your email to XposedOrNot, which lists known breaches (adult sites included). Use your own address."))
         emailInput = input("Your email address", InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
-        page.addSpaced(emailInput, 8)
-        page.addSpaced(button("Check this email for breaches") { checkEmail() }, 8)
-        page.addSpaced(button("Guess usernames from this email") { showGuessedUsernames() }, 8)
-        page.addSpaced(button("Second opinion: Have I Been Pwned") { open("https://haveibeenpwned.com/") }, 8)
+        email.addSpaced(emailInput, 8)
+        email.addSpaced(button("Check this email") { checkEmail() }, 8)
+        email.addSpaced(secondary("Guess my usernames from it") { showGuessedUsernames() }, 4)
+        email.addSpaced(secondary("Second opinion: Have I Been Pwned") { open("https://haveibeenpwned.com/") }, 4)
         emailResults = column()
-        page.addView(emailResults)
+        email.addView(emailResults)
 
-        // 2. Username
-        // Password check
-        page.addView(heading("1b. Check a password"))
-        page.addView(body("Checks a password against Have I Been Pwned's Pwned Passwords list of billions of passwords seen in breach dumps. Only the first 5 characters of its hash are sent, never the password itself or its full hash, so it can't be reconstructed from what leaves your phone."))
+        // Password
+        val password = section(page, "Password", "Has a password of yours leaked?")
+        password.addView(note("Only the first 5 characters of the password's hash leave your phone, never the password."))
         passwordInput = input("Password to check", InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS).apply {
             transformationMethod = android.text.method.PasswordTransformationMethod.getInstance()
         }
-        page.addSpaced(passwordInput, 8)
-        page.addSpaced(button("Check this password") { checkPassword() }, 8)
+        password.addSpaced(passwordInput, 8)
+        password.addSpaced(button("Check this password") { checkPassword() }, 8)
         passwordResult = body("")
-        page.addView(passwordResult)
+        password.addView(passwordResult)
 
-        page.addView(heading("2. Username profiles"))
-        page.addView(body("Looks for a public profile page with your username on about 650 sites, adult sites included. It takes a minute or two. Sites that block automated checks show as \"couldn't check\", and you can open those yourself."))
+        // Usernames
+        val username = section(page, "Usernames", "Where does your username have a profile?")
+        username.addView(note("Takes a minute or two. Sites that block checks show as \"couldn't check\" so you can open them yourself."))
         usernameInput = input("Your username or email address", InputType.TYPE_CLASS_TEXT)
-        page.addSpaced(usernameInput, 8)
-        adultSwitch = MaterialSwitch(this).apply { text = "Include adult sites"; isChecked = true; setPadding(dp(8), dp(8), dp(8), dp(8)) }
-        page.addSpaced(adultSwitch, 4)
+        username.addSpaced(usernameInput, 8)
+        adultSwitch = MaterialSwitch(this).apply { text = "Include adult sites"; isChecked = true; setPadding(dp(8), dp(4), dp(8), dp(4)) }
+        username.addSpaced(adultSwitch, 2)
         focusedSwitch = MaterialSwitch(this).apply {
             text = "Only adult sites and major popular sites"
             isChecked = getSharedPreferences("username_check", MODE_PRIVATE).getBoolean("focused", true)
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
             setOnCheckedChangeListener { _, checked ->
                 getSharedPreferences("username_check", MODE_PRIVATE).edit().putBoolean("focused", checked).apply()
             }
         }
-        page.addSpaced(focusedSwitch, 4)
-        page.addSpaced(button("Check this username") { checkUsername() }, 8)
-        page.addSpaced(button("Guess emails from this username") { showGuessedEmails() }, 8)
+        username.addSpaced(focusedSwitch, 2)
+        username.addSpaced(button("Check this username") { checkUsername() }, 8)
+        username.addSpaced(secondary("Guess my emails from it") { showGuessedEmails() }, 4)
         usernameStatus = body("")
-        page.addView(usernameStatus)
+        username.addView(usernameStatus)
         usernameResults = column()
-        page.addView(usernameResults)
-        page.addView(body("Site list and detection rules: WhatsMyName project by Micah Hoffman (github.com/WebBreacher/WhatsMyName), CC BY-SA 4.0, and the Sherlock Project (github.com/sherlock-project/sherlock), MIT License."))
+        username.addView(usernameResults)
+        username.addView(note("Site lists: WhatsMyName (CC BY-SA 4.0) and the Sherlock Project (MIT)."))
 
-        // 3. Domain
-        page.addView(heading("3. Domain security"))
-        page.addView(body("Checks email-spoofing protection (SPF, DMARC), DNS, the HTTPS certificate, redirects and security headers. It makes ordinary lookups and one normal page request. It never scans ports or tries to break in."))
+        // Domain
+        val domain = section(page, "Your domain", "Is a website you own set up safely?")
+        domain.addView(note("Checks email-spoofing protection, DNS, HTTPS and security headers with ordinary lookups. Never scans or breaks in."))
         domainInput = input("example.com", InputType.TYPE_TEXT_VARIATION_URI)
-        page.addSpaced(domainInput, 8)
+        domain.addSpaced(domainInput, 8)
         val owns = MaterialCheckBox(this).apply { text = "I own or manage this domain" }
-        page.addSpaced(owns, 4)
+        domain.addSpaced(owns, 4)
         domainButton = button("Check this domain") { checkDomain() }.apply { isEnabled = false }
         owns.setOnCheckedChangeListener { _, checked -> domainButton.isEnabled = checked }
-        page.addSpaced(domainButton, 8)
+        domain.addSpaced(domainButton, 8)
         domainResults = column()
-        page.addView(domainResults)
+        domain.addView(domainResults)
 
-        // 4. Data brokers
-        page.addView(heading("4. Data brokers"))
-        page.addView(body("People-search sites often list your name, address and relatives. Search for yourself on each, then use its opt-out page. Addresses can change; if one fails, search \"<site> opt out\"."))
-        brokers.forEach { (name, url) ->
-            page.addSpaced(button("$name opt-out") { open(url) }, 4)
-        }
-        page.addView(body("Automatic removal from 200+ brokers is a paid service (Pentester.com is one). This app can only point you to the forms."))
+        // Data brokers
+        val brokersSection = section(page, "People-search sites", "Remove your name and address listings")
+        brokersSection.addView(note("Search for yourself on each site, then use its opt-out page. If a link fails, search \"<site> opt out\"."))
+        brokers.forEach { (name, url) -> brokersSection.addSpaced(secondary("$name opt-out") { open(url) }, 4) }
     }
+
+    private val sectionBodies = mutableListOf<LinearLayout>()
+
+    /** A tappable header with a hidden body; opening one section closes the others. Returns the body. */
+    private fun section(page: LinearLayout, title: String, subtitle: String): LinearLayout {
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(4), dp(4), dp(4), dp(12))
+            visibility = android.view.View.GONE
+        }
+        val arrow = TextView(this).apply { text = "›"; textSize = 22f; alpha = 0.6f }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(25, 29, 43))
+                cornerRadius = dp(14).toFloat()
+            }
+            val texts = LinearLayout(this@ExposureCheckActivity).apply { orientation = LinearLayout.VERTICAL }
+            texts.addView(TextView(this@ExposureCheckActivity).apply { text = title; textSize = 17f; setTextColor(Color.WHITE) })
+            texts.addView(TextView(this@ExposureCheckActivity).apply { text = subtitle; textSize = 13f; alpha = 0.7f })
+            addView(texts, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(arrow)
+            setOnClickListener {
+                val open = body.visibility != android.view.View.VISIBLE
+                sectionBodies.forEach { it.visibility = android.view.View.GONE }
+                body.visibility = if (open) android.view.View.VISIBLE else android.view.View.GONE
+            }
+        }
+        sectionBodies += body
+        page.addView(header, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+        page.addView(body)
+        return body
+    }
+
+    private fun note(text: String) = TextView(this).apply {
+        this.text = text
+        textSize = 13f
+        alpha = 0.72f
+        setPadding(dp(2), dp(4), dp(2), dp(2))
+    }
+
+    private fun secondary(label: String, action: () -> Unit) =
+        com.google.android.material.button.MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = label
+            isAllCaps = false
+            setOnClickListener { action() }
+        }
 
     override fun onDestroy() {
         usernamePool?.shutdownNow()

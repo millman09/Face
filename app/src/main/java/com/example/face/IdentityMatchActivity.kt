@@ -66,6 +66,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var webScanMode = false
     private var autoStartScan = false
     private var sourceGroup: SourceGroup? = null
+    private var resultsOnly = false
 
     /** One results card, plus the reposts of the same photo folded into it. */
     private class MatchGroup(
@@ -120,18 +121,14 @@ class IdentityMatchActivity : AppCompatActivity() {
         // A screen reopened onto a running search shows that search's group, not whatever the intent says.
         sourceGroup = if (intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false) && scanRunning) runningGroup
             else SourceGroup.fromName(intent.getStringExtra(EXTRA_SOURCE_GROUP))
-        setToolPage(sourceGroup?.let { "Deep search · ${it.title}" } ?: "Deep search", root)
+        // Opened from "My matches" on the home screen: just the saved results, no search setup.
+        resultsOnly = intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false) && !scanRunning &&
+            !intent.getBooleanExtra(EXTRA_AUTO_START, false) &&
+            intent.getParcelableArrayListExtra<Uri>(EXTRA_REFERENCE_URIS).isNullOrEmpty()
+        setToolPage(if (resultsOnly) "My matches" else sourceGroup?.let { "Deep search · ${it.title}" } ?: "Deep search", root)
         root.addView(TextView(this).apply {
-            text = "FACE SEARCH  /  LIVE SCAN"
-            textSize = 11f
-            letterSpacing = 0.12f
-            setTextColor(android.graphics.Color.rgb(155, 139, 255))
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(0, dp(8), 0, dp(8))
-        })
-        root.addView(TextView(this).apply {
-            text = sourceGroup?.let { "Searching ${it.title.lowercase()} for your face." } ?: "Searching for your face."
-            textSize = 24f
+            text = if (resultsOnly) "Photos found so far" else sourceGroup?.let { "Searching ${it.title.lowercase()} for your face." } ?: "Searching for your face."
+            textSize = 21f
             setTextColor(android.graphics.Color.WHITE)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setPadding(0, 0, 0, dp(10))
@@ -148,12 +145,14 @@ class IdentityMatchActivity : AppCompatActivity() {
         referenceUris = intent.getParcelableArrayListExtra<Uri>(EXTRA_REFERENCE_URIS)?.distinct().orEmpty()
         referenceUri = referenceUris.firstOrNull()
         root.addView(TextView(this).apply {
-            text = if (webScanMode) {
-                "Your selected reference photos stay on this device. The scan checks supported public sources and compares accessible images locally. Coverage depends on what each source makes publicly available."
+            text = if (resultsOnly) {
+                "Tap \"Get it removed…\" on a photo to start a takedown. Start a new search from Find my face."
+            } else if (webScanMode) {
+                "Your photos stay on this phone. You can leave this screen; the search keeps going."
             } else {
-                "The face matcher runs on this phone. Select your reference photos and candidate images to compare them privately, without uploading your photos."
+                "Compare your photos with images you choose, privately on this phone."
             }
-            textSize = 14f
+            textSize = 13f
             setTextColor(android.graphics.Color.rgb(190, 195, 210))
             setLineSpacing(dp(3).toFloat(), 1.04f)
             setPadding(0, 0, 0, dp(16))
@@ -161,7 +160,6 @@ class IdentityMatchActivity : AppCompatActivity() {
         val existingModel = File(filesDir, modelTargetName)
         if (existingModel.exists()) modelFile = existingModel
 
-        root.addView(sectionLabel("SETUP"))
         modelSetupGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         addButton(modelSetupGroup, "Install face-matching model  ·  ~4 MB", primary = true) { downloadOfficialModel() }
         addButton(modelSetupGroup, "Use a different model file") { modelPicker.launch(arrayOf("*/*")) }
@@ -184,11 +182,20 @@ class IdentityMatchActivity : AppCompatActivity() {
         if (!webScanMode) addButton(root, "Choose candidate images") { imagesPicker.launch(arrayOf("image/*")) }
 
         if (webScanMode) {
-            root.addView(sectionLabel("MANAGE"))
-            addButton(root, "Past searches") { showPastSearches() }
-            addButton(root, "Clear current search") { confirmClearSearch() }
-            addButton(root, "Export saved matches (CSV)") { exportResultsPicker.launch("face-search-results.csv") }
-            addButton(root, "Export report with images (PDF)") { exportReportPicker.launch("face-matches-report.pdf") }
+            // Rarely used actions live in one menu instead of four full-width buttons.
+            addButton(root, "Past searches, export and more  ⋯") {
+                val actions = arrayOf(
+                    "Past searches", "Export saved matches (CSV)", "Export report with images (PDF)", "Clear current search",
+                )
+                MaterialAlertDialogBuilder(this).setItems(actions) { _, which ->
+                    when (which) {
+                        0 -> showPastSearches()
+                        1 -> exportResultsPicker.launch("face-search-results.csv")
+                        2 -> exportReportPicker.launch("face-matches-report.pdf")
+                        else -> confirmClearSearch()
+                    }
+                }.show()
+            }
         }
 
         scanButton = MaterialButton(this).apply {
@@ -517,6 +524,12 @@ class IdentityMatchActivity : AppCompatActivity() {
         referenceSetupButton.visibility = if (refsReady) android.view.View.GONE else android.view.View.VISIBLE
         referenceReadyRow.visibility = if (refsReady) android.view.View.VISIBLE else android.view.View.GONE
         if (refsReady) referenceReadyText.text = "✓ ${referenceUris.size} reference photo(s) selected"
+        if (resultsOnly) {
+            // The results view has no setup steps; searching starts from "Find my face".
+            listOf(modelSetupGroup, modelReadyRow, referenceSetupButton, referenceReadyRow).forEach {
+                it.visibility = android.view.View.GONE
+            }
+        }
     }
 
     /**
@@ -526,7 +539,7 @@ class IdentityMatchActivity : AppCompatActivity() {
      * instead of a misleading "idle" state.
      */
     private fun updateReady() {
-        scanButton.visibility = if (scanRunning) android.view.View.GONE else android.view.View.VISIBLE
+        scanButton.visibility = if (scanRunning || resultsOnly) android.view.View.GONE else android.view.View.VISIBLE
         scanButton.isEnabled = !scanRunning && modelFile?.exists() == true && referenceUris.isNotEmpty() &&
             (webScanMode || imageUris.isNotEmpty())
         val showScanControls = scanRunning && webScanMode

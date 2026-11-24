@@ -55,7 +55,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(6))
         })
         page.addView(TextView(this).apply {
-            text = "Check where your own face, email, usernames and domain show up online."
+            text = "See where you show up online, and get it taken down."
             textSize = 15f
             setPadding(0, 0, 0, dp(20))
         })
@@ -64,15 +64,35 @@ class MainActivity : AppCompatActivity() {
         page.addView(updateBanner)
         checkForUpdate(updateBanner)
 
-        addTile(page, "Deep face search", "Choose photos of yourself and scan public image sources for matches.") {
+        addTile(page, "Find my face", "Search the web for photos of you.") {
             startActivity(Intent(this, WebScanActivity::class.java))
         }
-        addTile(page, "Exposure check", "Email breaches, username profiles, domain security and data-broker opt-outs.") {
+        addTile(page, "My matches", "Photos found so far, and removal requests.") {
+            startActivity(Intent(this, IdentityMatchActivity::class.java)
+                .putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true))
+        }
+        addTile(page, "Check my accounts", "Leaked emails and passwords, usernames, people-search sites.") {
             startActivity(Intent(this, ExposureCheckActivity::class.java))
         }
 
-        addSection(page, "Settings")
-        addSwitch(page, "Ask for my screen lock when opening the app", AppSettings.lockEnabled(this)) { toggle, on ->
+        // Settings are set once and rarely touched, so they stay folded away.
+        val settings = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = android.view.View.GONE
+        }
+        page.addView(TextView(this).apply {
+            text = "Settings  ▾"
+            textSize = 15f
+            alpha = 0.8f
+            setPadding(dp(4), dp(20), dp(4), dp(8))
+            setOnClickListener {
+                val open = settings.visibility != android.view.View.VISIBLE
+                settings.visibility = if (open) android.view.View.VISIBLE else android.view.View.GONE
+                text = if (open) "Settings  ▴" else "Settings  ▾"
+            }
+        })
+        page.addView(settings)
+        addSwitch(settings, "Ask for my screen lock when opening the app", AppSettings.lockEnabled(this)) { toggle, on ->
             val keyguard = getSystemService(KEYGUARD_SERVICE) as android.app.KeyguardManager
             if (on && !keyguard.isDeviceSecure) {
                 toggle.isChecked = false
@@ -81,8 +101,8 @@ class MainActivity : AppCompatActivity() {
                 AppSettings.setLockEnabled(this, on)
             }
         }
-        addSwitch(page, "Only scan on Wi-Fi", AppSettings.wifiOnly(this)) { _, on -> AppSettings.setWifiOnly(this, on) }
-        reminderSwitch = addSwitch(page, "Remind me weekly to run a deep search", AppSettings.reminderEnabled(this)) { _, on ->
+        addSwitch(settings, "Only scan on Wi-Fi", AppSettings.wifiOnly(this)) { _, on -> AppSettings.setWifiOnly(this, on) }
+        reminderSwitch = addSwitch(settings, "Remind me weekly to run a deep search", AppSettings.reminderEnabled(this)) { _, on ->
             if (!on) {
                 AppSettings.setReminderEnabled(this, false)
                 ScanReminderWorker.cancel(this)

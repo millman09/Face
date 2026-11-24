@@ -654,7 +654,6 @@ class WebScanActivity : AppCompatActivity() {
             .replace(Regex("[^\\p{L}\\p{N}]+"), "")
 
     /**
-    /**
      * Discover catalog trees linked publicly from the homepage.
      * Does not follow redirects or access gated content.
      */
@@ -711,6 +710,13 @@ class WebScanActivity : AppCompatActivity() {
         status.text = "Searching Anonibx public indexes only: $queryLabel"
         keywordExecutor.execute {
             try {
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) {
+                    keywordProgressBar.progress = 1
+                    keywordProgressText.text = "Anonibx search: 1% · discovering public catalog trees…"
+                    status.text = "Checking which public catalog trees are available…"
+                }
+            }
             val boardPaths = discoverAnonibxBoardPaths()
             val found = linkedMapOf<String, KeywordLink>()
             val outcomes = mutableListOf<String>()

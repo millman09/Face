@@ -531,7 +531,7 @@ class WebScanActivity : AppCompatActivity() {
     /**
      * Walk publicly linked catalog, pagination, and thread pages under one board.
      * Searches only the user's entered identifying terms; never fetches media.
-     * Respects robots.txt and caps work to 60 public HTML pages per board.
+     * Respects robots.txt and caps work to 250 public HTML pages per board.
      */
     private fun fetchAnonibxCatalogMatches(
         board: String,
@@ -586,7 +586,7 @@ class WebScanActivity : AppCompatActivity() {
             var loaded = 0
             var failed = 0
             var discovered = 0
-            val pageLimit = 60
+            val pageLimit = 250
             val anchor = Regex("""<a\b([^>]*)>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
             val href = Regex("""href\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
             val title = Regex("""(?is)<title[^>]*>(.*?)</title>""")
@@ -657,6 +657,38 @@ class WebScanActivity : AppCompatActivity() {
      * Searches public indexes for Anonibx pages only, using the user's own
      * name/keywords and optional location. No photos or protected pages are used.
      */
+    /**
+     * Discover catalog trees linked publicly from the homepage.
+     * Does not follow redirects or access gated content.
+     */
+    private fun discoverAnonibxBoardPaths(): List<String> {
+        val boards = linkedSetOf("illi", "tx")
+        try {
+            val connection = java.net.URL("https://anonibx.com/").openConnection() as java.net.HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 5000
+            connection.readTimeout = 6000
+            connection.instanceFollowRedirects = false
+            connection.setRequestProperty("User-Agent", "FacePersonalSearch/1.1 (public catalog discovery)")
+            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
+            try {
+                val code = connection.responseCode
+                if (code !in 200..299 || !connection.contentType.orEmpty().contains("html", true)) return boards.toList()
+                val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(2 * 1024 * 1024) }
+                val href = Regex("""href\s*=\s*["']([^"'#]+)["']""", RegexOption.IGNORE_CASE)
+                href.findAll(html).forEach { match ->
+                    val link = try { java.net.URL(java.net.URL("https://anonibx.com/"), match.groupValues[1]) } catch (_: Exception) { return@forEach }
+                    if (link.protocol != "https" || !link.host.equals("anonibx.com", true)) return@forEach
+                    val path = link.path.trim('/').lowercase()
+                    if (path.matches(Regex("[a-z]{2,5}/catalog"))) boards.add(path.substringBefore("/"))
+                }
+            } finally { connection.disconnect() }
+        } catch (_: Exception) {
+            // Known paths remain as fallback.
+        }
+        return boards.toList().take(30)
+    }
+
     private fun searchAnonibxOnly() {
         val raw = queryInput.text.toString().trim()
         val city = cityInput.text.toString().trim()
@@ -672,7 +704,8 @@ class WebScanActivity : AppCompatActivity() {
         if (locations.isNotEmpty()) {
             names.forEach { name -> locations.forEach { location -> searches += "$name $location" } }
         }
-        val boardPaths = listOf("illi", "tx")
+        // Keep known paths first, then discover other public catalog trees from the homepage.
+        val boardPaths = discoverAnonibxBoardPaths()
         val queryLabel = listOf(raw, city, state).filter { it.isNotBlank() }.joinToString(" · ")
         keywordResultsContainer.removeAllViews()
         keywordProgressBar.progress = 0

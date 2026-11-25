@@ -299,6 +299,39 @@ class IdentityMatchActivity : AppCompatActivity() {
                         }
                         .show()
                 }
+
+            root.addView(MaterialButton(this).apply {
+                text = "Search SnapWins public links"
+                isAllCaps = false
+                setOnClickListener {
+                    val terms = EditText(this@IdentityMatchActivity).apply {
+                        hint = "Enter your own name or search terms"
+                        setSingleLine(true)
+                        inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                    }
+                    MaterialAlertDialogBuilder(this@IdentityMatchActivity)
+                        .setTitle("SnapWins text-only search")
+                        .setMessage("Search public search-engine results for pages on snapwins.net. This does not download images or run face matching.")
+                        .setView(terms)
+                        .setNegativeButton("Cancel", null)
+                        .setPositiveButton("Search") { _, _ ->
+                            val query = terms.text.toString().trim()
+                            if (query.isBlank()) {
+                                Toast.makeText(this@IdentityMatchActivity, "Enter search terms first.", Toast.LENGTH_SHORT).show()
+                            } else {
+                                val searchUri = Uri.parse("https://duckduckgo.com/").buildUpon()
+                                    .appendQueryParameter("q", "($query) site:snapwins.net")
+                                    .build()
+                                try {
+                                    startActivity(Intent(Intent.ACTION_VIEW, searchUri))
+                                } catch (_: Exception) {
+                                    Toast.makeText(this@IdentityMatchActivity, "No browser could open the search.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                        .show()
+                }
+            })
             })
         }
         val resultsScroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); isFillViewport = true }

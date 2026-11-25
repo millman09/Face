@@ -45,33 +45,51 @@ class LockActivity : AppCompatActivity() {
     }
 }
 
-/** Tracks when the app was last in use and shows [LockActivity] after a minute away. */
+/**
+ * Asks for the screen lock when the app comes back after more than a minute in the background.
+ *
+ * Earlier this measured time since the last screen change, so staying on one screen for over a minute
+ * (watching a scan, reading results) and then opening another screen asked for the fingerprint again even
+ * though the app never left. Now the clock only runs while no Face screen is visible.
+ */
 object AppLock : Application.ActivityLifecycleCallbacks {
     private const val GRACE_MS = 60_000L
     @Volatile var showing = false
-    private var lastActive = 0L
+    private var startedScreens = 0
+    private var backgroundedAt = 0L
+    private var unlockedOnce = false
 
-    fun markActive() { lastActive = SystemClock.elapsedRealtime() }
+    fun markActive() {
+        unlockedOnce = true
+        backgroundedAt = 0L
+    }
 
     override fun onActivityStarted(activity: Activity) {
+        val comingBack = startedScreens == 0
+        startedScreens++
         if (activity is LockActivity || showing) return
-        if (!AppSettings.lockEnabled(activity)) return
-        val away = SystemClock.elapsedRealtime() - lastActive
-        if (lastActive == 0L || away > GRACE_MS) {
+        if (!comingBack) return
+        if (!AppSettings.lockEnabled(activity)) {
+            markActive()
+            return
+        }
+        val away = if (backgroundedAt == 0L) 0L else SystemClock.elapsedRealtime() - backgroundedAt
+        if (!unlockedOnce || away > GRACE_MS) {
             showing = true
             activity.startActivity(Intent(activity, LockActivity::class.java))
         }
     }
 
     override fun onActivityStopped(activity: Activity) {
-        if (activity !is LockActivity && !showing) markActive()
-    }
-
-    override fun onActivityResumed(activity: Activity) {
-        if (activity !is LockActivity && !showing) markActive()
+        startedScreens = (startedScreens - 1).coerceAtLeast(0)
+        // The lock screen hands over to the system's fingerprint prompt; that isn't the app going away.
+        if (startedScreens == 0 && activity !is LockActivity && !showing) {
+            backgroundedAt = SystemClock.elapsedRealtime()
+        }
     }
 
     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+    override fun onActivityResumed(activity: Activity) {}
     override fun onActivityPaused(activity: Activity) {}
     override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
     override fun onActivityDestroyed(activity: Activity) {}

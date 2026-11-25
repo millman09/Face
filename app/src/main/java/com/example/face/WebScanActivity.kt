@@ -1252,8 +1252,13 @@ class WebScanActivity : AppCompatActivity() {
             .setTitle("Recheck all saved images?")
             .setMessage("Your next search will compare every saved image with your current reference photos again. Confirmed matches and ones you marked \"Not a match\" are kept. This makes the next search take longer.")
             .setPositiveButton("Recheck") { _, _ ->
-                database.resetCheckedResults()
-                Toast.makeText(this, "Done. Start a search to recheck everything.", Toast.LENGTH_LONG).show()
+                // Can touch every saved image, so it runs off the screen's thread to avoid freezing it.
+                Thread {
+                    val ok = try { database.resetCheckedResults(); true } catch (_: Exception) { false }
+                    runOnUiThread {
+                        Toast.makeText(this, if (ok) "Done. Start a search to recheck everything." else "Couldn't reset. Try again.", Toast.LENGTH_LONG).show()
+                    }
+                }.start()
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -1305,11 +1310,24 @@ class WebScanActivity : AppCompatActivity() {
             askToRunInBackground(group)
             return
         }
-        val sourceCount = database.sources().count { it.enabled && (group == null || group.contains(it)) }
-        if (sourceCount == 0) {
-            Toast.makeText(this, "There are no enabled public sources to scan.", Toast.LENGTH_LONG).show()
-            return
-        }
+        // Counting sources reads the database, which a running scan may be busy writing to, so it's done
+        // off the screen's thread; the search opens once the count is back.
+        Thread {
+            val sourceCount = try {
+                database.sources().count { it.enabled && (group == null || group.contains(it)) }
+            } catch (_: Exception) { -1 }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (sourceCount == 0) {
+                    Toast.makeText(this, "There are no enabled public sources to scan.", Toast.LENGTH_LONG).show()
+                } else {
+                    openNewScan(group)
+                }
+            }
+        }.start()
+    }
+
+    private fun openNewScan(group: SourceGroup?) {
         val intent = Intent(this, IdentityMatchActivity::class.java).apply {
             putParcelableArrayListExtra(IdentityMatchActivity.EXTRA_REFERENCE_URIS, ArrayList(referencePhotos))
             putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true)

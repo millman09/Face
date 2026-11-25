@@ -1323,16 +1323,30 @@ class IdentityMatchActivity : AppCompatActivity() {
     private fun publishProgress(text: String?, percent: Int?, visible: Boolean?) {
         text?.let { liveStatus = it }
         percent?.let { livePercent = it }
+        val visibilityChanged = visible != null && visible != liveProgressVisible
         visible?.let { liveProgressVisible = it }
-        onLiveUi { applyLiveState() }
+        // Eight sites report progress many times a second. Redrawing for every report kept the screen busy
+        // enough to freeze, so ordinary updates are batched to a few per second. Starting or stopping the
+        // progress bar is shown right away.
+        if (visibilityChanged) {
+            onLiveUi { applyLiveState() }
+            return
+        }
+        if (uiUpdatePending) return
+        uiUpdatePending = true
+        uiHandler.postDelayed({
+            uiUpdatePending = false
+            onLiveUi { applyLiveState(buttonsToo = false) }
+        }, 300)
     }
 
-    private fun applyLiveState() {
-        liveStatus?.let { status.text = it }
+    /** [buttonsToo] also refreshes the buttons, which checks files on disk; skipped for routine progress. */
+    private fun applyLiveState(buttonsToo: Boolean = true) {
+        liveStatus?.let { if (status.text != it) status.text = it }
         progress.max = 100
         progress.progress = livePercent
         progress.visibility = if (liveProgressVisible) ProgressBar.VISIBLE else ProgressBar.GONE
-        updateReady()
+        if (buttonsToo) updateReady()
     }
 
     /** Empties the results list, and drops any saved-match loading still in flight for the old list. */
@@ -1849,6 +1863,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         @Volatile private var livePercent = 0
         @Volatile private var liveProgressVisible = false
         @Volatile private var runningGroup: SourceGroup? = null
+        private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        @Volatile private var uiUpdatePending = false
         private const val RESTORE_PAGE = 30
         @Volatile private var runningLocationKeywords: List<String> = emptyList()
         // Matches found by the search that is running now, so a reopened screen shows only those.

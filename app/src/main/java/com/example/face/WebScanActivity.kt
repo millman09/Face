@@ -987,7 +987,8 @@ class WebScanActivity : AppCompatActivity() {
                 val tagStart = html.lastIndexOf("<a", match.range.first)
                 val tagEnd = html.indexOf('>', tagStart).takeIf { it >= 0 } ?: return@mapNotNull null
                 val attrs = html.substring(tagStart, tagEnd + 1)
-                    val href = Regex("""href\s*=\s*["']([^"'#]+)["']""", RegexOption.IGNORE_CASE)
+                val href = Regex("""href\s*=\s*["']([^"'#]+)["']""", RegexOption.IGNORE_CASE)
+                    .find(attrs)?.groupValues?.get(1) ?: return@mapNotNull null
                 val decoded = try { Uri.parse(href).getQueryParameter("uddg") ?: href } catch (_: Exception) { href }
                 allowedLink(decoded, match.groupValues[1])
             }.toList()

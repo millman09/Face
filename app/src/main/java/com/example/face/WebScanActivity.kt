@@ -253,6 +253,7 @@ class WebScanActivity : AppCompatActivity() {
 
 
         // Dedicated text-only self-search section for the three requested imageboards.
+        // This action intentionally does not require or submit reference photos.
         page.addView(TextView(this).apply {
             text = "IMAGEBOARD SELF-SEARCH"
             textSize = 12f

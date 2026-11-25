@@ -909,55 +909,68 @@ class WebScanActivity : AppCompatActivity() {
         }
 
         val sites = listOf("anonibx.com", "snapwins.net", "xpics.me")
-        val names = nameSearchVariants(raw)
-        val locations = locationQueryVariants(city, state).filter { it.isNotBlank() }
-        val searches = linkedSetOf<String>()
-        names.forEach { name ->
-            sites.forEach { site -> searches += "site:$site ($name)" }
-            locations.forEach { location ->
-                sites.forEach { site -> searches += "site:$site ($name $location)" }
-            }
+        val names = nameSearchVariants(raw).distinct().take(8)
+        val locations = locationQueryVariants(city, state).filter { it.isNotBlank() }.distinct()
+        val nameExpression = names.joinToString(" OR ") { name -> "\"$name\"" }
+        val locationExpression = if (locations.isEmpty()) "" else
+            " (" + locations.joinToString(" OR ") { location -> "\"$location\"" } + ")"
+        val searches = sites.associateWith { site ->
+            "site:$site ($nameExpression)$locationExpression"
         }
         val queryLabel = listOf(raw, city, state).filter { it.isNotBlank() }.joinToString(" · ")
+
         keywordResultsContainer.removeAllViews()
         keywordProgressBar.progress = 0
         keywordProgressBar.visibility = android.view.View.VISIBLE
         keywordProgressText.visibility = android.view.View.VISIBLE
-        keywordProgressText.text = "Imageboard self-search: 0% · preparing…"
-        status.text = "Preparing public-index searches for Anonibx, SnapWins, and Xpics…"
+        keywordProgressText.text = "Imageboard self-search: 0% · preparing 3 site searches…"
+        status.text = "Searching Anonibx, SnapWins, and Xpics separately for your entered terms…"
 
-        keywordExecutor.execute {
+        // One broad query per site avoids the old 30–100+ serial requests.
+        // Each query is checked against both public search providers.
+        val workers = java.util.concurrent.Executors.newFixedThreadPool(3)
+        try {
+            val tasks = searches.map { (site, query) ->
+                java.util.concurrent.CompletableFuture.supplyAsync({
+                    site to fetchKeywordLinks(query, setOf(site))
+                }, workers)
+            }
             val found = linkedMapOf<String, KeywordLink>()
-            val outcomes = linkedMapOf<String, Int>()
-            searches.forEachIndexed { index, search ->
-                val site = sites.firstOrNull { search.contains("site:$it") } ?: "imageboard"
-                val result = fetchKeywordLinks(search, setOf(site))
-                result.links.forEach { found.putIfAbsent(it.url, it) }
-                result.status.split(" · ").filter { it.isNotBlank() }.forEach { outcome ->
-                    val provider = outcome.substringBefore(":")
-                    outcomes[provider] = (outcomes[provider] ?: 0) + 1
+            val outcomes = linkedMapOf<String, String>()
+            tasks.forEachIndexed { index, task ->
+                val pair = try {
+                    task.get(35, java.util.concurrent.TimeUnit.SECONDS)
+                } catch (e: Exception) {
+                    sites[index] to ProviderSearchResult(emptyList(), "search timed out or failed")
                 }
+                val site = pair.first
+                val result = pair.second
+                result.links.forEach { found.putIfAbsent(it.url, it) }
+                outcomes[site] = result.status.ifBlank { "No results returned" }
                 val completed = index + 1
-                val percent = completed * 100 / searches.size.coerceAtLeast(1)
+                val percent = completed * 100 / sites.size
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         keywordProgressBar.progress = percent
-                        keywordProgressText.text = "Imageboard self-search: $percent% · $completed/${searches.size} queries · ${found.size} links"
-                        status.text = "Checking public search indexes for $site… $percent% · ${found.size} links found"
+                        keywordProgressText.text = "Imageboard self-search: $percent% · $completed/3 sites checked · ${found.size} links"
+                        status.text = "$site checked · ${result.links.size} links · " +
+                            outcomes.entries.joinToString(" | ") { "${it.key}: ${it.value}" }
                     }
                 }
             }
             runOnUiThread {
                 if (!isFinishing && !isDestroyed) {
                     keywordProgressBar.progress = 100
-                    keywordProgressText.text = "Imageboard self-search: 100% · ${searches.size} queries · ${found.size} links found"
+                    keywordProgressText.text = "Imageboard self-search: 100% · 3/3 sites checked · ${found.size} public links"
                     renderKeywordLinks(found.values.toList(), "Anonibx + SnapWins + Xpics: $queryLabel")
                     if (found.isEmpty()) {
-                        status.text = "No matching links were returned by public search indexes. Coverage varies; this cannot see unindexed, private, or restricted pages. Provider checks: " +
-                            outcomes.entries.joinToString(", ") { "${it.key}: ${it.value} checks" }
+                        status.text = "No links were returned by the public search providers. This checks indexed text pages only; unindexed, private, or restricted pages will not appear. " +
+                            outcomes.entries.joinToString(" | ") { "${it.key}: ${it.value}" }
                     }
                 }
             }
+        } finally {
+            workers.shutdownNow()
         }
     }
 

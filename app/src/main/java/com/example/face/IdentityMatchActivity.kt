@@ -299,6 +299,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         }
                         .show()
                 }
+            })
 
             root.addView(MaterialButton(this).apply {
                 text = "Search SnapWins public links"
@@ -331,7 +332,6 @@ class IdentityMatchActivity : AppCompatActivity() {
                         }
                         .show()
                 }
-            })
             })
         }
         val resultsScroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); isFillViewport = true }

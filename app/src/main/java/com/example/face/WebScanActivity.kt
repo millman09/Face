@@ -252,10 +252,23 @@ class WebScanActivity : AppCompatActivity() {
         })
 
 
-        // Keep the board and keyword actions visible as separate buttons, as in the earlier layout.
+        // Dedicated text-only self-search section for the three requested imageboards.
+        page.addView(TextView(this).apply {
+            text = "IMAGEBOARD SELF-SEARCH"
+            textSize = 12f
+            letterSpacing = 0.10f
+            setTextColor(android.graphics.Color.rgb(173, 160, 255))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(dp(2), dp(12), dp(2), dp(4))
+        })
+        page.addView(TextView(this).apply {
+            text = "Search public indexed pages on Anonibx, SnapWins, and Xpics using your own name, usernames, and optional location terms. No photo is required."
+            textSize = 12f
+            setTextColor(android.graphics.Color.rgb(165, 172, 190))
+            setPadding(dp(2), 0, dp(2), dp(8))
+        })
+        page.addSpaced(button("Search Anonibx + SnapWins + Xpics") { searchRequestedImageboardsSelfOnly() })
         page.addSpaced(button("Find matching imageboard links · no photo needed") { searchImageboardsOnly() })
-        page.addSpaced(button("Search All Anonibx · Illinois + Texas") { searchAnonibxOnly() })
-        page.addSpaced(button("Search SnapWins + Xpics public pages") { searchSnapwinsXpicsOnly() })
         keywordResultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         page.addView(keywordResultsContainer, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -874,6 +887,73 @@ class WebScanActivity : AppCompatActivity() {
                     renderKeywordLinks(found.values.toList(), "SnapWins + Xpics: $queryLabel")
                     if (found.isEmpty()) {
                         status.text = "No matching links were returned by public search indexes. This cannot see every post or private/restricted content. Provider checks: ${outcomes.distinct().joinToString(" · ")}"
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Dedicated public-index self-search for the requested imageboards.
+     * Searches only the user's entered identifying terms and optional location
+     * variants; it does not crawl boards, download media, or perform face matching.
+     */
+    private fun searchRequestedImageboardsSelfOnly() {
+        val raw = queryInput.text.toString().trim()
+        val city = cityInput.text.toString().trim()
+        val state = stateInput.text.toString().trim()
+        if (raw.isBlank()) {
+            Toast.makeText(this, "Enter your own name, username, or identifying keyword first.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val sites = listOf("anonibx.com", "snapwins.net", "xpics.me")
+        val names = nameSearchVariants(raw)
+        val locations = locationQueryVariants(city, state).filter { it.isNotBlank() }
+        val searches = linkedSetOf<String>()
+        names.forEach { name ->
+            sites.forEach { site -> searches += "site:$site ($name)" }
+            locations.forEach { location ->
+                sites.forEach { site -> searches += "site:$site ($name $location)" }
+            }
+        }
+        val queryLabel = listOf(raw, city, state).filter { it.isNotBlank() }.joinToString(" · ")
+        keywordResultsContainer.removeAllViews()
+        keywordProgressBar.progress = 0
+        keywordProgressBar.visibility = android.view.View.VISIBLE
+        keywordProgressText.visibility = android.view.View.VISIBLE
+        keywordProgressText.text = "Imageboard self-search: 0% · preparing…"
+        status.text = "Preparing public-index searches for Anonibx, SnapWins, and Xpics…"
+
+        keywordExecutor.execute {
+            val found = linkedMapOf<String, KeywordLink>()
+            val outcomes = linkedMapOf<String, Int>()
+            searches.forEachIndexed { index, search ->
+                val site = sites.firstOrNull { search.contains("site:$it") } ?: "imageboard"
+                val result = fetchKeywordLinks(search, setOf(site))
+                result.links.forEach { found.putIfAbsent(it.url, it) }
+                result.status.split(" · ").filter { it.isNotBlank() }.forEach { outcome ->
+                    val provider = outcome.substringBefore(":")
+                    outcomes[provider] = (outcomes[provider] ?: 0) + 1
+                }
+                val completed = index + 1
+                val percent = completed * 100 / searches.size.coerceAtLeast(1)
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        keywordProgressBar.progress = percent
+                        keywordProgressText.text = "Imageboard self-search: $percent% · $completed/${searches.size} queries · ${found.size} links"
+                        status.text = "Checking public search indexes for $site… $percent% · ${found.size} links found"
+                    }
+                }
+            }
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) {
+                    keywordProgressBar.progress = 100
+                    keywordProgressText.text = "Imageboard self-search: 100% · ${searches.size} queries · ${found.size} links found"
+                    renderKeywordLinks(found.values.toList(), "Anonibx + SnapWins + Xpics: $queryLabel")
+                    if (found.isEmpty()) {
+                        status.text = "No matching links were returned by public search indexes. Coverage varies; this cannot see unindexed, private, or restricted pages. Provider checks: " +
+                            outcomes.entries.joinToString(", ") { "${it.key}: ${it.value} checks" }
                     }
                 }
             }

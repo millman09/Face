@@ -438,6 +438,14 @@ class WebScanActivity : AppCompatActivity() {
             .appendQueryParameter("iax", "images")
             .build().toString()
 
+    /** Search only public search-engine indexes for Xpics pages; never fetch or download its media. */
+    private fun xpicsArchiveUrl(query: String): String =
+        Uri.parse("https://duckduckgo.com/").buildUpon()
+            .appendQueryParameter("q", "($query) site:xpics.me")
+            .appendQueryParameter("ia", "images")
+            .appendQueryParameter("iax", "images")
+            .build().toString()
+
     private fun searxUrl(query: String): String? {
         val raw = searxInput.text.toString().trim()
         val base = try { Uri.parse(raw) } catch (_: Exception) { null }
@@ -460,7 +468,8 @@ class WebScanActivity : AppCompatActivity() {
         fourChanArchiveUrl(query),
         anonibxArchiveUrl(query),
         motherlessArchiveUrl(query),
-        snapwinsArchiveUrl(query)
+        snapwinsArchiveUrl(query),
+        xpicsArchiveUrl(query)
     )
 
     private data class KeywordLink(val title: String, val url: String, val source: String)
@@ -489,7 +498,8 @@ class WebScanActivity : AppCompatActivity() {
                 "site:anonibx.com",
                 "site:motherless.com",
                 "(site:4chan.org OR site:4channel.org)",
-                "site:snapwins.net"
+                "site:snapwins.net",
+                "site:xpics.me"
             )
             val searches = linkedSetOf<String>()
             // Search only for the user's own identifying terms. Expand spelling
@@ -963,7 +973,7 @@ class WebScanActivity : AppCompatActivity() {
         fun allowedLink(raw: String, title: String): KeywordLink? {
             val uri = try { Uri.parse(raw) } catch (_: Exception) { return null }
             val host = uri.host?.lowercase()?.removePrefix("www.") ?: return null
-            val allowed = allowedHosts ?: setOf("4plebs.org", "warosu.org", "anonibx.com", "motherless.com", "snapwins.net", "4chan.org", "4channel.org")
+            val allowed = allowedHosts ?: setOf("4plebs.org", "warosu.org", "anonibx.com", "motherless.com", "snapwins.net", "xpics.me", "4chan.org", "4channel.org")
             if (allowed.none { host == it || host.endsWith(".$it") }) return null
             if (uri.scheme != "https" && uri.scheme != "http") return null
             val cleanTitle = android.text.Html.fromHtml(title, android.text.Html.FROM_HTML_MODE_LEGACY)
@@ -1083,7 +1093,8 @@ class WebScanActivity : AppCompatActivity() {
             fourChanArchiveUrl(query),
             anonibxArchiveUrl(query),
             motherlessArchiveUrl(query),
-            snapwinsArchiveUrl(query)
+            snapwinsArchiveUrl(query),
+            xpicsArchiveUrl(query)
         ))
         if (pendingSearches.isEmpty()) return
         status.text = "Opening ${pendingSearches.size} searches. Press back after each one to open the next."

@@ -43,11 +43,12 @@ class WebScanActivity : AppCompatActivity() {
     // The search waiting on the "run in the background" prompt; it starts once the prompt closes, whatever the answer.
     private var groupAwaitingBatteryPrompt: SourceGroup? = null
     private var searchAwaitingBatteryPrompt = false
+    private var resumeAwaitingBatteryPrompt = false
     private val batteryPrompt = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if (!BackgroundRunHelper.isExempt(this)) BackgroundRunHelper.rememberDeclined(this)
         if (searchAwaitingBatteryPrompt) {
             searchAwaitingBatteryPrompt = false
-            startNewScan(groupAwaitingBatteryPrompt, batteryChecked = true)
+            startNewScan(groupAwaitingBatteryPrompt, batteryChecked = true, resume = resumeAwaitingBatteryPrompt)
         }
     }
 
@@ -165,7 +166,7 @@ class WebScanActivity : AppCompatActivity() {
             setTextColor(android.graphics.Color.rgb(150, 157, 178))
             setPadding(dp(2), dp(2), dp(2), dp(10))
         }
-        continueSearchButton = primary(button("Continue current search") { openRunningScan() }).apply {
+        continueSearchButton = primary(button("Continue current search") { continueSearch() }).apply {
             visibility = android.view.View.GONE
         }
         searchCard.addView(continueSearchButton)
@@ -1219,24 +1220,25 @@ class WebScanActivity : AppCompatActivity() {
 
     /** While a search is running in the background, offer to go back to it instead of only starting over. */
     /** Before a search, offers to let Face keep running in the background so the phone doesn't stop the search. */
-    private fun askToRunInBackground(group: SourceGroup?) {
+    private fun askToRunInBackground(group: SourceGroup?, resume: Boolean = false) {
         val hint = BackgroundRunHelper.manufacturerHint()?.let { "\n\n$it" }.orEmpty()
         com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
             .setTitle("Keep searches running?")
             .setMessage("Long searches can be stopped by your phone's battery saver when you leave the app. Allow Face to run in the background so searches finish.$hint")
             .setPositiveButton("Allow") { _, _ ->
                 groupAwaitingBatteryPrompt = group
+                resumeAwaitingBatteryPrompt = resume
                 searchAwaitingBatteryPrompt = true
                 try {
                     batteryPrompt.launch(BackgroundRunHelper.requestIntent(this))
                 } catch (_: Exception) {
                     searchAwaitingBatteryPrompt = false
-                    startNewScan(group, batteryChecked = true)
+                    startNewScan(group, batteryChecked = true, resume = resume)
                 }
             }
             .setNegativeButton("Not now") { _, _ ->
                 BackgroundRunHelper.rememberDeclined(this)
-                startNewScan(group, batteryChecked = true)
+                startNewScan(group, batteryChecked = true, resume = resume)
             }
             .setCancelable(false)
             .show()
@@ -1267,9 +1269,36 @@ class WebScanActivity : AppCompatActivity() {
     private fun refreshRunningScanButtons() {
         if (!::startSearchButton.isInitialized) return
         val running = IdentityMatchActivity.isScanRunning()
-        continueSearchButton.visibility = if (running) android.view.View.VISIBLE else android.view.View.GONE
-        startSearchButton.text = if (running) "Start new search" else "Scan sites for my face"
-        if (running) status.text = "A deep search is still running. Continue it, or start a new one (this stops the current search)."
+        val unfinished = if (running) null else SearchSession.unfinishedSince(this)
+        continueSearchButton.visibility = if (running || unfinished != null) android.view.View.VISIBLE else android.view.View.GONE
+        continueSearchButton.text = if (running) "Continue current search" else "Continue where you left off"
+        startSearchButton.text = when {
+            running -> "Start new search"
+            unfinished != null -> "Start a fresh search"
+            else -> "Scan sites for my face"
+        }
+        if (running) {
+            status.text = "A deep search is still running. Continue it, or start a new one (this stops the current search)."
+        } else if (unfinished != null) {
+            val since = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+                .format(java.util.Date(unfinished))
+            status.text = "Your search from $since didn't finish. Continue it to skip the sites it already checked."
+        }
+    }
+
+    /** Back to the running search, or picks up the unfinished one where it stopped. */
+    private fun continueSearch() {
+        if (IdentityMatchActivity.isScanRunning()) {
+            openRunningScan()
+        } else if (SearchSession.unfinishedSince(this) != null) {
+            if (referencePhotos.isEmpty()) {
+                Toast.makeText(this, "Add your photos first, then continue.", Toast.LENGTH_LONG).show()
+                return
+            }
+            startNewScan(null, resume = true)
+        } else {
+            refreshRunningScanButtons()
+        }
     }
 
     /** Opens the running search's live screen without restarting it. */
@@ -1287,6 +1316,16 @@ class WebScanActivity : AppCompatActivity() {
 
     /** Opens the live results page immediately. Source discovery and face matching run there. */
     private fun launchAutomaticScan(group: SourceGroup? = null) {
+        if (group == null && !IdentityMatchActivity.isScanRunning() && SearchSession.unfinishedSince(this) != null) {
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle("Start over?")
+                .setMessage("Your last search didn't finish. A fresh search checks every site again instead of skipping the ones already done. Matches you've found are kept.")
+                .setPositiveButton("Start fresh") { _, _ -> startNewScan(null) }
+                .setNeutralButton("Continue instead") { _, _ -> continueSearch() }
+                .setNegativeButton("Cancel", null)
+                .show()
+            return
+        }
         if (IdentityMatchActivity.isScanRunning()) {
             com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
                 .setTitle("Start a new search?")
@@ -1300,14 +1339,14 @@ class WebScanActivity : AppCompatActivity() {
         startNewScan(group)
     }
 
-    private fun startNewScan(group: SourceGroup? = null, batteryChecked: Boolean = false) {
+    private fun startNewScan(group: SourceGroup? = null, batteryChecked: Boolean = false, resume: Boolean = false) {
         if (!catalogueReady) { Toast.makeText(this, "The source catalogue is still loading. Try again in a moment.", Toast.LENGTH_LONG).show(); return }
         if (referencePhotos.isEmpty()) {
             Toast.makeText(this, "Choose at least one reference photo first.", Toast.LENGTH_LONG).show()
             return
         }
         if (!batteryChecked && BackgroundRunHelper.shouldAsk(this)) {
-            askToRunInBackground(group)
+            askToRunInBackground(group, resume)
             return
         }
         // Counting sources reads the database, which a running scan may be busy writing to, so it's done
@@ -1321,17 +1360,18 @@ class WebScanActivity : AppCompatActivity() {
                 if (sourceCount == 0) {
                     Toast.makeText(this, "There are no enabled public sources to scan.", Toast.LENGTH_LONG).show()
                 } else {
-                    openNewScan(group)
+                    openNewScan(group, resume)
                 }
             }
         }.start()
     }
 
-    private fun openNewScan(group: SourceGroup?) {
+    private fun openNewScan(group: SourceGroup?, resume: Boolean = false) {
         val intent = Intent(this, IdentityMatchActivity::class.java).apply {
             putParcelableArrayListExtra(IdentityMatchActivity.EXTRA_REFERENCE_URIS, ArrayList(referencePhotos))
             putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true)
             putExtra(IdentityMatchActivity.EXTRA_AUTO_START, true)
+            putExtra(IdentityMatchActivity.EXTRA_RESUME, resume)
             group?.let { putExtra(IdentityMatchActivity.EXTRA_SOURCE_GROUP, it.name) }
             putExtra(IdentityMatchActivity.EXTRA_LOCATION_KEYWORDS, locationKeywords())
         }

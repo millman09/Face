@@ -68,6 +68,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private var autoStartScan = false
     private var sourceGroup: SourceGroup? = null
     private var resultsOnly = false
+    private var resumeSearch = false
 
     /** One results card, plus the reposts of the same photo folded into it. */
     private class MatchGroup(
@@ -136,6 +137,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         })
         webScanMode = intent.getBooleanExtra(EXTRA_WEB_SCAN_MODE, false)
         autoStartScan = intent.getBooleanExtra(EXTRA_AUTO_START, false)
+        resumeSearch = intent.getBooleanExtra(EXTRA_RESUME, false)
         searchLocationKeywords = if (webScanMode && scanRunning) runningLocationKeywords
             else intent.getStringExtra(EXTRA_LOCATION_KEYWORDS).orEmpty()
                 .split(Regex("\\s+")).filter { it.length >= 2 }.take(6)
@@ -785,14 +787,22 @@ class IdentityMatchActivity : AppCompatActivity() {
                 // For a narrowed search, only compare images that came from that group's sources.
                 val groupSourceIds = if (group == null) null else enabledSources.map { it.id }.toSet()
                 require(enabledSources.isNotEmpty()) { "There are no enabled public sources in the catalogue." }
-                // Retry empty and failed sources on the next manual search. Only sources that
-                // actually produced public image links get the 24-hour cooldown.
-                val rescanBefore = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
+                // A full search is a session: "Continue" skips every site already scanned since the session
+                // began; a fresh search starts a new session and goes through every site again (each site's
+                // crawl still resumes deeper than last time). Quick searches of one group keep the old rule:
+                // skip sites scanned in the last 24 hours.
+                val sessionStart: Long? = if (group != null) null
+                    else if (resumeSearch) SearchSession.unfinishedSince(this) ?: SearchSession.startFresh(this)
+                    else SearchSession.startFresh(this)
+                val rescanBefore = sessionStart ?: (System.currentTimeMillis() - 24L * 60L * 60L * 1000L)
                 val sources = enabledSources.filter {
                     it.lastScan == 0L || it.lastScan < rescanBefore ||
                         it.lastStatus.contains("0 public image", ignoreCase = true) ||
                         it.lastStatus.startsWith("Could not scan", ignoreCase = true)
                 }
+                // Sites already done earlier in this session still count toward the progress shown.
+                val alreadyDone = enabledSources.size - sources.size
+                val totalSites = enabledSources.size
 
                 validateMobileFaceNetModel(model)
                 val activeInterpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
@@ -855,7 +865,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 // Image comparisons remain a separate count because the total number
                 // of images is not known until each source has been scanned.
                 fun updateSearchProgress(detail: String) {
-                    val percent = if (sources.isEmpty()) 100 else ((completedSources * 100f) / sources.size)
+                    val percent = if (totalSites == 0) 100 else (((completedSources + alreadyDone) * 100f) / totalSites)
                         .toInt().coerceIn(0, 100)
                     publishProgress("Source scan: $percent% · $detail", percent, true)
                 }
@@ -932,7 +942,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                             previews.forEach { item -> addWebMatchPreview(item.id, item.pageUrl, item.imageUrl, item.score, item.bitmap, item.faceCrop, item.faceBox, false, postText = item.postText) }
                         }
                         // Progress updates are deliberately batched instead of posted once per image.
-                        updateSearchProgress("$completedSources/${sources.size} sites checked, $checked images compared, $possibleMatches possible match(es)")
+                        updateSearchProgress("${completedSources + alreadyDone}/$totalSites sites checked, $checked images compared, $possibleMatches possible match(es)")
                     }
                 }
 
@@ -950,14 +960,14 @@ class IdentityMatchActivity : AppCompatActivity() {
                             try {
                                 val previousState = candidateDatabase.loadCrawlState(source.id)
                                 publishProgress(
-                                    "Imageboards: scanning ${source.name} · checking public pages · $completedSources/${sources.size} sites completed",
-                                    if (sources.isEmpty()) 0 else (completedSources * 100 / sources.size),
+                                    "Imageboards: scanning ${source.name} · checking public pages · ${completedSources + alreadyDone}/$totalSites sites completed",
+                                    if (totalSites == 0) 0 else ((completedSources + alreadyDone) * 100 / totalSites),
                                     true
                                 )
                                 val (discovered, newState) = PublicSourceScanner.scan(source, previousState, amateurFocus) { stage ->
                                     publishProgress(
-                                        "Imageboards: ${source.name} · $stage · $completedSources/${sources.size} sites completed",
-                                        if (sources.isEmpty()) 0 else (completedSources * 100 / sources.size),
+                                        "Imageboards: ${source.name} · $stage · ${completedSources + alreadyDone}/$totalSites sites completed",
+                                        if (totalSites == 0) 0 else ((completedSources + alreadyDone) * 100 / totalSites),
                                         true
                                     )
                                 }
@@ -983,9 +993,9 @@ class IdentityMatchActivity : AppCompatActivity() {
                         addedTotal += added
                         updateSearchProgress(
                             if (discoveredCount >= 0) {
-                                "${source.name} returned $discoveredCount image link(s). $completedSources/${sources.size} sites checked; $checked images compared; $possibleMatches possible match(es)."
+                                "${source.name} returned $discoveredCount image link(s). ${completedSources + alreadyDone}/$totalSites sites checked; $checked images compared; $possibleMatches possible match(es)."
                             } else {
-                                "${source.name} was unavailable. $completedSources/${sources.size} sites checked; $checked images compared."
+                                "${source.name} was unavailable. ${completedSources + alreadyDone}/$totalSites sites checked; $checked images compared."
                             }
                         )
                         comparePendingCandidates()
@@ -998,17 +1008,18 @@ class IdentityMatchActivity : AppCompatActivity() {
                 comparePendingCandidates()
                 val totalIndexed = candidateDatabase.candidateCount()
                 val summary = if (sources.isEmpty()) {
-                    "All ${enabledSources.size} enabled public sources were scanned within the last 24 hours, so discovery was skipped. Checked $checked previously unprocessed images and found $possibleMatches possible match(es)."
+                    "Every site in this search was already checked, so only leftover images were compared: $checked checked, $possibleMatches possible match(es)."
                 } else if (totalIndexed == 0) {
                     "No public image links were discovered. Supported sites may not expose crawlable public pages."
                 } else {
-                    "Search finished. Checked $completedSources/${sources.size} public sources, discovered $addedTotal new image link(s), compared $checked new or retryable image(s), and found $possibleMatches possible match(es). $totalIndexed image links remain indexed for future incremental searches. Public-source coverage is limited to pages made accessible by each website; this is not a complete index of the internet. Review matches manually."
+                    "Search finished. Checked ${completedSources + alreadyDone}/$totalSites public sources, discovered $addedTotal new image link(s), compared $checked new or retryable image(s), and found $possibleMatches possible match(es). $totalIndexed image links remain indexed for future incremental searches. Public-source coverage is limited to pages made accessible by each website; this is not a complete index of the internet. Review matches manually."
                 }
+                if (group == null) SearchSession.markComplete(this)
                 publishProgress("Source scan: 100% · $summary", 100, false)
             } catch (e: Exception) {
                 publishProgress(
                     if (e is InterruptedException || Thread.currentThread().isInterrupted) {
-                        "Search cancelled. Previously saved matches are still available."
+                        "Search stopped. Tap \"Continue where you left off\" on the search screen to pick it up again."
                     } else {
                         "Automatic scan or matching could not finish: ${e.localizedMessage ?: "unknown error"}"
                     },
@@ -1686,6 +1697,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         private const val MAX_FACE_YAW = 45f
         const val EXTRA_WEB_SCAN_MODE = "com.example.face.EXTRA_WEB_SCAN_MODE"
         const val EXTRA_AUTO_START = "com.example.face.EXTRA_AUTO_START"
+        /** Continue the unfinished full search instead of starting a fresh one. */
+        const val EXTRA_RESUME = "com.example.face.EXTRA_RESUME"
         /** Name of a [SourceGroup] to limit the search to; absent = every source. */
         const val EXTRA_SOURCE_GROUP = "com.example.face.EXTRA_SOURCE_GROUP"
         const val EXTRA_REFERENCE_URIS = "com.example.face.EXTRA_REFERENCE_URIS"

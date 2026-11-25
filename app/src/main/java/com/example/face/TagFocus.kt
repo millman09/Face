@@ -20,16 +20,27 @@ object TagFocus {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY, on).apply()
     }
 
-    /** Words that mark a page as amateur/homemade when they appear in its address. */
+    /** Words that mark a page as amateur/homemade-style when they appear in its address. */
     private val KEYWORDS = listOf(
+        // Amateur and homemade
         "amateur", "homemade", "home-made", "home_made", "homevideo", "home-video",
-        "selfie", "selfshot", "self-shot", "realcouple", "real-couple",
-        "girlfriend", "exgf", "ex-gf", "ex-girlfriend", "leaked", "private",
+        // Self-shot
+        "selfie", "selfshot", "self-shot", "nudes", "sexting", "snapchat", "pov", "vertical",
+        // Real-life couples
+        "realcouple", "real-couple", "wife", "girlfriend", "exgf", "ex-gf", "ex-girlfriend",
+        // Leaked or shared without consent
+        "leak", "revenge", "cheating", "caught", "private",
+        // Recorded secretly
+        "hiddencam", "hidden-cam", "hidden-camera", "spycam", "spy-cam", "voyeur", "locker-room", "lockerroom",
+        // Webcam and live
+        "webcam", "camgirl", "cam-girl", "periscope", "livestream", "live-stream",
     )
 
     /** Tag listings tried on each site; ones a site doesn't have just come back empty. */
-    private val SEED_TAGS = listOf("amateur", "homemade")
-    private val SEED_PATTERNS = listOf("/categories/%s", "/category/%s", "/tags/%s", "/tag/%s", "/c/%s", "/%s")
+    private val MAIN_TAGS = listOf("amateur", "homemade")
+    private val MAIN_PATTERNS = listOf("/categories/%s", "/category/%s", "/tags/%s", "/tag/%s", "/c/%s", "/%s")
+    private val EXTRA_TAGS = listOf("selfie", "webcam", "voyeur", "hidden-cam", "leaked", "real-couple", "wife", "pov")
+    private val EXTRA_PATTERNS = listOf("/categories/%s", "/tags/%s", "/tag/%s")
 
     /** Video and photo sites that file their content under tags or categories. */
     private val TAGGED_SITE_HOSTS = setOf(
@@ -55,6 +66,9 @@ object TagFocus {
         return KEYWORDS.any { lower.contains(it) }
     }
 
-    fun seedPages(base: String): List<String> =
-        SEED_TAGS.flatMap { tag -> SEED_PATTERNS.map { base.trimEnd('/') + it.format(tag) } }
+    fun seedPages(base: String): List<String> {
+        val root = base.trimEnd('/')
+        return MAIN_TAGS.flatMap { tag -> MAIN_PATTERNS.map { root + it.format(tag) } } +
+            EXTRA_TAGS.flatMap { tag -> EXTRA_PATTERNS.map { root + it.format(tag) } }
+    }
 }

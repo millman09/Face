@@ -67,9 +67,8 @@ class MainActivity : AppCompatActivity() {
         addTile(page, "Find my face", "Search the web for photos of you.") {
             startActivity(Intent(this, WebScanActivity::class.java))
         }
-        addTile(page, "My matches", "Photos found so far, and removal requests.") {
-            startActivity(Intent(this, IdentityMatchActivity::class.java)
-                .putExtra(IdentityMatchActivity.EXTRA_WEB_SCAN_MODE, true))
+        addTile(page, "Saved images", "Your matches and past searches as photos. Works while a search runs.") {
+            startActivity(Intent(this, SavedImagesActivity::class.java))
         }
         addTile(page, "Check my accounts", "Leaked emails and passwords, usernames, people-search sites.") {
             startActivity(Intent(this, ExposureCheckActivity::class.java))

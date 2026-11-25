@@ -54,6 +54,11 @@
             android:exported="false" />
 
         <activity
+            android:name=".SavedImagesActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Face" />
+
+        <activity
             android:name=".ExposureCheckActivity"
             android:exported="false"
             android:theme="@style/Theme.Face" />

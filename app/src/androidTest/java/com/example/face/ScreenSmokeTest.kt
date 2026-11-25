@@ -29,4 +29,5 @@ class ScreenSmokeTest {
     @Test fun deepSearchOpens() = open(WebScanActivity::class.java)
     @Test fun exposureCheckOpens() = open(ExposureCheckActivity::class.java)
     @Test fun matchScreenOpens() = open(IdentityMatchActivity::class.java)
+    @Test fun savedImagesOpens() = open(SavedImagesActivity::class.java)
 }

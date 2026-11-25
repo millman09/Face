@@ -27,7 +27,6 @@ class WebScanActivity : AppCompatActivity() {
     private lateinit var queryInput: EditText
     private lateinit var cityInput: EditText
     private lateinit var stateInput: EditText
-    private lateinit var searxInput: EditText
     private lateinit var status: TextView
     private lateinit var referencePreview: LinearLayout
     private lateinit var referenceCount: TextView
@@ -252,30 +251,11 @@ class WebScanActivity : AppCompatActivity() {
             setPadding(0, dp(2), 0, dp(12))
         })
 
-        page.addView(TextView(this).apply {
-            text = "IMAGE SEARCH PROVIDER"
-            textSize = 14f
-            setPadding(0, dp(4), 0, dp(4))
-        })
-        searxInput = EditText(this).apply {
-            hint = "https://your-trusted-searxng-instance.example"
-            setSingleLine(true)
-            setText("https://searx.be")
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
-        }
-        page.addView(searxInput)
-        page.addView(TextView(this).apply {
-            text = "SearXNG is community-hosted. Its operator may see your searches. Use an instance you trust."
-            textSize = 13f
-            setPadding(0, dp(4), 0, dp(12))
-        })
 
         // Keep the board and keyword actions visible as separate buttons, as in the earlier layout.
         page.addSpaced(button("Find matching imageboard links · no photo needed") { searchImageboardsOnly() })
         page.addSpaced(button("Search All Anonibx · Illinois + Texas") { searchAnonibxOnly() })
         page.addSpaced(button("Search SnapWins + Xpics public pages") { searchSnapwinsXpicsOnly() })
-        page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
         keywordResultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         page.addView(keywordResultsContainer, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -375,15 +355,6 @@ class WebScanActivity : AppCompatActivity() {
         return query
     }
 
-    private fun yandexUrl(query: String): String =
-        Uri.parse("https://yandex.com/images/search").buildUpon()
-            .appendQueryParameter("text", query).build().toString()
-
-    private fun duckDuckGoUrl(query: String): String =
-        Uri.parse("https://duckduckgo.com/").buildUpon()
-            .appendQueryParameter("q", query).appendQueryParameter("ia", "images")
-            .appendQueryParameter("iax", "images").build().toString()
-
     /** Search public 4chan archive indexes directly, without navigating ad-heavy board pages. */
     private fun fourChanArchiveUrl(query: String): String =
         Uri.parse("https://duckduckgo.com/").buildUpon()
@@ -446,19 +417,6 @@ class WebScanActivity : AppCompatActivity() {
             .appendQueryParameter("ia", "images")
             .appendQueryParameter("iax", "images")
             .build().toString()
-
-    private fun searxUrl(query: String): String? {
-        val raw = searxInput.text.toString().trim()
-        val base = try { Uri.parse(raw) } catch (_: Exception) { null }
-        if (base == null || base.scheme != "https" || base.host.isNullOrBlank()) {
-            Toast.makeText(this, "Enter a valid HTTPS SearXNG instance address.", Toast.LENGTH_LONG).show()
-            return null
-        }
-        return Uri.parse(raw.trimEnd('/') + "/search").buildUpon()
-            .appendQueryParameter("q", query)
-            .appendQueryParameter("categories", "images")
-            .appendQueryParameter("language", "en").build().toString()
-    }
 
     // Android only lets an app open one browser page at a time while it is in the
     // background, so the three searches open in turn: one now, the next each time
@@ -1142,24 +1100,6 @@ class WebScanActivity : AppCompatActivity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
-    }
-
-    private fun searchAll() {
-        val query = currentQuery() ?: return
-        pendingSearches.clear()
-        pendingSearches.addAll(listOfNotNull(
-            yandexUrl(query),
-            searxUrl(query),
-            duckDuckGoUrl(query),
-            fourChanArchiveUrl(query),
-            anonibxArchiveUrl(query),
-            motherlessArchiveUrl(query),
-            snapwinsArchiveUrl(query),
-            xpicsArchiveUrl(query)
-        ))
-        if (pendingSearches.isEmpty()) return
-        status.text = "Opening ${pendingSearches.size} searches. Press back after each one to open the next."
-        openNextSearch()
     }
 
     private fun openNextSearch() {

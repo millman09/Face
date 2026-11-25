@@ -274,6 +274,7 @@ class WebScanActivity : AppCompatActivity() {
         // Keep the board and keyword actions visible as separate buttons, as in the earlier layout.
         page.addSpaced(button("Find matching imageboard links · no photo needed") { searchImageboardsOnly() })
         page.addSpaced(button("Search All Anonibx · Illinois + Texas") { searchAnonibxOnly() })
+        page.addSpaced(button("Search SnapWins + Xpics public pages") { searchSnapwinsXpicsOnly() })
         page.addSpaced(button("Search Yandex, SearXNG and DuckDuckGo") { searchAll() })
         keywordResultsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         page.addView(keywordResultsContainer, LinearLayout.LayoutParams(
@@ -856,6 +857,65 @@ class WebScanActivity : AppCompatActivity() {
                     if (!isFinishing && !isDestroyed) {
                         keywordProgressText.text = "Anonibx search stopped · ${e.javaClass.simpleName}"
                         status.text = "Search error: ${e.message ?: e.javaClass.simpleName}"
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Search only public search-engine indexes for the user's own terms on SnapWins and Xpics.
+     * Does not crawl either site, download media, or access restricted pages.
+     */
+    private fun searchSnapwinsXpicsOnly() {
+        val raw = queryInput.text.toString().trim()
+        val city = cityInput.text.toString().trim()
+        val state = stateInput.text.toString().trim()
+        if (raw.isBlank()) {
+            Toast.makeText(this, "Enter your own name, username, or identifying keyword first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val names = nameSearchVariants(raw)
+        val locations = locationQueryVariants(city, state).filter { it.isNotBlank() }
+        val sites = listOf("snapwins.net", "xpics.me")
+        val searches = linkedSetOf<String>()
+        names.forEach { name ->
+            sites.forEach { site -> searches += "site:$site ($name)" }
+            locations.forEach { location ->
+                sites.forEach { site -> searches += "site:$site ($name $location)" }
+            }
+        }
+        val queryLabel = listOf(raw, city, state).filter { it.isNotBlank() }.joinToString(" · ")
+        keywordResultsContainer.removeAllViews()
+        keywordProgressBar.progress = 0
+        keywordProgressBar.visibility = android.view.View.VISIBLE
+        keywordProgressText.visibility = android.view.View.VISIBLE
+        keywordProgressText.text = "SnapWins + Xpics search: 0% · preparing…"
+        status.text = "Searching public SnapWins and Xpics indexes only: $queryLabel"
+        keywordExecutor.execute {
+            val found = linkedMapOf<String, KeywordLink>()
+            val outcomes = mutableListOf<String>()
+            searches.forEachIndexed { index, search ->
+                val result = fetchKeywordLinks(search, setOf("snapwins.net", "xpics.me"))
+                result.links.forEach { found.putIfAbsent(it.url, it) }
+                outcomes += "$search: ${result.status}"
+                val completed = index + 1
+                val percent = completed * 100 / searches.size.coerceAtLeast(1)
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        keywordProgressBar.progress = percent
+                        keywordProgressText.text = "SnapWins + Xpics search: $percent% · $completed of ${searches.size} queries · ${found.size} links"
+                        status.text = "Checking public indexes… $percent% · latest: ${result.status}"
+                    }
+                }
+            }
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) {
+                    keywordProgressBar.progress = 100
+                    keywordProgressText.text = "SnapWins + Xpics search: 100% · finished ${searches.size} queries · ${found.size} links"
+                    renderKeywordLinks(found.values.toList(), "SnapWins + Xpics: $queryLabel")
+                    if (found.isEmpty()) {
+                        status.text = "No matching links were returned by public search indexes. This cannot see every post or private/restricted content. Provider checks: ${outcomes.distinct().joinToString(" · ")}"
                     }
                 }
             }

@@ -779,6 +779,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                     scanState.edit().putString("reference_fingerprint", referenceFingerprint).apply()
                 }
                 val group = sourceGroup
+                val amateurFocus = TagFocus.isOn(this)
                 val enabledSources = candidateDatabase.sources().filter { it.enabled && (group == null || group.contains(it)) }
                 // For a narrowed search, only compare images that came from that group's sources.
                 val groupSourceIds = if (group == null) null else enabledSources.map { it.id }.toSet()
@@ -952,7 +953,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                     if (sources.isEmpty()) 0 else (completedSources * 100 / sources.size),
                                     true
                                 )
-                                val (discovered, newState) = PublicSourceScanner.scan(source, previousState) { stage ->
+                                val (discovered, newState) = PublicSourceScanner.scan(source, previousState, amateurFocus) { stage ->
                                     publishProgress(
                                         "Imageboards: ${source.name} · $stage · $completedSources/${sources.size} sites completed",
                                         if (sources.isEmpty()) 0 else (completedSources * 100 / sources.size),

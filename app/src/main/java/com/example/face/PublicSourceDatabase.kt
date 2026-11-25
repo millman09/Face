@@ -797,9 +797,15 @@ object PublicSourceScanner {
     fun scan(
         source: WebsiteSource,
         previousState: CrawlState = CrawlState(),
+        amateurFocus: Boolean = false,
         onProgress: (String) -> Unit = {}
     ): Pair<List<DiscoveredImage>, CrawlState> {
         val base = source.baseUrl
+        // "Amateur and homemade only" (see TagFocus): on tagged video/photo sites, only amateur-tagged pages
+        // and the pages their tag listings link to are looked at.
+        val tagFocus = amateurFocus && TagFocus.appliesTo(source)
+        val tagApproved = HashSet<String>()
+        fun tagAllowed(page: String) = !tagFocus || TagFocus.matches(page) || page in tagApproved
         onProgress("Checking public access rules (robots.txt)")
         val deadline = System.currentTimeMillis() + SOURCE_TIME_BUDGET_MS
         fun shouldStop() = Thread.currentThread().isInterrupted || System.currentTimeMillis() > deadline
@@ -854,12 +860,18 @@ object PublicSourceScanner {
         onProgress("Preparing public gallery and thread pages · ${found.size} image links found")
         val pageQueue = ArrayDeque<String>()
         // Resume last run's unexplored page frontier first, so depth genuinely accumulates over time.
-        previousState.pageFrontier.forEach { pageQueue.addLast(it) }
-        publicPages.take(MAX_SITEMAP_PAGES).forEach { if (it !in pageQueue) pageQueue.addLast(it) }
-        // Always inspect the public home page, not only forums. Many galleries and
-        // photo sites have no sitemap/feed, but expose their public catalog from /.
-        val homePage = base.trimEnd('/') + "/"
-        if (!isDisallowed(homePage, rules) && homePage !in pageQueue) pageQueue.addFirst(homePage)
+        previousState.pageFrontier.filter { tagAllowed(it) }.forEach { pageQueue.addLast(it) }
+        publicPages.filter { tagAllowed(it) }.take(MAX_SITEMAP_PAGES).forEach { if (it !in pageQueue) pageQueue.addLast(it) }
+        val seedPages = if (tagFocus) TagFocus.seedPages(base).filter { !isDisallowed(it, rules) }.toSet() else emptySet()
+        if (tagFocus) {
+            // Tag listings first, and always re-read: they're where new uploads appear.
+            seedPages.reversed().forEach { if (it !in pageQueue) pageQueue.addFirst(it) }
+        } else {
+            // Always inspect the public home page, not only forums. Many galleries and
+            // photo sites have no sitemap/feed, but expose their public catalog from /.
+            val homePage = base.trimEnd('/') + "/"
+            if (!isDisallowed(homePage, rules) && homePage !in pageQueue) pageQueue.addFirst(homePage)
+        }
 
         // Forum software often exposes its useful public content from index,
         // category, latest-topic and gallery routes rather than sitemaps.
@@ -903,6 +915,7 @@ object PublicSourceScanner {
             }
         }
         val visitedPages = previousState.pageVisited.toMutableSet()
+        visitedPages.removeAll(seedPages)
         var newlyVisited = 0
         var linkedPagesQueued = 0
         var consecutiveFailures = 0
@@ -915,6 +928,7 @@ object PublicSourceScanner {
             !shouldStop()) {
             val page = pageQueue.removeFirst()
             queued.remove(page)
+            if (!tagAllowed(page)) continue
             if (!visitedPages.add(page) || !sameHost(base, page) || isDisallowed(page, rules)) continue
             newlyVisited++
             if (newlyVisited == 1 || newlyVisited % 5 == 0) {
@@ -922,15 +936,20 @@ object PublicSourceScanner {
             }
             val html = readPage(page)
             if (html == null) {
-                consecutiveFailures++
+                // Guessed tag addresses a site doesn't have aren't a sign the site is failing.
+                if (page !in seedPages) consecutiveFailures++
                 continue
             }
             consecutiveFailures = 0
             val links = extractPageImages(page, html, source.id, found)
+            // From an amateur tag page, follow the pages it lists (one step); elsewhere only amateur-named pages.
+            val onTagPage = tagFocus && TagFocus.matches(page)
             for (link in links) {
                 if (linkedPagesQueued >= MAX_LINKED_PAGES) break
+                if (tagFocus && !onTagPage && !TagFocus.matches(link)) continue
                 if (link !in visitedPages && link !in queued &&
                     sameHost(base, link) && !isDisallowed(link, rules) && isLikelyHtmlPage(link)) {
+                    if (onTagPage) tagApproved.add(link)
                     pageQueue.addLast(link)
                     queued.add(link)
                     linkedPagesQueued++
@@ -944,7 +963,9 @@ object PublicSourceScanner {
             pageVisited = visitedPages,
             pageFrontier = pageQueue.toList(),
         )
-        return found.values.take(MAX_IMAGES).toList() to newState
+        // Image-sitemap entries can point at any page, so drop the ones from pages outside the amateur tags.
+        val images = found.values.filter { tagAllowed(it.pageUrl) }
+        return images.take(MAX_IMAGES).toList() to newState
     }
 
     private fun readRobots(address: String): String? {

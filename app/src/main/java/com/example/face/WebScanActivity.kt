@@ -196,6 +196,12 @@ class WebScanActivity : AppCompatActivity() {
         }
         groupButtons.forEach { moreOptions.addView(it) }
         moreOptions.addView(hint("Faster scans of one kind of site."))
+        moreOptions.addView(com.google.android.material.materialswitch.MaterialSwitch(this).apply {
+            text = "Amateur and homemade only"
+            isChecked = TagFocus.isOn(this@WebScanActivity)
+            setOnCheckedChangeListener { _, checked -> TagFocus.set(this@WebScanActivity, checked) }
+        })
+        moreOptions.addView(hint("On video and photo sites, only look at amateur, homemade, selfie and leaked tags. Much faster. Other sites are searched as usual."))
         moreOptions.addView(outlined("Recheck all saved images") { confirmRecheckAll() })
         moreOptions.addView(hint("Compare everything found before with your current photos again."))
         searchCard.addView(moreOptions)

@@ -269,7 +269,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         if (webScanMode) root.addView(resultSortRow)
         if (webScanMode) {
             root.addView(MaterialButton(this).apply {
-                text = "Search Xpics public links"
+                text = "Search indexed public pages"
                 isAllCaps = false
                 setOnClickListener {
                     val terms = EditText(this@IdentityMatchActivity).apply {
@@ -278,8 +278,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                         inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
                     }
                     MaterialAlertDialogBuilder(this@IdentityMatchActivity)
-                        .setTitle("Xpics text-only search")
-                        .setMessage("Search public search-engine results for pages on xpics.me. This does not download images or run face matching.")
+                        .setTitle("Public-page keyword search")
+                        .setMessage("Search-engine index only: Anonibx, SnapWins and Xpics public pages. Results open in your browser. This does not crawl or download images, or run face matching.")
                         .setView(terms)
                         .setNegativeButton("Cancel", null)
                         .setPositiveButton("Search") { _, _ ->
@@ -287,41 +287,9 @@ class IdentityMatchActivity : AppCompatActivity() {
                             if (query.isBlank()) {
                                 Toast.makeText(this@IdentityMatchActivity, "Enter search terms first.", Toast.LENGTH_SHORT).show()
                             } else {
+                                val indexedQuery = "($query) (site:anonibx.com OR site:snapwins.net OR site:xpics.me)"
                                 val searchUri = Uri.parse("https://duckduckgo.com/").buildUpon()
-                                    .appendQueryParameter("q", "($query) site:xpics.me")
-                                    .build()
-                                try {
-                                    startActivity(Intent(Intent.ACTION_VIEW, searchUri))
-                                } catch (_: Exception) {
-                                    Toast.makeText(this@IdentityMatchActivity, "No browser could open the search.", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        }
-                        .show()
-                }
-            })
-
-            root.addView(MaterialButton(this).apply {
-                text = "Search SnapWins public links"
-                isAllCaps = false
-                setOnClickListener {
-                    val terms = EditText(this@IdentityMatchActivity).apply {
-                        hint = "Enter your own name or search terms"
-                        setSingleLine(true)
-                        inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-                    }
-                    MaterialAlertDialogBuilder(this@IdentityMatchActivity)
-                        .setTitle("SnapWins text-only search")
-                        .setMessage("Search public search-engine results for pages on snapwins.net. This does not download images or run face matching.")
-                        .setView(terms)
-                        .setNegativeButton("Cancel", null)
-                        .setPositiveButton("Search") { _, _ ->
-                            val query = terms.text.toString().trim()
-                            if (query.isBlank()) {
-                                Toast.makeText(this@IdentityMatchActivity, "Enter search terms first.", Toast.LENGTH_SHORT).show()
-                            } else {
-                                val searchUri = Uri.parse("https://duckduckgo.com/").buildUpon()
-                                    .appendQueryParameter("q", "($query) site:snapwins.net")
+                                    .appendQueryParameter("q", indexedQuery)
                                     .build()
                                 try {
                                     startActivity(Intent(Intent.ACTION_VIEW, searchUri))

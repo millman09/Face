@@ -242,6 +242,9 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "LitErotica" to "https://literotica.com",
             "Nifty Archive" to "https://www.nifty.org",
             // Additional public platforms and directories
+            "Anonibx" to "anonibx.com"
+            "Snapwins" to "snapwins.net"
+            "Xpics" to "xpics.me"
             "AEBN" to "https://www.aebn.com",
             "Bang" to "https://www.bang.com",
             "JavLibrary" to "https://www.javlibrary.com",

@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.widget.LinearLayout
+import android.widget.EditText
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.ImageView
@@ -266,6 +267,40 @@ class IdentityMatchActivity : AppCompatActivity() {
             setOnClickListener { clearResults(); restoreSavedMatches(bestFirst = false) }
         }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(5) })
         if (webScanMode) root.addView(resultSortRow)
+        if (webScanMode) {
+            root.addView(MaterialButton(this).apply {
+                text = "Search Xpics public links"
+                isAllCaps = false
+                setOnClickListener {
+                    val terms = EditText(this@IdentityMatchActivity).apply {
+                        hint = "Enter your own name or search terms"
+                        setSingleLine(true)
+                        inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                    }
+                    MaterialAlertDialogBuilder(this@IdentityMatchActivity)
+                        .setTitle("Xpics text-only search")
+                        .setMessage("Search public search-engine results for pages on xpics.me. This does not download images or run face matching.")
+                        .setView(terms)
+                        .setNegativeButton("Cancel", null)
+                        .setPositiveButton("Search") { _, _ ->
+                            val query = terms.text.toString().trim()
+                            if (query.isBlank()) {
+                                Toast.makeText(this@IdentityMatchActivity, "Enter search terms first.", Toast.LENGTH_SHORT).show()
+                            } else {
+                                val searchUri = Uri.parse("https://duckduckgo.com/").buildUpon()
+                                    .appendQueryParameter("q", "($query) site:xpics.me")
+                                    .build()
+                                try {
+                                    startActivity(Intent(Intent.ACTION_VIEW, searchUri))
+                                } catch (_: Exception) {
+                                    Toast.makeText(this@IdentityMatchActivity, "No browser could open the search.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                        .show()
+                }
+            })
+        }
         val resultsScroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); isFillViewport = true }
         resultsScroll.addView(resultsContainer)
         root.addView(resultsScroll)

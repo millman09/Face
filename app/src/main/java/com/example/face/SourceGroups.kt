@@ -11,8 +11,8 @@ enum class SourceGroup(val title: String, val buttonLabel: String, private val h
     IMAGEBOARDS(
         "Imageboards and image hosts", "Imageboards and image hosts only",
         listOf(
-            "4chan.org", "anonibx.com", "motherless.com",
-            "imagefap.com", "pornpics.com", "xxx.gallery", "nudy.pics", "siss.pics", "pichunter.com",
+            "4chan.org", "anonibx.com", "xpics.me",
+            "imagefap.com", "pornpics.com","snapwins.net", "xxx.gallery", "nudy.pics", "siss.pics", "pichunter.com",
             "imagetwist.com", "imagebam.com", "imagevenue.com", "jpg.fish",
             "imgur.com", "imgbb.com", "postimages.org", "imgbox.com", "imgchest.com", "catbox.moe", "pixeldrain.com",
             "erome.com", "fapello.com", "socialmediagirls.com", "simpcity.su", "vipergirls.to", "planetsuzy.org",

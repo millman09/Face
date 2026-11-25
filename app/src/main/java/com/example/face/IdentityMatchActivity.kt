@@ -942,6 +942,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                                     val faceBox = if (possible && bestFace != null) MatchTuning.formatBox(bestFace!!, bitmap.width, bitmap.height) else null
                                     if (possible) {
                                         possibleMatches++
+                                        MatchEvidence.put(this, candidate.imageUrl, bitmap)
                                         previews += MatchPreview(
                                             candidate.id, candidate.pageUrl, candidate.imageUrl, similarity!!,
                                             makeResultPreview(bitmap), faceBox, MatchTuning.cropFace(bitmap, faceBox), candidate.postText
@@ -1079,11 +1080,15 @@ class IdentityMatchActivity : AppCompatActivity() {
     }
 
     /** Match image for display: from the short-lived cache when possible, otherwise downloaded and cached. */
-    private fun loadForDisplay(address: String): Bitmap {
+    /** The saved copy of a matched image if there is one, else the short-term cache, else a fresh download. */
+    private fun loadForDisplay(address: String, referer: String? = null): Bitmap {
+        MatchEvidence.get(this, address)?.let { saved ->
+            try { return decodeBytes(saved) } catch (_: Exception) { /* fall through */ }
+        }
         ImageCache.get(this, address)?.let { cached ->
             try { return decodeBytes(cached) } catch (_: Exception) { /* fall through and download again */ }
         }
-        val bitmap = downloadPublicImageInMemory(address)
+        val bitmap = downloadPublicImageInMemory(address, referer)
         try {
             val out = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
@@ -1368,47 +1373,96 @@ class IdentityMatchActivity : AppCompatActivity() {
         resultsContainer.removeAllViews()
     }
 
-    private fun restoreSavedMatches(bestFirst: Boolean = false, onlyCurrentRun: Boolean = false) {
+    private fun restoreSavedMatches(bestFirst: Boolean = false, onlyCurrentRun: Boolean = false, offset: Int = 0) {
         val generation = restoreGeneration
         val wanted = if (onlyCurrentRun) synchronized(currentRunMatchIds) { currentRunMatchIds.toSet() } else null
         if (wanted != null && wanted.isEmpty()) return
         restoreExecutor.execute {
             val db = PublicSourceDatabase(this)
-            val matches = try {
-                if (wanted == null) db.possibleMatches(30, bestFirst)
-                else db.possibleMatches(5000, bestFirst).filter { it.id in wanted }.take(30)
+            // One extra row tells us whether there's another page after this one.
+            val page = try {
+                if (wanted == null) db.possibleMatches(offset + RESTORE_PAGE + 1, bestFirst).drop(offset)
+                else db.possibleMatches(5000, bestFirst).filter { it.id in wanted }.drop(offset)
             } finally { db.close() }
-            var restored = 0
-            for (match in matches) {
-                try {
-                    val bitmap = loadForDisplay(match.imageUrl)
-                    val preview = makeResultPreview(bitmap)
-                    val faceCrop = try { MatchTuning.cropFace(bitmap, match.faceBox) } catch (_: Exception) { null }
-                    bitmap.recycle()
-                    runOnUiThread {
-                        if (generation == restoreGeneration && !isDestroyed) {
-                            addWebMatchPreview(match.id, match.pageUrl, match.imageUrl, match.similarity, preview, faceCrop, match.faceBox, match.confirmed, postText = match.postText)
+            val hasMore = page.size > RESTORE_PAGE
+            val matches = page.take(RESTORE_PAGE)
+            if (matches.isEmpty() && offset == 0 && !onlyCurrentRun) {
+                runOnUiThread {
+                    if (!isFinishing && generation == restoreGeneration) {
+                        status.text = if (resultsOnly) "No matches saved yet. Start a search from Find my face." else status.text
+                    }
+                }
+                return@execute
+            }
+            // Load a few at a time, but add the cards in list order.
+            val pool = Executors.newFixedThreadPool(4)
+            try {
+                val loads = matches.map { match ->
+                    pool.submit<Triple<Bitmap, Bitmap?, Boolean>> {
+                        try {
+                            val bitmap = loadForDisplay(match.imageUrl, match.pageUrl.ifBlank { null })
+                            val preview = makeResultPreview(bitmap)
+                            val faceCrop = try { MatchTuning.cropFace(bitmap, match.faceBox) } catch (_: Exception) { null }
+                            bitmap.recycle()
+                            Triple(preview, faceCrop, true)
+                        } catch (_: Exception) {
+                            // Gone from the site and never saved here: still list it, so it isn't silently lost.
+                            Triple(unavailablePlaceholder(), null, false)
                         }
                     }
-                    restored++
-                } catch (_: Exception) {
-                    // A previously public image may have been removed or become unavailable.
                 }
-            }
-            if (restored > 0 && !onlyCurrentRun) {
-                runOnUiThread {
-                    if (!isFinishing && generation == restoreGeneration) status.text = "Restored $restored saved possible match(es). Start a new search to find newly discovered images."
+                matches.forEachIndexed { index, match ->
+                    val (preview, faceCrop, loaded) = try { loads[index].get() } catch (_: Exception) { Triple(unavailablePlaceholder(), null, false) }
+                    runOnUiThread {
+                        if (generation == restoreGeneration && !isDestroyed) {
+                            addWebMatchPreview(match.id, match.pageUrl, match.imageUrl, match.similarity, preview, faceCrop, match.faceBox, match.confirmed, postText = match.postText, groupable = loaded)
+                        }
+                    }
+                }
+            } finally { pool.shutdown() }
+            runOnUiThread {
+                if (isFinishing || generation != restoreGeneration) return@runOnUiThread
+                if (offset == 0 && !onlyCurrentRun) {
+                    status.text = if (resultsOnly) "Showing your saved matches." else "Showing saved matches. Start a new search to find newly discovered images."
+                }
+                if (hasMore) {
+                    val more = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                        text = "Show more"
+                        isAllCaps = false
+                    }
+                    more.setOnClickListener {
+                        resultsContainer.removeView(more)
+                        restoreSavedMatches(bestFirst, onlyCurrentRun, offset + RESTORE_PAGE)
+                    }
+                    resultsContainer.addView(more)
                 }
             }
         }
     }
 
+    /** Stand-in picture for a saved match whose image can no longer be loaded. */
+    private fun unavailablePlaceholder(): Bitmap {
+        val bitmap = Bitmap.createBitmap(480, 320, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        canvas.drawColor(android.graphics.Color.rgb(40, 44, 58))
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.rgb(190, 195, 210)
+            textSize = 26f
+            textAlign = android.graphics.Paint.Align.CENTER
+        }
+        canvas.drawText("Image no longer available", 240f, 150f, paint)
+        canvas.drawText("(it may have been removed)", 240f, 190f, paint)
+        return bitmap
+    }
+
     private fun addWebMatchPreview(
         candidateId: Long, pageUrl: String, imageUrl: String, similarity: Float, preview: Bitmap,
-        faceCrop: Bitmap?, faceBox: String?, confirmed: Boolean, readOnly: Boolean = false, postText: String = ""
+        faceCrop: Bitmap?, faceBox: String?, confirmed: Boolean, readOnly: Boolean = false, postText: String = "",
+        groupable: Boolean = true,
     ) {
         // The same photo reposted on several sites becomes one card that lists every site it's on.
-        val hash = ImageHash.dHash(preview)
+        // (Placeholders for unavailable images all look alike, so they're never grouped.)
+        val hash = if (groupable) ImageHash.dHash(preview) else null
         val existing = if (hash == null) null
             else matchGroups.firstOrNull { it.hash != null && ImageHash.distance(it.hash, hash) <= ImageHash.SAME_IMAGE_DISTANCE }
         if (existing != null) {
@@ -1528,9 +1582,11 @@ class IdentityMatchActivity : AppCompatActivity() {
             setOnClickListener {
                 MatchTuning.record(this@IdentityMatchActivity, false, similarity)
                 val ids = group.candidateIds.toList()
+                val urls = group.imageUrls.toList()
                 restoreExecutor.execute {
                     val db = PublicSourceDatabase(this@IdentityMatchActivity)
                     try { ids.forEach { db.updateCandidateResult(it, "Not a match", similarity) } } finally { db.close() }
+                    urls.forEach { MatchEvidence.delete(this@IdentityMatchActivity, it) }
                 }
                 matchGroups.remove(group)
                 resultsContainer.removeView(card)
@@ -1824,6 +1880,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         @Volatile private var livePercent = 0
         @Volatile private var liveProgressVisible = false
         @Volatile private var runningGroup: SourceGroup? = null
+        private const val RESTORE_PAGE = 30
         @Volatile private var runningLocationKeywords: List<String> = emptyList()
         // Matches found by the search that is running now, so a reopened screen shows only those.
         private val currentRunMatchIds: MutableSet<Long> = java.util.Collections.synchronizedSet(mutableSetOf())

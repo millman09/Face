@@ -141,7 +141,7 @@ private val REMOVED_IN_20_HOSTS = listOf(
     "zenfolio.com",
 )
 
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 22) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 23) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -251,6 +251,8 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             db.execSQL("ALTER TABLE sources ADD COLUMN last_attempt INTEGER NOT NULL DEFAULT 0")
         }
         if (oldVersion < 22) db.execSQL("ALTER TABLE sources ADD COLUMN last_duration INTEGER NOT NULL DEFAULT 0")
+        // Motherless was dropped from the list; take it off existing installs too.
+        if (oldVersion < 23) removeSources(db, listOf("motherless.com"))
     }
 
     /** Deletes these sources (by host) along with their stored image links and crawl progress. */

@@ -17,6 +17,8 @@ data class WebsiteSource(
     /** Scans in a row that found no images or failed; see [isResting]. */
     val emptyRuns: Int = 0,
     val lastAttempt: Long = 0L,
+    /** How long the last scan of this site took; 0 = not measured yet. Used by [SourceOrder]. */
+    val lastDurationMs: Long = 0L,
 ) {
     /**
      * A site that came back empty or failed twice in a row (it blocks crawlers, needs a login, or has
@@ -139,7 +141,7 @@ private val REMOVED_IN_20_HOSTS = listOf(
     "zenfolio.com",
 )
 
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 21) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 22) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -149,7 +151,8 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
             base_url TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1,
             last_scan INTEGER NOT NULL DEFAULT 0, last_status TEXT NOT NULL DEFAULT 'Not scanned',
-            empty_runs INTEGER NOT NULL DEFAULT 0, last_attempt INTEGER NOT NULL DEFAULT 0
+            empty_runs INTEGER NOT NULL DEFAULT 0, last_attempt INTEGER NOT NULL DEFAULT 0,
+            last_duration INTEGER NOT NULL DEFAULT 0
         )""".trimIndent())
         db.execSQL("""CREATE TABLE candidates (
             id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER NOT NULL,
@@ -247,6 +250,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             db.execSQL("ALTER TABLE sources ADD COLUMN empty_runs INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE sources ADD COLUMN last_attempt INTEGER NOT NULL DEFAULT 0")
         }
+        if (oldVersion < 22) db.execSQL("ALTER TABLE sources ADD COLUMN last_duration INTEGER NOT NULL DEFAULT 0")
     }
 
     /** Deletes these sources (by host) along with their stored image links and crawl progress. */
@@ -526,9 +530,9 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
 
     @Synchronized fun sources(): List<WebsiteSource> {
         val result = mutableListOf<WebsiteSource>()
-        readableDatabase.rawQuery("SELECT id,name,base_url,enabled,last_scan,last_status,empty_runs,last_attempt FROM sources ORDER BY name COLLATE NOCASE", null).use { c ->
+        readableDatabase.rawQuery("SELECT id,name,base_url,enabled,last_scan,last_status,empty_runs,last_attempt,last_duration FROM sources ORDER BY name COLLATE NOCASE", null).use { c ->
             while (c.moveToNext()) result += WebsiteSource(
-                c.getLong(0), c.getString(1), c.getString(2), c.getInt(3) == 1, c.getLong(4), c.getString(5), c.getInt(6), c.getLong(7)
+                c.getLong(0), c.getString(1), c.getString(2), c.getInt(3) == 1, c.getLong(4), c.getString(5), c.getInt(6), c.getLong(7), c.getLong(8)
             )
         }
         return result
@@ -561,12 +565,15 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
     }
 
     /** [productive] = the scan found at least one image; otherwise the site's empty-run count goes up. */
-    @Synchronized fun updateSourceStatus(id: Long, status: String, successful: Boolean = true, productive: Boolean = successful) {
+    @Synchronized fun updateSourceStatus(
+        id: Long, status: String, successful: Boolean = true, productive: Boolean = successful, durationMs: Long = 0L,
+    ) {
         val now = System.currentTimeMillis()
         val values = ContentValues().apply {
             if (successful) put("last_scan", now)
             put("last_status", status.take(300))
             put("last_attempt", now)
+            if (durationMs > 0L) put("last_duration", durationMs)
         }
         writableDatabase.update("sources", values, "id=?", arrayOf(id.toString()))
         writableDatabase.execSQL(

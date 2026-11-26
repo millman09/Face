@@ -797,7 +797,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                     else SearchSession.startFresh(this)
                 val rescanBefore = sessionStart ?: (System.currentTimeMillis() - 24L * 60L * 60L * 1000L)
                 val now = System.currentTimeMillis()
-                val sources = enabledSources.filter {
+                // Quick sites first, then popular ones, slow or unreliable ones last (see SourceOrder).
+                val sources = SourceOrder.sort(enabledSources).filter {
                     !it.isResting(now) && (
                         it.lastScan == 0L || it.lastScan < rescanBefore ||
                             it.lastStatus.contains("0 public image", ignoreCase = true) ||
@@ -983,6 +984,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                             val hostLock = hostLocks.computeIfAbsent(host) { java.util.concurrent.Semaphore(1) }
                             awaitScanAllowed()
                             hostLock.acquire()
+                            val startedAt = android.os.SystemClock.elapsedRealtime()
                             try {
                                 val previousState = candidateDatabase.loadCrawlState(source.id)
                                 publishProgress(
@@ -999,15 +1001,24 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 }
                                 candidateDatabase.saveCrawlState(source.id, newState)
                                 val added = candidateDatabase.saveCandidates(discovered)
+                                // A site cut short by stopping the search keeps what it found, but isn't marked done.
+                                if (Thread.currentThread().isInterrupted) return@submit Triple(source, discovered.size, added)
                                 candidateDatabase.updateSourceStatus(
                                     source.id, "Checked; ${discovered.size} public image link(s), $added new",
-                                    productive = discovered.isNotEmpty()
+                                    productive = discovered.isNotEmpty(),
+                                    durationMs = android.os.SystemClock.elapsedRealtime() - startedAt
                                 )
                                 Triple(source, discovered.size, added)
                             } catch (e: Exception) {
+                                // Stopping the search interrupts sites mid-scan; that says nothing about the site,
+                                // so it mustn't count toward the "came back empty" rest.
+                                if (e is InterruptedException || Thread.currentThread().isInterrupted) {
+                                    return@submit Triple(source, -1, 0)
+                                }
                                 candidateDatabase.updateSourceStatus(
                                     source.id, "Could not scan: ${e.localizedMessage ?: "network error"}",
-                                    successful = false
+                                    successful = false,
+                                    durationMs = android.os.SystemClock.elapsedRealtime() - startedAt
                                 )
                                 Triple(source, -1, 0)
                             } finally { hostLock.release() }

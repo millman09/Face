@@ -36,8 +36,9 @@ object PublicImageLoader {
             var hops = 0
             while (true) {
                 val attempt = (URL(address).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 8000
-                    readTimeout = 12000
+                    // Short limits: a slow image host shouldn't hold up the images queued behind it.
+                    connectTimeout = 6000
+                    readTimeout = 9000
                     instanceFollowRedirects = false
                     requestMethod = "GET"
                     setRequestProperty("User-Agent", "FacePersonalScanner/1.0")

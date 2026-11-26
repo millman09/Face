@@ -758,6 +758,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         activeWebScan = executor.submit {
             var interpreter: Interpreter? = null
             var detector: FaceDetector? = null
+            var quickFaceDetector: FaceDetector? = null
             var downloadPool: java.util.concurrent.ExecutorService? = null
             val alignedReferences = mutableListOf<Bitmap>()
             val candidateDatabase = PublicSourceDatabase(this)
@@ -795,11 +796,15 @@ class IdentityMatchActivity : AppCompatActivity() {
                     else if (resumeSearch) SearchSession.unfinishedSince(this) ?: SearchSession.startFresh(this)
                     else SearchSession.startFresh(this)
                 val rescanBefore = sessionStart ?: (System.currentTimeMillis() - 24L * 60L * 60L * 1000L)
+                val now = System.currentTimeMillis()
                 val sources = enabledSources.filter {
-                    it.lastScan == 0L || it.lastScan < rescanBefore ||
-                        it.lastStatus.contains("0 public image", ignoreCase = true) ||
-                        it.lastStatus.startsWith("Could not scan", ignoreCase = true)
+                    !it.isResting(now) && (
+                        it.lastScan == 0L || it.lastScan < rescanBefore ||
+                            it.lastStatus.contains("0 public image", ignoreCase = true) ||
+                            it.lastStatus.startsWith("Could not scan", ignoreCase = true)
+                        )
                 }
+                val restingCount = enabledSources.count { it.isResting(now) }
                 // Sites already done earlier in this session still count toward the progress shown.
                 val alreadyDone = enabledSources.size - sources.size
                 val totalSites = enabledSources.size
@@ -817,6 +822,15 @@ class IdentityMatchActivity : AppCompatActivity() {
                         .build()
                 )
                 detector = activeDetector
+                // A quick first look on a small copy: most downloaded images have no usable face, and those
+                // are dropped here in a fraction of the time the full, accurate detector takes.
+                val quickDetector = FaceDetection.getClient(
+                    FaceDetectorOptions.Builder()
+                        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                        .setMinFaceSize(0.05f)
+                        .build()
+                )
+                quickFaceDetector = quickDetector
                 val photoHints = mutableListOf<String>()
                 var reusedCount = 0
                 val referenceEmbeddings = mutableListOf<FloatArray>()
@@ -882,22 +896,34 @@ class IdentityMatchActivity : AppCompatActivity() {
                     data class Downloaded(val candidate: StoredCandidate, val bitmap: Bitmap?, val error: String?)
                     data class MatchPreview(val id: Long, val pageUrl: String, val imageUrl: String, val score: Float, val bitmap: Bitmap, val faceBox: String?, val faceCrop: Bitmap?, val postText: String)
                     val completion = java.util.concurrent.ExecutorCompletionService<Downloaded>(activeDownloadPool)
-                    for (chunk in batch.chunked(12)) {
+                    // Keep downloads flowing: a new one starts as soon as any finishes, instead of each group of
+                    // 12 waiting for its slowest image. Results are still saved in groups of about 12.
+                    val queue = ArrayDeque(batch)
+                    var inFlight = 0
+                    fun submitNext() {
+                        val candidate = queue.removeFirstOrNull() ?: return
+                        inFlight++
+                        completion.submit(java.util.concurrent.Callable {
+                            try { Downloaded(candidate, downloadPublicImageInMemory(candidate.imageUrl, candidate.pageUrl.ifBlank { null }), null) }
+                            catch (e: Exception) { Downloaded(candidate, null, e.localizedMessage ?: "image unavailable") }
+                        })
+                    }
+                    repeat(12) { submitNext() }
+                    while (inFlight > 0) {
                         awaitScanAllowed()
-                        val futures = chunk.map { candidate ->
-                            completion.submit(java.util.concurrent.Callable {
-                                try { Downloaded(candidate, downloadPublicImageInMemory(candidate.imageUrl, candidate.pageUrl.ifBlank { null }), null) }
-                                catch (e: Exception) { Downloaded(candidate, null, e.localizedMessage ?: "image unavailable") }
-                            })
-                        }
                         val updates = mutableListOf<CandidateUpdate>()
                         val previews = mutableListOf<MatchPreview>()
-                        repeat(futures.size) {
+                        repeat(minOf(12, inFlight)) {
                             val downloaded = completion.take().get()
+                            inFlight--
+                            submitNext()
                             val candidate = downloaded.candidate
                             val bitmap = downloaded.bitmap
                             if (bitmap == null) {
                                 updates += CandidateUpdate(candidate.id, "Unavailable", null)
+                            } else if (!quickLookFindsFace(quickDetector, bitmap)) {
+                                bitmap.recycle()
+                                updates += CandidateUpdate(candidate.id, "Compared", null)
                             } else {
                                 try {
                                     val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
@@ -974,7 +1000,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 candidateDatabase.saveCrawlState(source.id, newState)
                                 val added = candidateDatabase.saveCandidates(discovered)
                                 candidateDatabase.updateSourceStatus(
-                                    source.id, "Checked; ${discovered.size} public image link(s), $added new"
+                                    source.id, "Checked; ${discovered.size} public image link(s), $added new",
+                                    productive = discovered.isNotEmpty()
                                 )
                                 Triple(source, discovered.size, added)
                             } catch (e: Exception) {
@@ -1015,7 +1042,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                     "Search finished. Checked ${completedSources + alreadyDone}/$totalSites public sources, discovered $addedTotal new image link(s), compared $checked new or retryable image(s), and found $possibleMatches possible match(es). $totalIndexed image links remain indexed for future incremental searches. Public-source coverage is limited to pages made accessible by each website; this is not a complete index of the internet. Review matches manually."
                 }
                 if (group == null) SearchSession.markComplete(this)
-                publishProgress("Source scan: 100% · $summary", 100, false)
+                val restingNote = if (restingCount > 0) " $restingCount site(s) that came back empty twice in a row were skipped; they're retried after a week." else ""
+                publishProgress("Source scan: 100% · $summary$restingNote", 100, false)
             } catch (e: Exception) {
                 publishProgress(
                     if (e is InterruptedException || Thread.currentThread().isInterrupted) {
@@ -1037,6 +1065,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                 }
                 alignedReferences.forEach { it.recycle() }
                 detector?.close()
+                quickFaceDetector?.close()
+                quickFaceDetector = null
                 interpreter?.close()
                 candidateDatabase.close()
             }
@@ -1535,6 +1565,24 @@ class IdentityMatchActivity : AppCompatActivity() {
     }
 
     /** Fetches a public HTTPS image into a bounded byte array. Scanning keeps it in memory only; see [loadForDisplay] for matches. */
+    /**
+     * Fast check on a copy at most 640px wide: false only when the quick detector is sure there's no face.
+     * Any error counts as "maybe", so the full detector still gets to look.
+     */
+    private fun quickLookFindsFace(quick: FaceDetector, bitmap: Bitmap): Boolean {
+        val scale = minOf(1f, 640f / maxOf(bitmap.width, bitmap.height))
+        val small = if (scale < 1f) {
+            Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt().coerceAtLeast(1), (bitmap.height * scale).toInt().coerceAtLeast(1), true)
+        } else bitmap
+        return try {
+            Tasks.await(quick.process(InputImage.fromBitmap(small, 0))).isNotEmpty()
+        } catch (_: Exception) {
+            true
+        } finally {
+            if (small !== bitmap) small.recycle()
+        }
+    }
+
     private fun downloadPublicImageInMemory(original: String, referer: String? = null): Bitmap =
         PublicImageLoader.download(original, referer)
 

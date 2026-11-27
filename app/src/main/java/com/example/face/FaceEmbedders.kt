@@ -34,6 +34,20 @@ object FaceEmbedders {
     const val IMPROVED_ENTRY = "w600k_mbf.onnx"
     const val IMPROVED_SHA256 = "9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f"
 
+    /**
+     * The large InsightFace model (w600k_r50, ResNet-50), used as a second, final check on faces that the
+     * main model scores anywhere near a match. Downloaded as a single file from a Hugging Face mirror, or
+     * from InsightFace's official buffalo_l package if the mirror is unavailable. Either way it's only
+     * installed if its SHA-256 matches the official file.
+     */
+    const val LARGE_FILE = "arcface_w600k_r50.onnx"
+    const val LARGE_MIRROR_URL = "https://huggingface.co/ykk648/face_lib/resolve/main/face_embedding/w600k_r50.onnx"
+    const val LARGE_OFFICIAL_URL = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
+    const val LARGE_ENTRY = "w600k_r50.onnx"
+    const val LARGE_SHA256 = "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
+    const val LARGE_BYTES = 174_383_860L
+    private const val KEY_EXTRA_ACCURATE = "extra_accurate"
+
     private const val PREFS = "face_model"
     private const val KEY_USE_ORIGINAL = "use_original"
 
@@ -45,6 +59,84 @@ object FaceEmbedders {
     }
 
     fun improvedFile(context: Context) = File(context.filesDir, IMPROVED_FILE)
+    fun largeFile(context: Context) = File(context.filesDir, LARGE_FILE)
+
+    /** "Extra-accurate checking" switch; on by default, but only takes effect once the large model is installed. */
+    fun extraAccurateWanted(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_EXTRA_ACCURATE, true)
+
+    fun setExtraAccurateWanted(context: Context, on: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_EXTRA_ACCURATE, on).apply()
+    }
+
+    /** The large model to use for the final check, or null if it's off or not installed. */
+    fun extraAccurateFile(context: Context): File? =
+        largeFile(context).takeIf { extraAccurateWanted(context) && it.exists() && it.length() == LARGE_BYTES }
+
+    /**
+     * Downloads and verifies the large model. [onProgress] gets a percentage. Tries the mirror first,
+     * then the official package. Throws on failure; nothing is installed unless the checksum matches.
+     */
+    fun downloadLarge(context: Context, onProgress: (Int) -> Unit) {
+        val target = largeFile(context)
+        val temp = File(context.filesDir, "$LARGE_FILE.tmp")
+        var lastError: Exception? = null
+        for (url in listOf(LARGE_MIRROR_URL, LARGE_OFFICIAL_URL)) {
+            try {
+                temp.delete()
+                val connection = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 20000
+                    readTimeout = 60000
+                    instanceFollowRedirects = true
+                }
+                try {
+                    require(connection.responseCode in 200..299) { "HTTP ${connection.responseCode}" }
+                    val digest = java.security.MessageDigest.getInstance("SHA-256")
+                    fun copy(input: java.io.InputStream) {
+                        var total = 0L
+                        temp.outputStream().use { out ->
+                            val buffer = ByteArray(128 * 1024)
+                            while (true) {
+                                if (Thread.currentThread().isInterrupted) throw InterruptedException()
+                                val n = input.read(buffer)
+                                if (n < 0) break
+                                total += n
+                                require(total <= LARGE_BYTES) { "File is larger than expected." }
+                                digest.update(buffer, 0, n)
+                                out.write(buffer, 0, n)
+                                onProgress((total * 100 / LARGE_BYTES).toInt())
+                            }
+                        }
+                    }
+                    if (url.endsWith(".zip")) {
+                        java.util.zip.ZipInputStream(java.io.BufferedInputStream(connection.inputStream)).use { zip ->
+                            var entry = zip.nextEntry
+                            while (entry != null && entry.name.substringAfterLast('/') != LARGE_ENTRY) entry = zip.nextEntry
+                            requireNotNull(entry) { "The package didn't contain the model." }
+                            copy(zip)
+                        }
+                    } else {
+                        java.io.BufferedInputStream(connection.inputStream).use { copy(it) }
+                    }
+                    val sha = digest.digest().joinToString("") { "%02x".format(it) }
+                    require(sha == LARGE_SHA256) { "The download didn't match the official file." }
+                } finally {
+                    connection.disconnect()
+                }
+                ArcFaceEmbedder(temp, "arcface-w600k-r50").close()
+                if (target.exists()) target.delete()
+                check(temp.renameTo(target)) { "Could not save the model." }
+                return
+            } catch (e: InterruptedException) {
+                temp.delete()
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                temp.delete()
+            }
+        }
+        throw lastError ?: IllegalStateException("Download failed.")
+    }
     fun originalFile(context: Context) = File(context.filesDir, ORIGINAL_FILE)
 
     /** The model file to use: the improved one unless the original was chosen, falling back to whichever is installed. */
@@ -82,8 +174,7 @@ private fun facePixels(bitmap: Bitmap, mirror: Boolean): IntArray {
  * Input is RGB, scaled to [-1, 1], channels first. The face and its mirror image are both measured and
  * averaged, which is steadier than one view.
  */
-class ArcFaceEmbedder(file: File) : FaceEmbedder {
-    override val id = "arcface-w600k-mbf"
+class ArcFaceEmbedder(file: File, override val id: String = "arcface-w600k-mbf") : FaceEmbedder {
     private val env = OrtEnvironment.getEnvironment()
     private val session: OrtSession = env.createSession(
         file.absolutePath,

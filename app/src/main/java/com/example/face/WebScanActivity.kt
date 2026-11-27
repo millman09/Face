@@ -36,6 +36,9 @@ class WebScanActivity : AppCompatActivity() {
     private lateinit var keywordProgressBar: ProgressBar
     private lateinit var keywordProgressText: TextView
     private var groupButtons: List<MaterialButton> = emptyList()
+    private lateinit var extraAccurateSwitch: com.google.android.material.materialswitch.MaterialSwitch
+    private lateinit var extraAccurateHint: TextView
+    @Volatile private var largeModelDownloading = false
     private lateinit var database: PublicSourceDatabase
     private val scanExecutor = Executors.newSingleThreadExecutor()
     private val keywordExecutor = Executors.newSingleThreadExecutor()
@@ -203,6 +206,14 @@ class WebScanActivity : AppCompatActivity() {
             setOnCheckedChangeListener { _, checked -> TagFocus.set(this@WebScanActivity, checked) }
         })
         moreOptions.addView(hint("On video and photo sites, only look at amateur, homemade, selfie, real couple, leaked, hidden cam and webcam tags. Much faster. Other sites are searched as usual."))
+        extraAccurateSwitch = com.google.android.material.materialswitch.MaterialSwitch(this).apply {
+            text = "Extra-accurate checking"
+            isChecked = FaceEmbedders.extraAccurateFile(this@WebScanActivity) != null
+            setOnCheckedChangeListener { _, checked -> onExtraAccurateToggled(checked) }
+        }
+        moreOptions.addView(extraAccurateSwitch)
+        extraAccurateHint = hint(extraAccurateDescription())
+        moreOptions.addView(extraAccurateHint)
         moreOptions.addView(outlined("Recheck all saved images") { confirmRecheckAll() })
         moreOptions.addView(hint("Compare everything found before with your current photos again."))
         moreOptions.addView(outlined("Start completely fresh") { confirmFreshStart() })
@@ -1244,6 +1255,69 @@ class WebScanActivity : AppCompatActivity() {
             }
             .setCancelable(false)
             .show()
+    }
+
+    private fun extraAccurateDescription(): String = when {
+        FaceEmbedders.extraAccurateFile(this) != null ->
+            "On. Close calls are double-checked with the large face model (better with angles, low light and blurry photos)."
+        FaceEmbedders.largeFile(this).exists() -> "Off. The large model is installed; turn this on to use it."
+        else -> "Double-check close calls with InsightFace's large face model. One-time download of 174 MB (use Wi‑Fi)."
+    }
+
+    private fun onExtraAccurateToggled(on: Boolean) {
+        if (largeModelDownloading) return
+        if (!on) {
+            FaceEmbedders.setExtraAccurateWanted(this, false)
+            extraAccurateHint.text = extraAccurateDescription()
+            return
+        }
+        FaceEmbedders.setExtraAccurateWanted(this, true)
+        if (FaceEmbedders.largeFile(this).let { it.exists() && it.length() == FaceEmbedders.LARGE_BYTES }) {
+            extraAccurateHint.text = extraAccurateDescription()
+            return
+        }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Download the large face model?")
+            .setMessage("It's 174 MB, so use Wi‑Fi. It's only installed if it matches InsightFace's official file. Your next search rechecks saved images with it, so that one takes longer.")
+            .setPositiveButton("Download") { _, _ -> downloadLargeModel() }
+            .setNegativeButton("Not now") { _, _ ->
+                FaceEmbedders.setExtraAccurateWanted(this, false)
+                extraAccurateSwitch.isChecked = false
+                extraAccurateHint.text = extraAccurateDescription()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    private fun downloadLargeModel() {
+        largeModelDownloading = true
+        extraAccurateSwitch.isEnabled = false
+        extraAccurateHint.text = "Downloading the large face model… 0%"
+        Thread {
+            var lastShown = -1
+            val error = try {
+                FaceEmbedders.downloadLarge(this) { percent ->
+                    if (percent != lastShown && percent % 2 == 0) {
+                        lastShown = percent
+                        runOnUiThread { if (!isDestroyed) extraAccurateHint.text = "Downloading the large face model… $percent%" }
+                    }
+                }
+                null
+            } catch (e: Exception) { e.localizedMessage ?: "unknown error" }
+            runOnUiThread {
+                largeModelDownloading = false
+                if (isDestroyed) return@runOnUiThread
+                extraAccurateSwitch.isEnabled = true
+                if (error != null) {
+                    FaceEmbedders.setExtraAccurateWanted(this, false)
+                    extraAccurateSwitch.isChecked = false
+                    extraAccurateHint.text = "Download failed ($error). Turn the switch on to try again."
+                } else {
+                    extraAccurateHint.text = extraAccurateDescription()
+                    Toast.makeText(this, "Large face model installed. It's used from your next search.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
     }
 
     /** Wipes all scan progress (not matches) so the next search starts from zero. */

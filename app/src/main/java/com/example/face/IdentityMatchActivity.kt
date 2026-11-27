@@ -843,6 +843,7 @@ class IdentityMatchActivity : AppCompatActivity() {
             var interpreter: FaceEmbedder? = null
             var detector: FaceDetector? = null
             var quickFaceDetector: FaceDetector? = null
+            var largeEmbedder: FaceEmbedder? = null
             var downloadPool: java.util.concurrent.ExecutorService? = null
             val alignedReferences = mutableListOf<Bitmap>()
             val candidateDatabase = PublicSourceDatabase(this)
@@ -858,7 +859,11 @@ class IdentityMatchActivity : AppCompatActivity() {
                 // face set, so when the photos change every stored image is compared again.
                 var photosChanged = false
                 // Includes the model, so switching models also rechecks every saved image with the new one.
-                val referenceFingerprint = ReferenceEmbeddingCache.fingerprint(this, references, FaceEmbedders.idFor(model))
+                // Extra-accurate checking (the large model as a final check) also changes scores, so it's part of it.
+                val largeModelFile = FaceEmbedders.extraAccurateFile(this)
+                val referenceFingerprint = ReferenceEmbeddingCache.fingerprint(
+                    this, references, FaceEmbedders.idFor(model) + if (largeModelFile != null) "+r50" else ""
+                )
                 if (referenceFingerprint != null) {
                     val previousFingerprint = scanState.getString("reference_fingerprint", null)
                     if (previousFingerprint != null && previousFingerprint != referenceFingerprint) {
@@ -922,10 +927,19 @@ class IdentityMatchActivity : AppCompatActivity() {
                 val photoHints = mutableListOf<String>()
                 var reusedCount = 0
                 val referenceEmbeddings = mutableListOf<FloatArray>()
+                // Final-check model (see FaceEmbedders.LARGE_FILE). Faces the main model scores near a match are
+                // measured again with it, and its score is the one kept.
+                val finalChecker: FaceEmbedder? = largeModelFile?.let {
+                    try { ArcFaceEmbedder(it, "arcface-w600k-r50") } catch (_: Exception) { null }
+                }
+                largeEmbedder = finalChecker
+                val finalReferenceEmbeddings = mutableListOf<FloatArray>()
                 references.forEachIndexed { index, uri ->
                     val cached = ReferenceEmbeddingCache.get(this, uri, activeInterpreter.id)
-                    if (cached != null) {
+                    val cachedFinal = finalChecker?.let { ReferenceEmbeddingCache.get(this, uri, it.id) }
+                    if (cached != null && (finalChecker == null || cachedFinal != null)) {
                         referenceEmbeddings += cached
+                        cachedFinal?.let { finalReferenceEmbeddings += it }
                         reusedCount++
                         return@forEachIndexed
                     }
@@ -936,9 +950,16 @@ class IdentityMatchActivity : AppCompatActivity() {
                             ?: throw IllegalArgumentException("No face found in reference photo ${index + 1}.")
                         MatchTuning.photoHint(bitmap, face, index + 1)?.let { photoHints += it }
                         val aligned = alignFace(bitmap, face)
-                        val embedding = try { activeInterpreter.embed(aligned) } finally { aligned.recycle() }
-                        referenceEmbeddings += embedding
-                        ReferenceEmbeddingCache.put(this, uri, embedding, activeInterpreter.id)
+                        try {
+                            val embedding = activeInterpreter.embed(aligned)
+                            referenceEmbeddings += embedding
+                            ReferenceEmbeddingCache.put(this, uri, embedding, activeInterpreter.id)
+                            if (finalChecker != null) {
+                                val finalEmbedding = finalChecker.embed(aligned)
+                                finalReferenceEmbeddings += finalEmbedding
+                                ReferenceEmbeddingCache.put(this, uri, finalEmbedding, finalChecker.id)
+                            }
+                        } finally { aligned.recycle() }
                     } finally {
                         bitmap.recycle()
                     }
@@ -946,6 +967,7 @@ class IdentityMatchActivity : AppCompatActivity() {
 
                 if (references.size == 1) photoHints += "Add 2–3 more photos of you (different angle or lighting) for better matching."
                 if (reusedCount > 0) photoHints += "Reused $reusedCount previously-computed reference face(s) to start faster."
+                if (finalChecker != null) photoHints += "Extra-accurate checking is on: close calls are double-checked with the large face model."
                 if (photosChanged) photoHints += "Your reference photos changed, so images checked before are being compared again with the new photos."
                 onLiveUi {
                     hintView.text = photoHints.joinToString("\n")
@@ -1018,27 +1040,39 @@ class IdentityMatchActivity : AppCompatActivity() {
                                     val faces = Tasks.await(activeDetector.process(InputImage.fromBitmap(bitmap, 0)))
                                     var best: Float? = null
                                     var bestFace: Face? = null
+                                    // Scores one face with a model: its own crop, plus a slightly wider crop for close
+                                    // calls (catches faces framed a little tightly or at a tilt).
+                                    fun scoreFace(model: FaceEmbedder, refs: List<FloatArray>, face: Face): Float {
+                                        val aligned = alignFace(bitmap, face)
+                                        var score = try {
+                                            val embedding = model.embed(aligned)
+                                            model.calibrate(combineReferenceScores(refs.map { reference -> cosineSimilarity(reference, embedding) }))
+                                        } finally { aligned.recycle() }
+                                        if (score >= weakThreshold - 0.06f && score < threshold + 0.06f) {
+                                            val wider = alignFace(bitmap, face, zoom = 0.9f)
+                                            try {
+                                                val second = model.embed(wider)
+                                                val secondScore = model.calibrate(combineReferenceScores(refs.map { reference -> cosineSimilarity(reference, second) }))
+                                                if (secondScore > score) score = secondScore
+                                            } finally { wider.recycle() }
+                                        }
+                                        return score
+                                    }
                                     for (face in faces) {
                                         if (!isUsableFace(face)) continue
-                                        var aligned: Bitmap? = null
                                         try {
-                                            aligned = alignFace(bitmap, face)
-                                            val candidateEmbedding = activeInterpreter.embed(aligned)
-                                            var faceScore = activeInterpreter.calibrate(combineReferenceScores(referenceEmbeddings.map { reference -> cosineSimilarity(reference, candidateEmbedding) }))
-                                            // Close calls get a second look from a slightly wider crop, which catches
-                                            // faces the detector framed a little tightly or at a tilt.
-                                            if (faceScore >= weakThreshold - 0.06f && faceScore < threshold + 0.06f) {
-                                                val wider = alignFace(bitmap, face, zoom = 0.9f)
-                                                try {
-                                                    val second = activeInterpreter.embed(wider)
-                                                    val secondScore = activeInterpreter.calibrate(combineReferenceScores(referenceEmbeddings.map { reference -> cosineSimilarity(reference, second) }))
-                                                    if (secondScore > faceScore) faceScore = secondScore
-                                                } finally { wider.recycle() }
+                                            var faceScore = scoreFace(activeInterpreter, referenceEmbeddings, face)
+                                            // Anything near a match gets the final word from the large model, which is
+                                            // better at angles, low light and low-quality photos. Clearly different
+                                            // faces skip it, which keeps searches fast.
+                                            if (finalChecker != null && finalReferenceEmbeddings.size == referenceEmbeddings.size &&
+                                                faceScore >= weakThreshold - 0.12f) {
+                                                faceScore = scoreFace(finalChecker, finalReferenceEmbeddings, face)
                                             }
                                             if (best == null || faceScore > best!!) { best = faceScore; bestFace = face }
                                         } catch (_: IllegalArgumentException) {
                                             // Faces without the five required landmarks cannot be aligned.
-                                        } finally { aligned?.recycle() }
+                                        }
                                     }
                                     val similarity = best
                                     // Slightly below the threshold still gets shown, labelled as a weak match,
@@ -1180,6 +1214,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 quickFaceDetector?.close()
                 quickFaceDetector = null
                 interpreter?.close()
+                largeEmbedder?.close()
                 candidateDatabase.close()
             }
         }

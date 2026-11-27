@@ -864,6 +864,7 @@ object PublicSourceScanner {
     // One slow or half-dead site shouldn't hold a crawl slot for the whole search. When either limit
     // is hit, the unvisited pages are saved and the next search carries on from there.
     private const val SOURCE_TIME_BUDGET_MS = 4L * 60L * 1000L
+    private const val TAG_FOCUS_TIME_BUDGET_MS = 7L * 60L * 1000L
     private const val MAX_CONSECUTIVE_PAGE_FAILURES = 12
 
     /**
@@ -885,7 +886,9 @@ object PublicSourceScanner {
         val tagApproved = HashSet<String>()
         fun tagAllowed(page: String) = !tagFocus || TagFocus.matches(page) || page in tagApproved
         onProgress("Checking public access rules (robots.txt)")
-        val deadline = System.currentTimeMillis() + SOURCE_TIME_BUDGET_MS
+        // Amateur-only scans of tagged sites are narrow, so they get extra time to go further back.
+        val deadline = System.currentTimeMillis() +
+            if (amateurFocus && TagFocus.appliesTo(source)) TAG_FOCUS_TIME_BUDGET_MS else SOURCE_TIME_BUDGET_MS
         fun shouldStop() = Thread.currentThread().isInterrupted || System.currentTimeMillis() > deadline
         // A timeout, server error, or forbidden robots.txt response means skip this host.
         // A genuine 404 means the site has no robots file and can be crawled normally.
@@ -1028,7 +1031,9 @@ object PublicSourceScanner {
                 if (link !in visitedPages && link !in queued &&
                     sameHost(base, link) && !isDisallowed(link, rules) && isLikelyHtmlPage(link)) {
                     if (onTagPage) tagApproved.add(link)
-                    pageQueue.addLast(link)
+                    // More amateur listing pages (page 2, 3, ... and related tags) jump the queue, so each search
+                    // reaches further back into older uploads; the videos they list are visited after.
+                    if (onTagPage && TagFocus.matches(link)) pageQueue.addFirst(link) else pageQueue.addLast(link)
                     queued.add(link)
                     linkedPagesQueued++
                 }

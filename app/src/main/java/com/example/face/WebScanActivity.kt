@@ -43,6 +43,7 @@ class WebScanActivity : AppCompatActivity() {
     private val scanExecutor = Executors.newSingleThreadExecutor()
     private val keywordExecutor = Executors.newSingleThreadExecutor()
     private var referencePhotos: List<Uri> = emptyList()
+    private lateinit var referenceTip: TextView
     // The search waiting on the "run in the background" prompt; it starts once the prompt closes, whatever the answer.
     private var groupAwaitingBatteryPrompt: SourceGroup? = null
     private var searchAwaitingBatteryPrompt = false
@@ -57,7 +58,9 @@ class WebScanActivity : AppCompatActivity() {
 
     private val referencePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
-            referencePhotos = uris.distinct()
+            // Adds to the photos you already have (instead of replacing them), up to MAX_REFERENCE_PHOTOS.
+            referencePhotos = (referencePhotos + uris).distinct().take(MAX_REFERENCE_PHOTOS)
+            saveReferencePhotos()
             referencePhotos.forEach { uri ->
                 try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
             }
@@ -122,6 +125,12 @@ class WebScanActivity : AppCompatActivity() {
             addView(referencePreview)
         }
         uploadCard.addView(previewScroll)
+        referenceTip = TextView(this).apply {
+            textSize = 12f
+            setTextColor(android.graphics.Color.rgb(150, 157, 178))
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        uploadCard.addView(referenceTip)
         uploadCard.addView(button("＋  Add reference photos") {
             referencePicker.launch(arrayOf("image/*"))
         }.apply {
@@ -177,7 +186,7 @@ class WebScanActivity : AppCompatActivity() {
         searchCard.addView(startSearchButton)
         searchCard.addView(hint("Checks the built-in list of sites and compares every face it finds with your photos."))
         searchCard.addView(outlined("Reverse image search my photos") { chooseReverseSearch() })
-        searchCard.addView(hint("Yandex, Google Lens or Bing search their whole index for your photo. Finds the most."))
+        searchCard.addView(hint("Yandex, Google Lens, Bing, or face search engines like PimEyes and FaceCheck.ID. They search billions of images, so this finds the most."))
 
         val moreOptions = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -314,6 +323,7 @@ class WebScanActivity : AppCompatActivity() {
             LinearLayout.LayoutParams.MATCH_PARENT, dp(10)
         ).apply { bottomMargin = dp(12) })
 
+        referencePhotos = loadSavedReferencePhotos()
         renderReferencePhotos()
         // The first SQLite open may create and seed the full catalogue. Do it off the UI thread.
         scanExecutor.execute {
@@ -330,10 +340,28 @@ class WebScanActivity : AppCompatActivity() {
         }
     }
 
+    /** Remembers your photos between visits, so a set of 5–10 doesn't have to be picked again each time. */
+    private fun saveReferencePhotos() {
+        getSharedPreferences("reference_photos", MODE_PRIVATE).edit()
+            .putString("uris", referencePhotos.joinToString("\n")).apply()
+    }
+
+    private fun loadSavedReferencePhotos(): List<Uri> {
+        val saved = getSharedPreferences("reference_photos", MODE_PRIVATE).getString("uris", null) ?: return emptyList()
+        val held = contentResolver.persistedUriPermissions.filter { it.isReadPermission }.map { it.uri }.toSet()
+        // Only photos the app can still read (a deleted photo, or one whose access was revoked, is dropped).
+        return saved.split('\n').filter { it.isNotBlank() }.map { Uri.parse(it) }.filter { it in held }
+    }
+
     private fun renderReferencePhotos() {
         referencePreview.removeAllViews()
         referenceCount.text = if (referencePhotos.isEmpty()) "No photos selected" else
             "${referencePhotos.size} photo${if (referencePhotos.size == 1) "" else "s"} ready to scan"
+        referenceTip.text = when {
+            referencePhotos.isEmpty() -> "Add 5–10 clear photos of yourself. Variety helps most: different angles and lighting, with and without makeup or glasses, and from different years."
+            referencePhotos.size < 5 -> "Add ${5 - referencePhotos.size} more for better matching. Mix angles, lighting, makeup or glasses, and older photos."
+            else -> "Good set. Photos from different years or very different lighting still help."
+        }
         referencePhotos.forEachIndexed { index, uri ->
             val image = ImageView(this).apply {
                 layoutParams = LinearLayout.LayoutParams(dp(88), dp(88)).apply { marginEnd = dp(8) }
@@ -352,6 +380,7 @@ class WebScanActivity : AppCompatActivity() {
                         .setNegativeButton("Keep", null)
                         .setPositiveButton("Remove") { _, _ ->
                             referencePhotos = referencePhotos.filterIndexed { i, _ -> i != index }
+                            saveReferencePhotos()
                             renderReferencePhotos()
                             setSearchEnabled(referencePhotos.isNotEmpty())
                             status.text = if (referencePhotos.isEmpty()) "Choose at least one reference photo to begin." else
@@ -1485,4 +1514,7 @@ class WebScanActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
+    companion object {
+        private const val MAX_REFERENCE_PHOTOS = 12
+    }
 }

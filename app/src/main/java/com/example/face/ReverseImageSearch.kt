@@ -40,6 +40,26 @@ object ReverseImageSearch {
             "https://www.bing.com/visualsearch",
             "Tap \"Browse\" or the camera icon and upload your photo.",
         ),
+        // Dedicated face search engines: they've indexed billions of images and match faces, not just
+        // copies of the same picture, so they find far more than the app's own scan. Website only.
+        PIMEYES(
+            "PimEyes (face search · links cost extra)",
+            emptyList(),
+            "https://pimeyes.com/en",
+            "Tap the camera icon, upload your photo, and confirm the terms. Seeing full result links needs a paid plan.",
+        ),
+        FACECHECK(
+            "FaceCheck.ID (face search)",
+            emptyList(),
+            "https://facecheck.id/",
+            "Tap \"Upload\", choose your photo, then \"Search Internet by Face\".",
+        ),
+        LENSO(
+            "Lenso.ai (face search)",
+            emptyList(),
+            "https://lenso.ai/en",
+            "Upload your photo, then choose the \"People\" results.",
+        ),
     }
 
     /** Opens [engine] with [photo]: in its app when installed, otherwise its website with upload instructions. */

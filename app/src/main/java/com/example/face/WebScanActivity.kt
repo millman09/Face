@@ -205,6 +205,8 @@ class WebScanActivity : AppCompatActivity() {
         moreOptions.addView(hint("On video and photo sites, only look at amateur, homemade, selfie, real couple, leaked, hidden cam and webcam tags. Much faster. Other sites are searched as usual."))
         moreOptions.addView(outlined("Recheck all saved images") { confirmRecheckAll() })
         moreOptions.addView(hint("Compare everything found before with your current photos again."))
+        moreOptions.addView(outlined("Start completely fresh") { confirmFreshStart() })
+        moreOptions.addView(hint("Forget all scan progress so every site is searched again from the beginning. Your matches are kept."))
         searchCard.addView(moreOptions)
 
         status = TextView(this).apply {
@@ -1241,6 +1243,37 @@ class WebScanActivity : AppCompatActivity() {
                 startNewScan(group, batteryChecked = true, resume = resume)
             }
             .setCancelable(false)
+            .show()
+    }
+
+    /** Wipes all scan progress (not matches) so the next search starts from zero. */
+    private fun confirmFreshStart() {
+        val running = IdentityMatchActivity.isScanRunning()
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Start completely fresh?")
+            .setMessage((if (running) "This stops the search that's running now. " else "") +
+                "Every site's scan progress and every image checked so far will be forgotten, so the next search starts from the beginning and takes the full time. Your matches and the ones you marked \"Not a match\" are kept.")
+            .setPositiveButton(if (running) "Stop and reset" else "Reset") { _, _ ->
+                status.text = if (running) "Stopping the search…" else "Resetting…"
+                Thread {
+                    if (IdentityMatchActivity.isScanRunning()) {
+                        IdentityMatchActivity.cancelRunningScan()
+                        var waited = 0
+                        while (IdentityMatchActivity.isScanRunning() && waited < 30_000) {
+                            Thread.sleep(250)
+                            waited += 250
+                        }
+                    }
+                    val ok = !IdentityMatchActivity.isScanRunning() &&
+                        try { database.resetForFreshStart(); true } catch (_: Exception) { false }
+                    if (ok) SearchSession.clear(this)
+                    runOnUiThread {
+                        refreshRunningScanButtons()
+                        Toast.makeText(this, if (ok) "Reset. Tap \"Scan sites for my face\" to start fresh." else "Couldn't reset. Try again.", Toast.LENGTH_LONG).show()
+                    }
+                }.start()
+            }
+            .setNegativeButton("Cancel", null)
             .show()
     }
 

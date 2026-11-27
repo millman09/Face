@@ -28,6 +28,11 @@ object SearchSession {
         return now
     }
 
+    /** Forgets the unfinished search entirely (used by "Start completely fresh"). */
+    fun clear(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_STARTED).putBoolean(KEY_COMPLETE, true).apply()
+    }
+
     fun markComplete(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_COMPLETE, true).apply()
     }

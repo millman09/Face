@@ -540,6 +540,24 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         return result
     }
 
+    /**
+     * "Start completely fresh": forgets every site's scan progress and every image compared so far, so the
+     * next search crawls each site from the start and compares everything again. Matches (possible and
+     * confirmed) and ones you marked "Not a match" are kept.
+     */
+    @Synchronized fun resetForFreshStart() {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("crawl_state", null, null)
+            db.execSQL("UPDATE sources SET last_scan=0, last_status='Not scanned', empty_runs=0, last_attempt=0, last_duration=0")
+            db.delete("candidates", "scan_status NOT IN ('Possible match','Confirmed match','Not a match')", null)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     @Synchronized fun setEnabled(id: Long, enabled: Boolean) {
         writableDatabase.execSQL("UPDATE sources SET enabled=? WHERE id=?", arrayOf(if (enabled) 1 else 0, id))
     }

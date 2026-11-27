@@ -221,8 +221,10 @@ class IdentityMatchActivity : AppCompatActivity() {
             isAllCaps = false
             visibility = android.view.View.GONE
             setOnClickListener {
+                cancelRequested = true
+                paused = false
                 activeWebScan?.cancel(true)
-                status.text = "Cancelling search…"
+                status.text = "Stopping the search…"
             }
         }
         scanControlsRow.addView(cancelButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(5) })
@@ -831,6 +833,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         updateReady()
         DeepSearchKeepAliveService.start(this)
         liveUi = java.lang.ref.WeakReference(this)
+        cancelRequested = false
         runningGroup = sourceGroup
         runningLocationKeywords = searchLocationKeywords
         currentRunMatchIds.clear()
@@ -996,6 +999,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         val updates = mutableListOf<CandidateUpdate>()
                         val previews = mutableListOf<MatchPreview>()
                         repeat(minOf(12, inFlight)) {
+                            if (cancelRequested) throw InterruptedException("Search cancelled")
                             val downloaded = completion.take().get()
                             inFlight--
                             submitNext()
@@ -1047,7 +1051,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                                         )
                                     }
                                     updates += CandidateUpdate(candidate.id, if (possible) "Possible match" else "Compared", if (possible) similarity else null, faceBox)
-                                } catch (_: Exception) {
+                                } catch (e: Exception) {
+                                    if (e is InterruptedException || cancelRequested) throw InterruptedException("Search cancelled")
                                     updates += CandidateUpdate(candidate.id, "Unavailable", null)
                                 } finally { bitmap.recycle() }
                             }
@@ -1073,6 +1078,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         completion.submit {
                             val host = URL(source.baseUrl).host.lowercase(java.util.Locale.US)
                             val hostLock = hostLocks.computeIfAbsent(host) { java.util.concurrent.Semaphore(1) }
+                            if (cancelRequested) return@submit Triple(source, -1, 0)
                             awaitScanAllowed()
                             hostLock.acquire()
                             val startedAt = android.os.SystemClock.elapsedRealtime()
@@ -1116,7 +1122,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         }
                     }
                     repeat(sources.size) {
-                        if (Thread.currentThread().isInterrupted) throw InterruptedException("Search cancelled")
+                        if (Thread.currentThread().isInterrupted || cancelRequested) throw InterruptedException("Search cancelled")
                         val (source, discoveredCount, added) = completion.take().get()
                         completedSources++
                         addedTotal += added
@@ -1148,7 +1154,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                 publishProgress("Source scan: 100% · $summary$restingNote", 100, false)
             } catch (e: Exception) {
                 publishProgress(
-                    if (e is InterruptedException || Thread.currentThread().isInterrupted) {
+                    if (e is InterruptedException || Thread.currentThread().isInterrupted || cancelRequested ||
+                        e.cause is InterruptedException) {
                         "Search stopped. Tap \"Continue where you left off\" on the search screen to pick it up again."
                     } else {
                         "Automatic scan or matching could not finish: ${e.localizedMessage ?: "unknown error"}"
@@ -1179,6 +1186,7 @@ class IdentityMatchActivity : AppCompatActivity() {
     private fun awaitScanAllowed() {
         var shown: String? = null
         while (true) {
+            if (cancelRequested) throw InterruptedException("Search cancelled")
             val reason = if (paused) "Paused. Tap Resume to continue." else AppSettings.scanBlockedReason(this)
             if (reason == null) {
                 if (shown != null) publishProgress("Resuming…", null, null)
@@ -1800,6 +1808,12 @@ class IdentityMatchActivity : AppCompatActivity() {
         @Volatile private var activeWebScan: java.util.concurrent.Future<*>? = null
         @Volatile private var paused = false
         @Volatile private var scanRunning = false
+        /**
+         * Set by "Cancel search". Interrupting the scan thread alone wasn't enough: face detection and image
+         * steps catch errors broadly, which swallowed the interrupt, so the search kept going. The scan now
+         * checks this flag between images and between sites.
+         */
+        @Volatile private var cancelRequested = false
         // Loading saved matches runs separately so it isn't stuck in line behind a running scan.
         private val restoreExecutor = Executors.newSingleThreadExecutor()
         // The screen currently showing the running scan. The scan reports to whichever screen this points
@@ -1818,5 +1832,12 @@ class IdentityMatchActivity : AppCompatActivity() {
 
         /** True while a deep search is running in the background, whether or not its screen is open. */
         fun isScanRunning() = scanRunning
+
+        /** Asks the running search to stop (same as its Cancel button). Returns at once; the search winds down shortly. */
+        fun cancelRunningScan() {
+            cancelRequested = true
+            paused = false
+            activeWebScan?.cancel(true)
+        }
     }
 }

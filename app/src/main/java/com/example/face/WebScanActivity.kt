@@ -225,6 +225,8 @@ class WebScanActivity : AppCompatActivity() {
         moreOptions.addView(extraAccurateHint)
         moreOptions.addView(outlined("Recheck all saved images") { confirmRecheckAll() })
         moreOptions.addView(hint("Compare everything found before with your current photos again."))
+        moreOptions.addView(outlined("Site status") { startActivity(Intent(this, SiteStatusActivity::class.java)) })
+        moreOptions.addView(hint("See which sites are working on your phone, and turn off the ones that aren't."))
         moreOptions.addView(outlined("Start completely fresh") { confirmFreshStart() })
         moreOptions.addView(hint("Forget all scan progress so every site is searched again from the beginning. Your matches are kept."))
         searchCard.addView(moreOptions)

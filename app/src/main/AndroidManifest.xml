@@ -59,6 +59,11 @@
             android:theme="@style/Theme.Face" />
 
         <activity
+            android:name=".SiteStatusActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Face" />
+
+        <activity
             android:name=".SavedImagesActivity"
             android:exported="false"
             android:theme="@style/Theme.Face" />

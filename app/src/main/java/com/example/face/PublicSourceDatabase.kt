@@ -141,7 +141,37 @@ private val REMOVED_IN_20_HOSTS = listOf(
     "zenfolio.com",
 )
 
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 24) {
+/**
+ * Sources removed in database version 25: sites the scanner can't get anything from. They're login-only
+ * (OnlyFans, FetLife, dating sites), app-only (Feeld, KinkD), don't allow adult images publicly (Tumblr,
+ * Pinterest, Flickr, X, VK), or build their pages in a way a plain scanner can't read (Bluesky, Mastodon).
+ */
+private val REMOVED_IN_25_HOSTS = listOf(
+    "onlyfans.com",
+    "fansly.com",
+    "fanvue.com",
+    "fetlife.com",
+    "adultfriendfinder.com",
+    "ashleymadison.com",
+    "seeking.com",
+    "whatsyourprice.com",
+    "sdc.com",
+    "kasidie.com",
+    "alt.com",
+    "collarme.com",
+    "collar.space",
+    "feeld.co",
+    "kinkd.app",
+    "tumblr.com",
+    "pinterest.com",
+    "flickr.com",
+    "x.com",
+    "vk.com",
+    "bsky.app",
+    "mastodon.social",
+)
+
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 25) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -258,6 +288,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             removeSources(db, listOf("reddit.com"))
             seedSources(db)
         }
+        if (oldVersion < 25) removeSources(db, REMOVED_IN_25_HOSTS)
     }
 
     /** Deletes these sources (by host) along with their stored image links and crawl progress. */
@@ -310,18 +341,11 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "Siss.pics" to "https://siss.pics",
             "Fapello" to "https://fapello.com",
             // Creator and community platforms
-            "OnlyFans" to "https://onlyfans.com",
-            "Fansly" to "https://fansly.com",
-            "Fanvue" to "https://www.fanvue.com",
             "ManyVids" to "https://www.manyvids.com",
             "Clips4Sale" to "https://www.clips4sale.com",
             "JustForFans" to "https://justfor.fans",
             "LoyalFans" to "https://www.loyalfans.com",
-            "FetLife" to "https://fetlife.com",
             "Fabswingers" to "https://www.fabswingers.com",
-            "AdultFriendFinder" to "https://adultfriendfinder.com",
-            "Collarspace" to "https://collar.space",
-            "KinkD" to "https://kinkd.app",
             // Adult forums and discussion communities
             "PornBB Forum" to "https://www.pornbb.org",
             "Phun Forum" to "https://www.phun.org",
@@ -370,8 +394,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "ImageBam" to "https://www.imagebam.com",
             "ImageVenue" to "https://www.imagevenue.com",
             "JPG Fish" to "https://jpg.fish",
-            "Flickr" to "https://www.flickr.com",
-            "Tumblr" to "https://www.tumblr.com",
             "Marriage Heat" to "https://marriageheat.com",
             "ChatZoZo" to "https://chatzozo.com",
             "Eporner" to "https://www.eporner.com",
@@ -383,13 +405,8 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "MyFreeCams" to "https://www.myfreecams.com",
             "LiveJasmin" to "https://www.livejasmin.com",
             // Dating and swinger platforms with public profile pages
-            "AdultFriendFinder" to "https://adultfriendfinder.com",
             "Fabswingers" to "https://www.fabswingers.com",
             "SwingLifeStyle" to "https://www.sls.com",
-            "FetLife" to "https://fetlife.com",
-            "Seeking" to "https://www.seeking.com",
-            "WhatsYourPrice" to "https://www.whatsyourprice.com",
-            "Ashley Madison" to "https://www.ashleymadison.com",
             // Additional cam and clip platforms
             "Cherry.tv" to "https://cherry.tv",
             "Flirt4Free" to "https://www.flirt4free.com",
@@ -438,12 +455,7 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "Jerkmate" to "https://jerkmate.com",
             "Cams.com" to "https://www.cams.com",
             // More dating and swinger platforms
-            "Feeld" to "https://feeld.co",
             "SwapFinder" to "https://www.swapfinder.com",
-            "Kasidie" to "https://www.kasidie.com",
-            "SDC (Swingers Date Club)" to "https://www.sdc.com",
-            "Alt.com" to "https://www.alt.com",
-            "CollarMe" to "https://www.collarme.com",
             // Mugshot and public-record aggregators (a common, non-adult exposure vector for your face)
             "Mugshots.com" to "https://mugshots.com",
             "JailBase" to "https://jailbase.com",
@@ -503,11 +515,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "ImageChest" to "https://imgchest.com",
             "Catbox" to "https://catbox.moe",
             "Pixeldrain" to "https://pixeldrain.com",
-            "Pinterest" to "https://www.pinterest.com",
-            "Bluesky" to "https://bsky.app",
-            "Mastodon Social" to "https://mastodon.social",
-            "VK" to "https://vk.com",
-            "X" to "https://x.com",
             "Lipstick Alley Forum" to "https://www.lipstickalley.com",
             // More image hosts where reposted photos land.
             "FastPic" to "https://fastpic.org",

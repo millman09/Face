@@ -891,9 +891,12 @@ class IdentityMatchActivity : AppCompatActivity() {
                         )
                 }
                 val restingCount = enabledSources.count { it.isResting(now) }
+                // Progress counts only sites this search will actually cover. Sites sitting out (empty twice in a
+                // row) are left out of the total entirely; before, they were counted as already done, so a fresh
+                // search could open at 70%+ when many sites were resting.
+                val totalSites = enabledSources.size - restingCount
                 // Sites already done earlier in this session still count toward the progress shown.
-                val alreadyDone = enabledSources.size - sources.size
-                val totalSites = enabledSources.size
+                val alreadyDone = (totalSites - sources.size).coerceAtLeast(0)
 
                 val activeInterpreter = FaceEmbedders.open(model)
                 interpreter = activeInterpreter

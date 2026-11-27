@@ -141,7 +141,7 @@ private val REMOVED_IN_20_HOSTS = listOf(
     "zenfolio.com",
 )
 
-class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 23) {
+class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public_sources.db", null, 24) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) db.enableWriteAheadLogging()
@@ -253,6 +253,11 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
         if (oldVersion < 22) db.execSQL("ALTER TABLE sources ADD COLUMN last_duration INTEGER NOT NULL DEFAULT 0")
         // Motherless was dropped from the list; take it off existing installs too.
         if (oldVersion < 23) removeSources(db, listOf("motherless.com"))
+        if (oldVersion < 24) {
+            // Reddit blocks automated scanning, so it only cost time. New amateur sites and image hosts added.
+            removeSources(db, listOf("reddit.com"))
+            seedSources(db)
+        }
     }
 
     /** Deletes these sources (by host) along with their stored image links and crawl progress. */
@@ -322,7 +327,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "Phun Forum" to "https://www.phun.org",
             "Social Media Girls Forum" to "https://socialmediagirls.com",
             "EroMe Community" to "https://www.erome.com",
-            "Reddit (public communities)" to "https://www.reddit.com",
             "4chan (public boards)" to "https://www.4chan.org",
             // Additional public platforms and directories
             "Anonibx" to "https://anonibx.com",
@@ -392,7 +396,6 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "ImLive" to "https://www.imlive.com",
             "Streamate" to "https://streamate.com",
             // Additional image-first boards
-            "Reddit (NSFW search, old.reddit.com)" to "https://old.reddit.com",
             "Coomer" to "https://coomer.su",
             // More video and clip platforms
             "PornOne" to "https://www.pornone.com",
@@ -506,6 +509,20 @@ class PublicSourceDatabase(context: Context) : SQLiteOpenHelper(context, "public
             "VK" to "https://vk.com",
             "X" to "https://x.com",
             "Lipstick Alley Forum" to "https://www.lipstickalley.com",
+            // More image hosts where reposted photos land.
+            "FastPic" to "https://fastpic.org",
+            "Lensdump" to "https://lensdump.com",
+            "CubeUpload" to "https://cubeupload.com",
+            "Freeimage.host" to "https://freeimage.host",
+            // Amateur creator platforms that verify their uploaders.
+            "MyDirtyHobby" to "https://www.mydirtyhobby.com",
+            "AmateurCommunity" to "https://www.amateurcommunity.com",
+            "Amateur.tv" to "https://www.amateur.tv",
+            "IWantClips" to "https://iwantclips.com",
+            // Amateur-only video and photo sites (user uploads of homemade content).
+            "HomeMoviesTube" to "https://www.homemoviestube.com",
+            "ShesFreaky" to "https://www.shesfreaky.com",
+            "VoyeurWeb (amateur submissions)" to "https://voyeurweb.com",
             // Real-photo boorus (drawn/anime boorus are deliberately left out: they can't contain a real face).
         )
         for ((name, address) in starterDomains) {

@@ -15,7 +15,7 @@ object SourceOrder {
     private val POPULAR_HOSTS = setOf(
         "pornhub.com", "xvideos.com", "xnxx.com", "xhamster.com", "youporn.com", "redtube.com", "spankbang.com",
         "eporner.com", "redgifs.com", "erome.com", "imagefap.com", "pornpics.com", "thisvid.com",
-        "txxx.com", "porntrex.com", "reddit.com", "old.reddit.com", "4chan.org", "coomer.su", "imgur.com",
+        "txxx.com", "porntrex.com", "4chan.org", "coomer.su", "imgur.com",
         "chaturbate.com", "stripchat.com", "bongacams.com", "camsoda.com",
     )
 

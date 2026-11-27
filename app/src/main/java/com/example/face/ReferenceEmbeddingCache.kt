@@ -56,21 +56,22 @@ object ReferenceEmbeddingCache {
      * Identifies a set of reference photos (order doesn't matter), so a search can tell when you've
      * switched to different photos. Null if any photo can't be read.
      */
-    fun fingerprint(context: Context, uris: List<Uri>): String? {
-        val keys = uris.map { keyFor(context, it) ?: return null }.sorted()
+    fun fingerprint(context: Context, uris: List<Uri>, modelId: String): String? {
+        val keys = listOf("model:$modelId") + uris.map { keyFor(context, it) ?: return null }.sorted()
         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(keys.joinToString("\n").toByteArray())
         return digest.joinToString("") { "%02x".format(it) }
     }
 
     /** Null if this exact photo (by Uri and file size) hasn't been embedded and cached before. */
-    fun get(context: Context, uri: Uri): FloatArray? {
-        val key = keyFor(context, uri) ?: return null
+    /** Measurements are kept per model: one model's numbers mean nothing to another. */
+    fun get(context: Context, uri: Uri, modelId: String): FloatArray? {
+        val key = keyFor(context, uri)?.let { "$modelId|$it" } ?: return null
         return cache(context)[key]
     }
 
     @Synchronized
-    fun put(context: Context, uri: Uri, embedding: FloatArray) {
-        val key = keyFor(context, uri) ?: return
+    fun put(context: Context, uri: Uri, embedding: FloatArray, modelId: String) {
+        val key = keyFor(context, uri)?.let { "$modelId|$it" } ?: return
         val map = cache(context)
         map[key] = embedding
         try {

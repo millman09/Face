@@ -160,18 +160,17 @@ class IdentityMatchActivity : AppCompatActivity() {
             setLineSpacing(dp(3).toFloat(), 1.04f)
             setPadding(0, 0, 0, dp(16))
         })
-        val existingModel = File(filesDir, modelTargetName)
-        if (existingModel.exists()) modelFile = existingModel
+        modelFile = FaceEmbedders.selectedFile(this)
 
         modelSetupGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        addButton(modelSetupGroup, "Install face-matching model  ·  ~4 MB", primary = true) { downloadOfficialModel() }
+        addButton(modelSetupGroup, "Install face-matching model  ·  ~15 MB", primary = true) { downloadImprovedModel() }
         addButton(modelSetupGroup, "Use a different model file") { modelPicker.launch(arrayOf("*/*")) }
         root.addSpaced(modelSetupGroup, 4)
         modelReadyText = TextView(this).apply {
             textSize = 14f
             setTextColor(android.graphics.Color.rgb(170, 230, 180))
         }
-        modelReadyRow = readyRow(modelReadyText, "Change") { modelPicker.launch(arrayOf("*/*")) }
+        modelReadyRow = readyRow(modelReadyText, "Change") { chooseModel() }
         root.addSpaced(modelReadyRow, 4)
 
         referenceSetupButton = addButton(root, "Choose reference photos") { referencePicker.launch(arrayOf("image/*")) }
@@ -402,13 +401,17 @@ class IdentityMatchActivity : AppCompatActivity() {
                     }
                 } ?: throw IllegalStateException("Could not read the selected model.")
                 require(total > 100_000L) { "The selected file is empty or too small to be this model." }
-                validateMobileFaceNetModel(temp)
-                val target = File(filesDir, modelTargetName)
+                // Either an ArcFace-style ONNX model or the original MobileFaceNet TFLite model.
+                val improved = try { ArcFaceEmbedder(temp).close(); true } catch (_: Exception) { false }
+                if (!improved) MobileFaceNetEmbedder(temp).close()
+                val target = if (improved) FaceEmbedders.improvedFile(this) else FaceEmbedders.originalFile(this)
                 if (target.exists()) target.delete()
                 check(temp.renameTo(target)) { "Could not save the model in app storage." }
+                FaceEmbedders.setPrefersOriginal(this, !improved)
+                MatchTuning.reset(this)
                 modelFile = target
                 runOnUiThread {
-                    status.text = "Compatible MobileFaceNet model selected (${target.length() / 1024} KB). Choose your reference photo and candidate images."
+                    status.text = "Compatible face model selected (${target.length() / 1024} KB). Choose your reference photo and candidate images."
                     updateReady()
                     if (autoStartScan && webScanMode) runComparison()
                 }
@@ -422,9 +425,112 @@ class IdentityMatchActivity : AppCompatActivity() {
         }
     }
 
+    /** Switch between the improved and original models, or load a model file. */
+    private fun chooseModel() {
+        val improvedReady = FaceEmbedders.improvedFile(this).exists()
+        val originalReady = FaceEmbedders.originalFile(this).exists()
+        val options = arrayOf(
+            "Improved model (recommended)" + if (improvedReady) "" else "  ·  download ~15 MB",
+            "Original model" + if (originalReady) "" else "  ·  download ~4 MB",
+            "Use a model file…",
+        )
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Face-matching model")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> downloadImprovedModel()
+                    1 -> downloadOfficialModel()
+                    else -> modelPicker.launch(arrayOf("*/*"))
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /**
+     * Downloads InsightFace's official buffalo_sc package, takes the w600k_mbf recognition model out of it,
+     * checks it against the known checksum, makes sure it loads, and only then switches to it.
+     */
+    private fun downloadImprovedModel() {
+        val target = FaceEmbedders.improvedFile(this)
+        if (target.exists()) {
+            if (FaceEmbedders.prefersOriginal(this)) MatchTuning.reset(this)
+            FaceEmbedders.setPrefersOriginal(this, false)
+            modelFile = target
+            status.text = "Using the improved face model."
+            updateReady()
+            return
+        }
+        status.text = "Downloading the improved face model (about 15 MB)…"
+        scanButton.isEnabled = false
+        restoreExecutor.execute {
+            var connection: HttpURLConnection? = null
+            val temp = File(filesDir, "${FaceEmbedders.IMPROVED_FILE}.tmp")
+            try {
+                connection = (URL(FaceEmbedders.IMPROVED_URL).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 20000
+                    readTimeout = 60000
+                    instanceFollowRedirects = true
+                }
+                require(connection.responseCode in 200..299) { "Download returned HTTP ${connection.responseCode}." }
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                var found = false
+                ZipInputStream(BufferedInputStream(connection.inputStream)).use { zip ->
+                    var entry = zip.nextEntry
+                    while (entry != null) {
+                        if (!entry.isDirectory && entry.name.substringAfterLast('/') == FaceEmbedders.IMPROVED_ENTRY) {
+                            var total = 0L
+                            FileOutputStream(temp).use { output ->
+                                val buffer = ByteArray(64 * 1024)
+                                while (true) {
+                                    val count = zip.read(buffer)
+                                    if (count < 0) break
+                                    total += count
+                                    require(total <= 40L * 1024L * 1024L) { "Model file is unexpectedly large." }
+                                    digest.update(buffer, 0, count)
+                                    output.write(buffer, 0, count)
+                                }
+                            }
+                            found = true
+                            break
+                        }
+                        zip.closeEntry()
+                        entry = zip.nextEntry
+                    }
+                }
+                require(found) { "The download didn't contain the face model." }
+                val sha = digest.digest().joinToString("") { "%02x".format(it) }
+                require(sha == FaceEmbedders.IMPROVED_SHA256) { "The downloaded model didn't match the official file." }
+                ArcFaceEmbedder(temp).close()
+                if (target.exists()) target.delete()
+                check(temp.renameTo(target)) { "Could not save the model in app storage." }
+                FaceEmbedders.setPrefersOriginal(this, false)
+                MatchTuning.reset(this)
+                modelFile = target
+                runOnUiThread {
+                    status.text = "Improved face model installed. Your next search compares saved images again with it."
+                    updateReady()
+                    if (autoStartScan && webScanMode) runComparison()
+                }
+            } catch (e: Exception) {
+                temp.delete()
+                runOnUiThread {
+                    status.text = "Model download failed: ${e.localizedMessage ?: "unknown error"}. Try again when connected."
+                    updateReady()
+                }
+            } finally {
+                connection?.disconnect()
+            }
+        }
+    }
+
+    /** The original, smaller model, kept as a fallback. */
     private fun downloadOfficialModel() {
-        if (modelFile?.exists() == true) {
-            status.text = "MobileFaceNet is already installed on this phone."
+        if (FaceEmbedders.originalFile(this).exists()) {
+            FaceEmbedders.setPrefersOriginal(this, true)
+            MatchTuning.reset(this)
+            modelFile = FaceEmbedders.selectedFile(this)
+            status.text = "Switched to the original model."
             updateReady()
             return
         }
@@ -468,9 +574,11 @@ class IdentityMatchActivity : AppCompatActivity() {
                     }
                 }
                 require(extracted) { "The official archive did not contain a TFLite model." }
-                validateMobileFaceNetModel(temp)
+                MobileFaceNetEmbedder(temp).close()
                 if (target.exists()) target.delete()
                 check(temp.renameTo(target)) { "Could not save the model in app storage." }
+                FaceEmbedders.setPrefersOriginal(this, true)
+                MatchTuning.reset(this)
                 modelFile = target
                 runOnUiThread {
                     status.text = "Official MobileFaceNet downloaded and validated. Choose your reference photo and candidate images."
@@ -486,32 +594,6 @@ class IdentityMatchActivity : AppCompatActivity() {
             } finally {
                 connection?.disconnect()
             }
-        }
-    }
-
-    private fun validateMobileFaceNetModel(file: File) {
-        val interpreter = Interpreter(file, Interpreter.Options().setNumThreads(2))
-        try {
-            require(interpreter.inputTensorCount == 2) {
-                "This model must accept two face images for pairwise verification."
-            }
-            for (i in 0..1) {
-                val shape = interpreter.getInputTensor(i).shape()
-                val nhwc = shape.contentEquals(intArrayOf(1, 112, 112, 3))
-                val nchw = shape.contentEquals(intArrayOf(1, 3, 112, 112))
-                require(nhwc || nchw) { "Input $i has unsupported shape ${shape.contentToString()}." }
-                require(interpreter.getInputTensor(i).dataType() == org.tensorflow.lite.DataType.FLOAT32) {
-                    "Input $i must be float32."
-                }
-            }
-            require(interpreter.outputTensorCount == 1) { "Expected one embedding output tensor." }
-            val output = interpreter.getOutputTensor(0)
-            val elements = output.shape().fold(1) { acc, dim -> acc * dim }
-            require(elements == 256 && output.dataType() == org.tensorflow.lite.DataType.FLOAT32) {
-                "Expected 256 float32 output values (two 128-value embeddings), got ${output.shape().contentToString()}."
-            }
-        } finally {
-            interpreter.close()
         }
     }
 
@@ -557,7 +639,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         val modelReady = modelFile?.exists() == true
         modelSetupGroup.visibility = if (modelReady) android.view.View.GONE else android.view.View.VISIBLE
         modelReadyRow.visibility = if (modelReady) android.view.View.VISIBLE else android.view.View.GONE
-        if (modelReady) modelReadyText.text = "✓ Face-matching model ready (${modelFile!!.length() / 1024} KB)"
+        if (modelReady) modelReadyText.text = if (FaceEmbedders.isImproved(modelFile!!)) "✓ Improved face model ready" else "✓ Original face model · tap Change to upgrade"
 
         val refsReady = referenceUris.isNotEmpty()
         referenceSetupButton.visibility = if (refsReady) android.view.View.GONE else android.view.View.VISIBLE
@@ -604,13 +686,12 @@ class IdentityMatchActivity : AppCompatActivity() {
         progress.progress = 0
         status.text = "Preparing local MobileFaceNet matcher…"
         executor.execute {
-            var interpreter: Interpreter? = null
+            var interpreter: FaceEmbedder? = null
             var faceDetector: FaceDetector? = null
             val alignedReferences = mutableListOf<Bitmap>()
             val resultsDatabase = PublicSourceDatabase(this)
             try {
-                validateMobileFaceNetModel(model)
-                interpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
+                interpreter = FaceEmbedders.open(model)
                 val options = FaceDetectorOptions.Builder()
                     .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
                     .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
@@ -635,7 +716,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 } else {
                     ""
                 }
-                val referenceEmbeddings = alignedReferences.map { embedFace(interpreter, it) }
+                val referenceEmbeddings = alignedReferences.map { interpreter.embed(it) }
                 val localMatches = mutableListOf<String>()
                 var checked = 0
                 var matched = 0
@@ -651,10 +732,10 @@ class IdentityMatchActivity : AppCompatActivity() {
                                 try {
                                     val aligned = alignFace(bitmap, face)
                                     try {
-                                        val candidateEmbedding = embedFace(interpreter, aligned)
-                                        val score = combineReferenceScores(
+                                        val candidateEmbedding = interpreter.embed(aligned)
+                                        val score = interpreter.calibrate(combineReferenceScores(
                                             referenceEmbeddings.map { reference -> cosineSimilarity(reference, candidateEmbedding) }
-                                        )
+                                        ))
                                         if (best == null || score > best!!) best = score
                                     } finally {
                                         aligned.recycle()
@@ -672,7 +753,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                         val possible = similarity != null && similarity >= 0.4f
                         if (possible) {
                             matched++
-                            localMatches += "${displayName(uri)} · cosine ${"%.3f".format(java.util.Locale.US, similarity)}"
+                            localMatches += "${displayName(uri)} · score ${"%.3f".format(java.util.Locale.US, similarity)}"
                         }
                     } catch (_: Exception) {
                         // Keep the result view focused on successful possible matches.
@@ -687,7 +768,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 }
                 val summary = buildString {
                     append("Finished: checked $checked of ${candidates.size} images and found $matched possible match(es). ")
-                    append("The 0.4 cosine threshold was applied. Review possible matches manually.")
+                    append("Matches scored 0.40 or higher are listed. Review them manually.")
                     if (localMatches.isNotEmpty()) append("\n\nPossible matches:\n" + localMatches.take(50).joinToString("\n"))
                 }
                 runOnUiThread { status.text = summary; progress.visibility = ProgressBar.GONE; updateReady() }
@@ -756,7 +837,7 @@ class IdentityMatchActivity : AppCompatActivity() {
         clearResults()
         publishProgress("Preparing on-device face matching…", 0, true)
         activeWebScan = executor.submit {
-            var interpreter: Interpreter? = null
+            var interpreter: FaceEmbedder? = null
             var detector: FaceDetector? = null
             var quickFaceDetector: FaceDetector? = null
             var downloadPool: java.util.concurrent.ExecutorService? = null
@@ -773,7 +854,8 @@ class IdentityMatchActivity : AppCompatActivity() {
                 // Images compared against different reference photos were scored for someone else's
                 // face set, so when the photos change every stored image is compared again.
                 var photosChanged = false
-                val referenceFingerprint = ReferenceEmbeddingCache.fingerprint(this, references)
+                // Includes the model, so switching models also rechecks every saved image with the new one.
+                val referenceFingerprint = ReferenceEmbeddingCache.fingerprint(this, references, FaceEmbedders.idFor(model))
                 if (referenceFingerprint != null) {
                     val previousFingerprint = scanState.getString("reference_fingerprint", null)
                     if (previousFingerprint != null && previousFingerprint != referenceFingerprint) {
@@ -810,8 +892,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 val alreadyDone = enabledSources.size - sources.size
                 val totalSites = enabledSources.size
 
-                validateMobileFaceNetModel(model)
-                val activeInterpreter = Interpreter(model, Interpreter.Options().setNumThreads(4))
+                val activeInterpreter = FaceEmbedders.open(model)
                 interpreter = activeInterpreter
                 val activeDetector = FaceDetection.getClient(
                     FaceDetectorOptions.Builder()
@@ -836,7 +917,7 @@ class IdentityMatchActivity : AppCompatActivity() {
                 var reusedCount = 0
                 val referenceEmbeddings = mutableListOf<FloatArray>()
                 references.forEachIndexed { index, uri ->
-                    val cached = ReferenceEmbeddingCache.get(this, uri)
+                    val cached = ReferenceEmbeddingCache.get(this, uri, activeInterpreter.id)
                     if (cached != null) {
                         referenceEmbeddings += cached
                         reusedCount++
@@ -849,9 +930,9 @@ class IdentityMatchActivity : AppCompatActivity() {
                             ?: throw IllegalArgumentException("No face found in reference photo ${index + 1}.")
                         MatchTuning.photoHint(bitmap, face, index + 1)?.let { photoHints += it }
                         val aligned = alignFace(bitmap, face)
-                        val embedding = try { embedFace(activeInterpreter, aligned) } finally { aligned.recycle() }
+                        val embedding = try { activeInterpreter.embed(aligned) } finally { aligned.recycle() }
                         referenceEmbeddings += embedding
-                        ReferenceEmbeddingCache.put(this, uri, embedding)
+                        ReferenceEmbeddingCache.put(this, uri, embedding, activeInterpreter.id)
                     } finally {
                         bitmap.recycle()
                     }
@@ -935,8 +1016,18 @@ class IdentityMatchActivity : AppCompatActivity() {
                                         var aligned: Bitmap? = null
                                         try {
                                             aligned = alignFace(bitmap, face)
-                                            val candidateEmbedding = embedFace(activeInterpreter, aligned)
-                                            val faceScore = combineReferenceScores(referenceEmbeddings.map { reference -> cosineSimilarity(reference, candidateEmbedding) })
+                                            val candidateEmbedding = activeInterpreter.embed(aligned)
+                                            var faceScore = activeInterpreter.calibrate(combineReferenceScores(referenceEmbeddings.map { reference -> cosineSimilarity(reference, candidateEmbedding) }))
+                                            // Close calls get a second look from a slightly wider crop, which catches
+                                            // faces the detector framed a little tightly or at a tilt.
+                                            if (faceScore >= weakThreshold - 0.06f && faceScore < threshold + 0.06f) {
+                                                val wider = alignFace(bitmap, face, zoom = 0.9f)
+                                                try {
+                                                    val second = activeInterpreter.embed(wider)
+                                                    val secondScore = activeInterpreter.calibrate(combineReferenceScores(referenceEmbeddings.map { reference -> cosineSimilarity(reference, second) }))
+                                                    if (secondScore > faceScore) faceScore = secondScore
+                                                } finally { wider.recycle() }
+                                            }
                                             if (best == null || faceScore > best!!) { best = faceScore; bestFace = face }
                                         } catch (_: IllegalArgumentException) {
                                             // Faces without the five required landmarks cannot be aligned.
@@ -1599,7 +1690,8 @@ class IdentityMatchActivity : AppCompatActivity() {
 
     private fun decodeBytes(data: ByteArray): Bitmap = PublicImageLoader.decode(data)
 
-    private fun alignFace(bitmap: Bitmap, face: Face): Bitmap {
+    /** [zoom] below 1 frames the face slightly wider (a second look for borderline scores). */
+    private fun alignFace(bitmap: Bitmap, face: Face, zoom: Float = 1f): Bitmap {
         fun point(type: Int) = face.getLandmark(type)?.position
             ?: throw IllegalArgumentException("This face does not have all five landmarks needed for MobileFaceNet alignment.")
         // The alignment template expects the eye and mouth corner that appear on the left of the
@@ -1607,8 +1699,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         val eyes = listOf(point(FaceLandmark.LEFT_EYE), point(FaceLandmark.RIGHT_EYE)).sortedBy { it.x }
         val mouth = listOf(point(FaceLandmark.MOUTH_LEFT), point(FaceLandmark.MOUTH_RIGHT)).sortedBy { it.x }
         val src = listOf(eyes[0], eyes[1], point(FaceLandmark.NOSE_BASE), mouth[0], mouth[1])
-        val dstX = doubleArrayOf(38.2946, 73.5318, 56.0252, 41.5493, 70.7299)
-        val dstY = doubleArrayOf(51.6963, 51.5014, 71.7366, 92.3655, 92.2041)
+        val dstX = doubleArrayOf(38.2946, 73.5318, 56.0252, 41.5493, 70.7299).map { 56.0 + (it - 56.0) * zoom }.toDoubleArray()
+        val dstY = doubleArrayOf(51.6963, 51.5014, 71.7366, 92.3655, 92.2041).map { 56.0 + (it - 56.0) * zoom }.toDoubleArray()
         val meanX = src.map { it.x.toDouble() }.average()
         val meanY = src.map { it.y.toDouble() }.average()
         val meanU = dstX.average()
@@ -1649,71 +1741,17 @@ class IdentityMatchActivity : AppCompatActivity() {
     private fun combineReferenceScores(scores: List<Float>): Float {
         require(scores.isNotEmpty()) { "At least one reference embedding is required." }
         if (scores.size == 1) return scores.first()
-        // Averaging the best few references (rather than just the single best) steadies the score
-        // against one unusually flattering or unflattering reference photo.
-        return scores.sortedDescending().take(minOf(3, scores.size)).average().toFloat()
-    }
-
-    /**
-     * MobileFaceNet is a two-input verification model. Its two output vectors are
-     * independently derived from the two input faces. The face goes into the first input and
-     * its mirror image into the second, and the two embeddings are averaged, which is steadier
-     * than one view and costs nothing extra. Reference embeddings are cached for the scan;
-     * each candidate face then needs only one model inference.
-     */
-    private fun embedFace(interpreter: Interpreter, bitmap: Bitmap): FloatArray {
-        val inputShape0 = interpreter.getInputTensor(0).shape()
-        val inputShape1 = interpreter.getInputTensor(1).shape()
-        val input0 = makeInput(bitmap, inputShape0)
-        val input1 = makeInput(bitmap, inputShape1, mirror = true)
-        val outputShape = interpreter.getOutputTensor(0).shape()
-        val output = ByteBuffer.allocateDirect(outputShape.fold(1) { acc, dim -> acc * dim } * 4)
-            .order(ByteOrder.nativeOrder())
-        interpreter.runForMultipleInputsOutputs(arrayOf(input0, input1), mutableMapOf<Int, Any>(0 to output))
-        output.rewind()
-        val straight = normalize(FloatArray(128) { output.float })
-        val mirrored = normalize(FloatArray(128) { output.float })
-        return normalize(FloatArray(128) { straight[it] + mirrored[it] })
+        // Mostly the closest reference photo, steadied by the average of the best three, so one bad
+        // reference photo of you can't drag a real match down, and one lucky look-alike can't carry it.
+        val sorted = scores.sortedDescending()
+        val topAverage = sorted.take(minOf(3, sorted.size)).average().toFloat()
+        return 0.6f * sorted.first() + 0.4f * topAverage
     }
 
     private fun cosineSimilarity(first: FloatArray, second: FloatArray): Float {
         require(first.size == second.size) { "Embedding dimensions do not match." }
         return first.indices.sumOf { (first[it] * second[it]).toDouble() }
             .toFloat().coerceIn(-1f, 1f)
-    }
-
-    private fun makeInput(bitmap: Bitmap, shape: IntArray, mirror: Boolean = false): ByteBuffer {
-        require(bitmap.width == 112 && bitmap.height == 112) { "Face input must be 112 by 112 pixels." }
-        val nchw = shape.contentEquals(intArrayOf(1, 3, 112, 112))
-        val pixels = IntArray(112 * 112)
-        bitmap.getPixels(pixels, 0, 112, 0, 0, 112, 112)
-        if (mirror) {
-            for (y in 0 until 112) pixels.reverse(y * 112, (y + 1) * 112)
-        }
-        val buffer = ByteBuffer.allocateDirect(112 * 112 * 3 * 4).order(ByteOrder.nativeOrder())
-        if (nchw) {
-            for (channel in 0..2) for (pixel in pixels) {
-                val value = when (channel) {
-                    0 -> (pixel shr 16) and 255
-                    1 -> (pixel shr 8) and 255
-                    else -> pixel and 255
-                }
-                buffer.putFloat(value / 255f)
-            }
-        } else {
-            for (pixel in pixels) {
-                buffer.putFloat(((pixel shr 16) and 255) / 255f)
-                buffer.putFloat(((pixel shr 8) and 255) / 255f)
-                buffer.putFloat((pixel and 255) / 255f)
-            }
-        }
-        buffer.rewind()
-        return buffer
-    }
-
-    private fun normalize(vector: FloatArray): FloatArray {
-        val norm = sqrt(vector.sumOf { (it * it).toDouble() }).toFloat().coerceAtLeast(1e-12f)
-        return FloatArray(vector.size) { vector[it] / norm }
     }
 
     private fun decode(uri: Uri): Bitmap {

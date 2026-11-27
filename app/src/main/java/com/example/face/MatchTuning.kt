@@ -19,6 +19,11 @@ object MatchTuning {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(key, "").orEmpty()
             .split(',').mapNotNull { it.toFloatOrNull() }
 
+    /** Forgets past "That's me" / "Not a match" scores; used when the face model changes, since its scores differ. */
+    fun reset(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
+    }
+
     /** Remembers the score of a result the user confirmed or rejected. */
     fun record(context: Context, confirmed: Boolean, similarity: Float) {
         val key = if (confirmed) "confirmed" else "rejected"

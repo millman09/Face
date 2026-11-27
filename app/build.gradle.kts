@@ -11,6 +11,9 @@ android {
     defaultConfig {
         applicationId = "com.example.face"
         minSdk = 28
+        // Phones (64-bit ARM) and the x86_64 emulator used by the CI smoke test. Leaving out the old
+        // 32-bit builds keeps the face-model engine from adding tens of MB to the download.
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         targetSdk = 36
         versionCode = 3
         versionName = "1.2"
@@ -68,6 +71,8 @@ dependencies {
     implementation(libs.material)
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("org.tensorflow:tensorflow-lite:2.17.0")
+    // Runs the improved (ArcFace) face model, which ships as ONNX.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.espresso.core)

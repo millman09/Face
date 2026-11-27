@@ -1653,18 +1653,8 @@ class IdentityMatchActivity : AppCompatActivity() {
         ).apply { bottomMargin = dp(10) })
     }
 
-    private fun openResultUrl(address: String) {
-        val uri = Uri.parse(address)
-        if (uri.scheme !in listOf("https", "http") || uri.host.isNullOrBlank() || uri.userInfo != null) {
-            Toast.makeText(this, "This result link is not a valid public web address.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, uri))
-        } catch (_: Exception) {
-            Toast.makeText(this, "No browser is available to open this result.", Toast.LENGTH_SHORT).show()
-        }
-    }
+    /** Result pages open in Face's private viewer, so they never land in your browser history. */
+    private fun openResultUrl(address: String) = PrivateViewerActivity.open(this, address)
 
     /** Fetches a public HTTPS image into a bounded byte array. Scanning keeps it in memory only; see [loadForDisplay] for matches. */
     /**

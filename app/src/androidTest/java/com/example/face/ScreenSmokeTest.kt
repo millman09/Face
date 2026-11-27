@@ -30,4 +30,12 @@ class ScreenSmokeTest {
     @Test fun exposureCheckOpens() = open(ExposureCheckActivity::class.java)
     @Test fun matchScreenOpens() = open(IdentityMatchActivity::class.java)
     @Test fun savedImagesOpens() = open(SavedImagesActivity::class.java)
+    @Test fun privateViewerOpens() {
+        val intent = Intent(ApplicationProvider.getApplicationContext(), PrivateViewerActivity::class.java)
+            .putExtra("com.example.face.EXTRA_PRIVATE_URL", "https://example.com/")
+        ActivityScenario.launch<PrivateViewerActivity>(intent).use { scenario ->
+            Thread.sleep(3000)
+            assertNotEquals(Lifecycle.State.DESTROYED, scenario.state)
+        }
+    }
 }

@@ -298,7 +298,7 @@ class SavedImagesActivity : AppCompatActivity() {
             setOnClickListener { block() }
         }
         buttons.addView(action("Get it removed…") { RemovalActions.show(this, match.pageUrl, match.imageUrl) })
-        buttons.addView(action("Open the page") { RemovalActions.openUrl(this, match.pageUrl.ifBlank { match.imageUrl }) })
+        buttons.addView(action("Open the page privately") { PrivateViewerActivity.open(this, match.pageUrl.ifBlank { match.imageUrl }) })
         buttons.addView(action("Close") { dialog.dismiss() })
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
